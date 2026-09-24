@@ -85,16 +85,30 @@ jobs:
         run: cargo test --locked
       - name: Package native application
         working-directory: desktop
+        env:
+          # In-app updates: signed with the maintainer's own key (repository
+          # secrets; see docs/DESKTOP_RELEASE.md). Without the secrets the
+          # installers build as before and the app simply finds no updates.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
         run: |
           # The AppImage bundler's linuxdeploy dies inside the sandboxed
           # runner (extract-and-run is not enough); the deb bundles fine and
           # is the supported install path (START-HERE.txt documents it).
+          # Tauri's updater cannot update a deb, so Linux gets no update files.
           if [ "$RUNNER_OS" = "Linux" ]; then
             npm run package -- --config src-tauri/tauri.linux.conf.json
+          elif [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$TAURI_UPDATER_PUBKEY" ]; then
+            python -c "import json, os; print(json.dumps({'bundle': {'createUpdaterArtifacts': True}, 'plugins': {'updater': {'pubkey': os.environ['TAURI_UPDATER_PUBKEY']}}}))" > "$RUNNER_TEMP/updater.conf.json"
+            npm run package -- --config "$RUNNER_TEMP/updater.conf.json"
           else
             npm run package
           fi
       - name: Deep-sign the Mac application and rebuild its DMG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         # Tauri signs the bundle shallowly: nested Mach-O images from the
         # frozen engine (PyInstaller's Python.framework) carry a stale
         # signature whose resources were stripped, and codesign --verify
@@ -136,6 +150,15 @@ jobs:
           ln -s /Applications "$STAGE/Applications"
           rm -f "$DMG"
           /usr/bin/hdiutil create -volname "NLP Suite" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          # The updater archive has the same problem as the DMG: Tauri packed
+          # it before the re-signing. Repack the re-signed app and sign again.
+          UPDATE="$APP.tar.gz"
+          if [ -f "$UPDATE" ]; then
+            rm -f "$UPDATE" "$UPDATE.sig"
+            tar -czf "$UPDATE" -C "$(dirname "$APP")" "$(basename "$APP")"
+            (cd desktop && npx tauri signer sign "../$UPDATE")
+            test -s "$UPDATE.sig"
+          fi
       - name: Validate and collect distribution files
         run: |
           python scripts/verify_desktop_payload.py --install-in-ci
@@ -197,17 +220,25 @@ jobs:
         # GitHub turns spaces in asset names into dots; name them predictably
         # instead, then checksum the names users will actually download.
         run: |
-          mkdir release
-          for file in built/nlp-suite-*/*.exe built/nlp-suite-*/*.dmg built/nlp-suite-*/*.deb built/nlp-suite-*/*.AppImage built/python/*.whl; do
+          mkdir release sigs
+          for file in built/nlp-suite-*/*.exe built/nlp-suite-*/*.dmg built/nlp-suite-*/*.deb built/nlp-suite-*/*.AppImage built/nlp-suite-*/*.app.tar.gz built/python/*.whl; do
             [ -e "$file" ] || continue
             name=$(basename "$file")
             cp "$file" "release/${name// /-}"
+          done
+          # Updater signatures go into latest.json, not onto the release page.
+          for file in built/nlp-suite-*/*.sig; do
+            [ -e "$file" ] || continue
+            name=$(basename "$file")
+            cp "$file" "sigs/${name// /-}"
           done
           if ! ls release | grep -qE '\.(exe|dmg|deb)$'; then
             echo "::error::No platform built successfully; nothing to release."
             exit 1
           fi
           (cd release && sha256sum * > SHA256SUMS.txt)
+          python scripts/write_update_manifest.py --release release --signatures sigs \
+            --version "$VERSION" --base-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
           ls -la release
       - name: Write release notes
         run: |
@@ -244,6 +275,12 @@ jobs:
             echo
             echo "**Python users:** \`pip install\` the attached \`.whl\` for the analysis engine and command line (Python 3.12). See the README."
             echo
+            if [ -f release/latest.json ]; then
+              echo "_\`latest.json\` and the \`.app.tar.gz\` files are used by the app's built-in updater. You don't need to download them._"
+              echo
+              echo "**Already have NLP Suite?** It offers this update itself on its next launch."
+              echo
+            fi
             echo "## First steps"
             echo
             echo "1. Click **New project**, then **Try example documents**."

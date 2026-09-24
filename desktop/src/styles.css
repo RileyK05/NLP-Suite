@@ -1290,6 +1290,11 @@ details summary > svg {
   display: flex;
   padding: 2px;
 }
+/* A labelled action inside an alert (Install and restart), not an icon. */
+.alert button.secondary {
+  flex-shrink: 0;
+  padding: 6px 12px;
+}
 .working {
   position: fixed;
   z-index: 20;

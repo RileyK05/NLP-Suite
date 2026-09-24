@@ -8,7 +8,7 @@ import tomllib
 import pytest
 
 from scripts.build_desktop_backend import build_arguments
-from scripts.collect_desktop_release import release_files
+from scripts.collect_desktop_release import release_files, updater_files
 
 
 def test_desktop_release_versions_stay_in_sync() -> None:
@@ -86,3 +86,22 @@ def test_release_collection_does_not_include_old_installer(tmp_path: Path) -> No
 def test_linux_requires_both_artifact_types(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Expected one"):
         release_files(tmp_path, "0.3.0", "linux")
+
+
+def test_updater_files_follow_the_installer_names(tmp_path: Path) -> None:
+    (tmp_path / "nsis").mkdir()
+    (tmp_path / "macos").mkdir()
+    (tmp_path / "nsis/NLP Suite_1.2.3_x64-setup.exe.sig").write_text("win")
+    (tmp_path / "nsis/NLP Suite_1.2.2_x64-setup.exe.sig").write_text("stale")
+    assert list(updater_files(tmp_path, "1.2.3", "win32", "AMD64").values()) == ["NLP Suite_1.2.3_x64-setup.exe.sig"]
+
+    archive = tmp_path / "macos/NLP Suite.app.tar.gz"
+    archive.write_bytes(b"app")
+    assert updater_files(tmp_path, "1.2.3", "darwin", "arm64") == {}, "an unsigned archive is not an update"
+    archive.with_name(archive.name + ".sig").write_text("mac")
+    assert sorted(updater_files(tmp_path, "1.2.3", "darwin", "arm64").values()) == [
+        "NLP Suite_1.2.3_aarch64.app.tar.gz",
+        "NLP Suite_1.2.3_aarch64.app.tar.gz.sig",
+    ]
+    assert "NLP Suite_1.2.3_x64.app.tar.gz" in updater_files(tmp_path, "1.2.3", "darwin", "x86_64").values()
+    assert updater_files(tmp_path, "1.2.3", "linux", "x86_64") == {}

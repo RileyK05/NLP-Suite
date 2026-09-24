@@ -29,13 +29,36 @@ def release_files(bundle: Path, version: str, system: str) -> list[Path]:
     return selected
 
 
+def updater_files(bundle: Path, version: str, system: str, machine: str) -> dict[Path, str]:
+    """In-app update files, source -> release name; empty when the build was unsigned.
+
+    Windows updates by running the signed setup EXE itself, so only its
+    signature is new. Both Macs produce "NLP Suite.app.tar.gz"; the release
+    name carries the architecture, matching the DMG names, so they coexist.
+    """
+    found: dict[Path, str] = {}
+    if system == "win32":
+        for sig in bundle.glob("nsis/*-setup.exe.sig"):
+            if f"_{version}_" in sig.name:
+                found[sig] = sig.name
+    elif system == "darwin":
+        arch = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x64", "amd64": "x64"}[machine.lower()]
+        archive = next(iter(bundle.glob("macos/*.app.tar.gz")), None)
+        if archive is not None and archive.with_name(archive.name + ".sig").is_file():
+            name = f"NLP Suite_{version}_{arch}.app.tar.gz"
+            found[archive] = name
+            found[archive.with_name(archive.name + ".sig")] = name + ".sig"
+    return found
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     version = json.loads((root / "desktop/package.json").read_text(encoding="utf-8"))["version"]
-    files = release_files(root / "desktop/src-tauri/target/release/bundle", version, sys.platform)
+    bundle = root / "desktop/src-tauri/target/release/bundle"
+    files = release_files(bundle, version, sys.platform)
     args.destination.mkdir(parents=True, exist_ok=True)
     if any(args.destination.iterdir()):
         raise SystemExit("Use an empty release directory so old installers cannot be mixed with this release.")
@@ -45,6 +68,8 @@ def main() -> None:
         shutil.copy2(source, target)
         with target.open("rb") as handle:
             checksums.append(f"{hashlib.file_digest(handle, 'sha256').hexdigest()}  {target.name}")
+    for source, name in updater_files(bundle, version, sys.platform, platform.machine()).items():
+        shutil.copy2(source, args.destination / name)
     (args.destination / "SHA256SUMS.txt").write_text("\n".join(checksums) + "\n", encoding="utf-8")
     (args.destination / "START-HERE.txt").write_text(
         f"NLP Suite {version} — {sys.platform}/{platform.machine()}\n\n"

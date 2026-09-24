@@ -32,5 +32,12 @@
     "shortDescription": "Your local NLP research workspace",
     "windows": { "nsis": { "installMode": "currentUser" }, "webviewInstallMode": { "type": "offlineInstaller" } },
     "macOS": { "minimumSystemVersion": "15.0" }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/RileyK05/NLP-Suite/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

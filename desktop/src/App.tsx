@@ -1,4 +1,5 @@
 import { Notices } from "./Notices";
+import { UpdateBanner } from "./UpdateBanner";
 import { Learn } from "./Learn";
 import { ProjectManager } from "./ProjectManager";
 import { useChartSettings, Workbench } from "./Workbench";
@@ -1540,6 +1541,7 @@ export default function App() {
             </div>
           </header>
           <main>
+            <UpdateBanner />
             {error && (
               <div className="alert error" role="alert">
                 <TriangleAlert size={18} />

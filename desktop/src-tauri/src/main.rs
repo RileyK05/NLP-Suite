@@ -87,6 +87,35 @@ fn start_backend(app: &tauri::App) -> Result<Bridge, Box<dyn std::error::Error>>
     })
 }
 
+/// Stop the engine before an update replaces its files.
+///
+/// On Windows the installer cannot overwrite a runtime that is still running,
+/// and the engine only exits once accepted jobs finish. Ask it to stop (EOF on
+/// stdin), give it 30 seconds, then end it: an update the reader asked for
+/// should not wait on a long analysis indefinitely.
+#[tauri::command]
+async fn stop_engine(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bridge = app.state::<Bridge>();
+        let mut child = bridge
+            .child
+            .lock()
+            .map_err(|_| "Engine state unavailable".to_string())?;
+        child.stdin.take();
+        for _ in 0..300 {
+            if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     // Headless installed-payload validation for CI, without opening a webview.
     let args: Vec<String> = std::env::args().collect();
@@ -145,11 +174,17 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             app.manage(start_backend(app)?);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![connection, save_download])
+        .invoke_handler(tauri::generate_handler![
+            connection,
+            save_download,
+            stop_engine
+        ])
         .build(tauri::generate_context!());
     match result {
         Ok(app) => app.run(|handle, event| {

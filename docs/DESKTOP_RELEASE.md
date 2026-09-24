@@ -116,6 +116,33 @@ existing release with `--clobber` instead of creating a second one.
 Do not mark Mac or Linux verified because Windows passed, and do not link users
 to an expiring Actions artifact as the permanent download location.
 
+## In-app updates
+
+Installed apps check `releases/latest/download/latest.json` on launch and offer
+a newer version with one click (Windows and Mac; Linux debs update by
+reinstalling). Updates are verified with the maintainer's own signing key,
+which is free and separate from Apple/Microsoft code signing.
+
+**One-time setup** (keep the key forever; losing it means existing installs
+can no longer be updated and must reinstall by hand):
+
+1. From `desktop/`, run `npx tauri signer generate -w nlp-suite-updater.key`
+   and choose a password. It writes `nlp-suite-updater.key` (private) and
+   `nlp-suite-updater.key.pub` (public). Back both up, with the password,
+   somewhere safe outside the repository. Never commit the private key.
+2. In the public repository: **Settings → Secrets and variables → Actions →
+   New repository secret**, three times:
+   - `TAURI_SIGNING_PRIVATE_KEY`: the contents of `nlp-suite-updater.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password
+   - `TAURI_UPDATER_PUBKEY`: the contents of `nlp-suite-updater.key.pub`
+
+Without the secrets, releases still build; the apps they install simply never
+find updates. With them, every release also carries `latest.json` and signed
+update files, and an app only updates from releases made with the same key.
+An update only reaches people once the release is **published** and marked
+**latest**: drafts and pre-releases are invisible to installed apps, which
+makes pre-release the safe place to test a build first.
+
 ## Signing and distribution gates
 
 These scripts default to unsigned/ad-hoc test artifacts. A smooth public Mac

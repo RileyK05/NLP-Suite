@@ -27,6 +27,9 @@ notes or an older release. Mac builds need macOS 15 or later.
 - **Mac:** after the first blocked launch, open **System Settings → Privacy &
   Security**, scroll down and click **Open Anyway** next to NLP Suite.
 
+**Updates.** On Windows and Mac, NLP Suite tells you when a new version is out
+and installs it with one click. On Linux, install the new `.deb` over the old one.
+
 More detail, including how to tell which Mac you have:
 **[Installation and first project](docs/GET_STARTED.md)**.
 
