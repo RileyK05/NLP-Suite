@@ -27,6 +27,24 @@ def test_desktop_release_versions_stay_in_sync() -> None:
     assert pyproject["project"]["version"] == package["version"]
 
 
+def test_frozen_engine_keeps_every_core_dependency(tmp_path: Path) -> None:
+    """A core dependency excluded from the freeze fails only in the installed app.
+
+    pyarrow was excluded to save space; the live bench later started caching
+    parses as parquet, and every live load in the desktop app failed while
+    every test and packaged job still passed.
+    """
+    root = Path(__file__).resolve().parents[1]
+    core = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    import_names = {"scikit-learn": "sklearn"}
+    wanted = {import_names.get(name, name) for name in (re.split(r"[<>=!~ ;\[]", dep)[0] for dep in core)}
+    args = build_arguments(tmp_path, with_parser=True, system="linux", python="python", version="0.0.0")
+    excluded = {args[i + 1] for i, arg in enumerate(args) if arg == "--exclude-module"}
+    assert not wanted & excluded, f"core dependencies excluded from the desktop engine: {wanted & excluded}"
+    hidden = {args[i + 1] for i, arg in enumerate(args) if arg == "--hidden-import"}
+    assert "pyarrow.parquet" in hidden
+
+
 def test_macos_minimum_matches_the_documented_floor() -> None:
     """The DMG must not advertise an OS the build was never tested on.
 

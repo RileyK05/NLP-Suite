@@ -144,6 +144,10 @@ class Annotations:
             return None
         try:
             return pd.read_parquet(target)
+        except ImportError:
+            # No parquet engine in this runtime: the cache is an optimisation,
+            # so parse again rather than fail the load.
+            return None
         except (OSError, ValueError):
             # A truncated or unreadable cache file is a reason to parse again,
             # not a reason to fail. Drop it so the next run does not retry it.
@@ -157,6 +161,9 @@ class Annotations:
         try:
             frame.to_parquet(staging)
             staging.replace(target)
+        except ImportError:
+            # See load(): without a parquet engine the parse is simply not kept.
+            staging.unlink(missing_ok=True)
         except (OSError, ValueError):
             staging.unlink(missing_ok=True)
             raise

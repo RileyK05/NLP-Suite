@@ -90,6 +90,16 @@ def main() -> None:
             else:
                 for name, text in fixtures:
                     request(base + "/documents?name=" + name, text.encode())
+            if args.with_parser:
+                # Live exploration parses once and keeps the parse as parquet.
+                # The frozen build once excluded pyarrow, and every live load
+                # failed on the desktop while every job above still passed.
+                warmed = request(base + "/live/warm", {"parser": "spacy"})
+                if warmed["state"] != "ready" or warmed["error"]:
+                    raise RuntimeError(f"Live warm failed: {warmed['error'] or warmed['state']}")
+                if not list(args.workspace.rglob("annotations/*.parquet")):
+                    raise RuntimeError("Live warm kept no parse cache: the runtime cannot write parquet")
+                print(f"PASS live warm: {warmed['documents']} documents parsed and cached", flush=True)
             selected = ["readability", "lexical_diversity", "doc_similarity", "doc_duplicates"]
             if args.with_parser:
                 selected.extend(

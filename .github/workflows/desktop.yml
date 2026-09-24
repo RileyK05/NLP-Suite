@@ -270,7 +270,7 @@ jobs:
           # commit, and GitHub creates the tag when the draft is published.
           if gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -qx "$TAG"; then
             gh release upload "$TAG" release/* --clobber
-            gh release edit "$TAG" --notes-file release-notes.md
+            gh release edit "$TAG" --notes-file release-notes.md --target "$GITHUB_SHA"
           else
             gh release create "$TAG" release/* --draft --target "$GITHUB_SHA" \
               --title "NLP Suite $VERSION (beta)" --notes-file release-notes.md

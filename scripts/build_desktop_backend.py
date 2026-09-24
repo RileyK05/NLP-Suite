@@ -43,6 +43,10 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
         args.extend(["--collect-data", module])
     for module in ("numpy", "pandas", "scipy", "scikit-learn"):
         args.extend(["--copy-metadata", module])
+    # pandas imports pyarrow only inside read_parquet/to_parquet, so PyInstaller
+    # cannot see it; the live bench's parse cache (desktop_backend/live.py)
+    # needs it. pyarrow is a core dependency in pyproject.toml.
+    args.extend(["--hidden-import", "pyarrow.parquet"])
     if with_parser:
         args.extend(["--add-data", f"{root / 'desktop/.toolchain/nltk_data'}{separator}nltk_data"])
         for module in (
@@ -71,7 +75,6 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
         "IPython",
         "pytest",
         "tkinter",
-        "pyarrow",
         "spacy.tests",
         "thinc.tests",
         "gensim.test",
