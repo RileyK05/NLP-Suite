@@ -82,7 +82,10 @@ AppImage and interactive Finder/desktop acceptance remain manual checks.
 
 The README's Downloads link points to **GitHub Releases → latest**, not the
 source tree or Actions logs. `out/` and `desktop/src-tauri/target/` are
-gitignored, so a plain push publishes nothing. Releases are cut by tag:
+gitignored, so a plain push publishes nothing. The simplest release needs no
+command line: after bumping the version, open **Actions → Desktop platform
+builds → Run workflow**, tick **Draft a GitHub release**, and run it. The tag
+`v<version>` is created when you publish the draft. Or cut it by tag:
 
 ```text
 python scripts/bump_version.py 0.3.1
