@@ -94,7 +94,7 @@ jobs:
           else
             npm run package
           fi
-      - name: Deep-sign the Mac application
+      - name: Deep-sign the Mac application and rebuild its DMG
         # Tauri signs the bundle shallowly: nested Mach-O images from the
         # frozen engine (PyInstaller's Python.framework) carry a stale
         # signature whose resources were stripped, and codesign --verify
@@ -126,6 +126,16 @@ jobs:
           /usr/bin/codesign --force --deep --sign - "$APP"
           /usr/bin/codesign --verify --deep --strict "$APP"
           /usr/bin/codesign --display --strict "$APP/Contents/Resources/nlp-runtime/_internal/Python.framework/Versions/3.12/Python"
+          # Tauri wrote the DMG before this step, so it still holds the app
+          # with PyInstaller's stale signatures. Rebuild it from the re-signed
+          # app, keeping the drag-to-Applications layout and the file name.
+          DMG=$(find desktop/src-tauri/target/release/bundle/dmg -maxdepth 1 -name "*.dmg" | head -1)
+          test -n "$DMG"
+          STAGE=$(mktemp -d)
+          /usr/bin/ditto "$APP" "$STAGE/$(basename "$APP")"
+          ln -s /Applications "$STAGE/Applications"
+          rm -f "$DMG"
+          /usr/bin/hdiutil create -volname "NLP Suite" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
       - name: Validate and collect distribution files
         run: |
           python scripts/verify_desktop_payload.py --install-in-ci
@@ -260,6 +270,7 @@ jobs:
           # commit, and GitHub creates the tag when the draft is published.
           if gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -qx "$TAG"; then
             gh release upload "$TAG" release/* --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
           else
             gh release create "$TAG" release/* --draft --target "$GITHUB_SHA" \
               --title "NLP Suite $VERSION (beta)" --notes-file release-notes.md

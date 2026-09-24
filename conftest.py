@@ -42,6 +42,16 @@ WORKSPACE_TMP.mkdir(exist_ok=True)
 tempfile.tempdir = str(WORKSPACE_TMP)
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    # Apple's Accelerate BLAS (numpy's default on macOS arm64) raises the
+    # floating-point "invalid" flag on finite matrix products, so numpy warns
+    # "invalid value encountered in dot" for correct results, and
+    # filterwarnings=error fails the NMF tests on macOS only. The tests' own
+    # sign and repeatability assertions still fail on a real NaN.
+    if sys.platform == "darwin":
+        config.addinivalue_line("filterwarnings", "ignore:invalid value encountered in dot:RuntimeWarning")
+
+
 def has_spacy_model() -> bool:
     """Whether the default spaCy model is actually loadable.
 
