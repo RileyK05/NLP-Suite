@@ -1,0 +1,77 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Environments ---
+.venv/
+venv/
+.env
+
+# --- Tooling caches ---
+.pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tmp_wordcloud/
+node_modules/
+
+# --- Project outputs ---
+out/
+
+# --- Legacy oracle (never committed; referenced read-only) ---
+legacy/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+corpus/
+
+# Desktop build products and local toolchain (source and lockfiles are tracked)
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/.toolchain/
+*.tsbuildinfo
+desktop/src-tauri/gen/
+
+# Local NLTK corpora (downloaded per-machine, never committed)
+.nltk_data/
+
+# --- Owner's personal research + local tooling (untracked 2026-09-16) ---
+# These stay on disk and keep working; they are simply not part of the
+# published product. tests/test_distribution.py asserts the product packages
+# never reference them. See docs/LICENSE_REVIEW.md for what does ship.
+# Coursework builders (Homework 1 / Homework 2 / SOC 446W):
+scripts/*hw1*
+scripts/*hw2*
+scripts/build_immigration_evidence.py
+scripts/generate_issue_priority_heatmap.py
+scripts/run_gender_guesser.py
+scripts/run_legacy_chart_exports.py
+scripts/run_legacy_html_visuals.py
+scripts/run_legacy_visual_reference.py
+scripts/run_legacy_wordclouds.py
+scripts/focus_hw1.py
+scripts/enhance_hw1_ta.py
+scripts/review_hw1_voice.py
+scripts/revise_hw1_duration.py
+scripts/summarize_hw1.py
+scripts/explore_hw2_economic.py
+scripts/render_hw1_word.ps1
+review_first.md
+docs/HOMEWORK2_WORKING_PLAN.md
+# Local autonomous-refactor harness:
+scripts/autonomous-refactor-prompt.md
+scripts/autonomous-refactor.sh
+scripts/register-autonomous-task.ps1
+.opencode/
+# Course material: copyrighted, never published with the product
+*Syllabus*.docx

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NLP Suite",
+  "version": "0.3.1",
+  "identifier": "org.nlpsuite.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "NLP Suite",
+        "width": 1380,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 650,
+        "backgroundColor": "#f8f9f6"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:*; object-src 'none'; base-uri 'self'; frame-src nlp-viz: http://nlp-viz.localhost https://nlp-viz.localhost; child-src nlp-viz: http://nlp-viz.localhost https://nlp-viz.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": { "binaries/releases/0.3.1/nlp-runtime/": "nlp-runtime/" },
+    "shortDescription": "Your local NLP research workspace",
+    "windows": { "nsis": { "installMode": "currentUser" }, "webviewInstallMode": { "type": "offlineInstaller" } },
+    "macOS": { "minimumSystemVersion": "15.0" }
+  }
+}

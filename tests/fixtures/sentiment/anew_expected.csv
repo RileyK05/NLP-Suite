@@ -1,0 +1,5 @@
+Document ID,Document,Valence,Arousal,Dominance,Hits,Tokens
+1,pos.txt,7.56,4.9,6.478,4,6
+2,neg.txt,3.024,4.514,3.998,5,7
+3,neu.txt,5.315,3.165,6.115,2,6
+4,mixed.txt,5.565,4.26,4.985,2,4

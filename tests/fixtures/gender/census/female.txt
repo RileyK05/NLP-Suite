@@ -1,0 +1,4 @@
+# US census female-name list (test fixture)
+Mary
+Alice
+Alex

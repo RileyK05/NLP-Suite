@@ -1,0 +1,5 @@
+Document ID,Document,Neg,Neu,Pos,Compound,Label
+1,pos.txt,0.0,0.196,0.804,0.9228,positive
+2,neg.txt,0.817,0.183,0.0,-0.925,negative
+3,neu.txt,0.0,1.0,0.0,0.0,neutral
+4,mixed.txt,0.322,0.268,0.41,0.1682,positive

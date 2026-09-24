@@ -1,0 +1,3 @@
+# doc source topic proportion
+0	a/b/first.txt	0:0.9032	1:0.0968
+1	a/b/second.txt	1:0.7500	0:0.2500

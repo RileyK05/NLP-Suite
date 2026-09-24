@@ -1,0 +1,4 @@
+# US census male-name list (test fixture)
+John
+Harry
+Alex

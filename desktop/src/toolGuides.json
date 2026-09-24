@@ -1,0 +1,401 @@
+{
+  "clause_svo": {
+    "what": "Reports clause-tag frequencies and subject–verb–object candidates from the shared parse. SVO tables can help locate statements about who performs an action on what.",
+    "how": "Uses parser annotations and returns separate clause and SVO tables with sentence/document provenance. Inspect the source sentence for each extracted triple.",
+    "question": "Which subjects are linked to verbs such as support or protect, and what objects appear with them?",
+    "interpretation": "A triple is a parser-derived candidate, not a verified fact. Its grammatical roles are not always identical to real-world actor and recipient roles, especially in passive constructions.",
+    "limits": "Coordination, omitted arguments and parsing mistakes can produce incomplete triples. spaCy dependency annotations do not provide CoreNLP constituency clauses; missing clause tags are not evidence that a speech has no clauses."
+  },
+  "collocations": {
+    "what": "Scores word pairs by how much more often they occur together than chance alone would predict, using seven standard association measures side by side.",
+    "how": "Choose adjacent for strict bigrams or window to catch pairs separated by other words. Raise the minimum count first: association measures are unreliable on pairs seen once or twice.",
+    "question": "Which words genuinely belong together in this corpus? What are its fixed phrases, technical terms and characteristic word partnerships, as opposed to merely frequent pairs?",
+    "interpretation": "Sort by G2 when you want one answer: it is the most reliable measure on sparse data. PMI surfaces rare but tight pairs and inflates on low counts, t-score favours frequent well-attested pairs, and log Dice is comparable across corpora of different sizes on a scale topping out at 14.",
+    "limits": "Pairs never cross a sentence boundary. Tokens that are not purely alphabetic are skipped, and stopwords are only removed if you supply a stopword file. Rare pairs score highest on PMI by construction, so read it alongside the count column, never on its own."
+  },
+  "conll_wordlist": {
+    "what": "Builds a word frequency list from the parsed corpus with an optional part-of-speech filter (nouns only, verbs only, function words, and so on). It is the word-list workbench behind the legacy wordfrequency analyses.",
+    "how": "Choose the token field (surface form or lemma), a POS category filter, how many top words to keep (0 keeps everything), and whether matching stays case-sensitive. The parse supplies the token stream and POS tags.",
+    "question": "What are the most frequent content words in this corpus, and how does the noun/verb balance shift between sub-corpora?",
+    "interpretation": "Ranks are raw frequencies; the category filter changes the population, so a word can rank differently under 'noun' than under 'all'. Case-sensitive counts keep proper nouns separate from common nouns.",
+    "limits": "Frequencies only - no dispersion or keyness here; use keyword/keyness or n-grams for distributional views. POS filters inherit the parser's tagset decisions."
+  },
+  "corpus_statistics": {
+    "what": "Per-document lexical diversity: four stable measures (TTR, RootTTR, Herdan/LogTTR, Yule's K) computed in one grouped pass over the parse. The stable subset of the legacy's five-measure diversity battery.",
+    "how": "Pick the token field; every document gets one row with its measure values. No sampling loops: vocd-D and MTLD live in the dedicated lexical_diversity tool instead.",
+    "question": "How does vocabulary richness vary across documents - do later speeches draw on a wider lexicon than earlier ones?",
+    "interpretation": "Higher TTR/RootTTR/Herdan mean richer vocabulary; Yule's K goes the other way (lower is richer, and it is length-robust). Compare documents of different lengths with Herdan or Yule K, not raw TTR.",
+    "limits": "TTR falls with document length, so cross-document comparisons at very different lengths mislead; use the length-robust measures. Punctuation-only tokens are excluded by the tokenization rules."
+  },
+  "dispersion": {
+    "what": "Measures how evenly each word is spread across the corpus, so you can tell core vocabulary from a word that is frequent only because one document repeats it.",
+    "how": "Split by document for a collection, or into equal chunks to measure dispersion inside a single long text. Raise the minimum count first: dispersion of a word seen twice means nothing. Turn on the plot to see where each word actually falls across the corpus, with document boundaries marked.",
+    "question": "Is this frequent word actually characteristic of the whole corpus, or is it one document's topic showing up in the totals?",
+    "interpretation": "Gries' DP runs from 0 (perfectly even) to 1 (concentrated); Juilland's D runs the opposite way, 1 even to 0 concentrated. Rank by adjusted frequency rather than raw frequency when you want a defensible core-vocabulary list. Two words with the same DP can still have different shapes in the plot, and that shape is often the finding.",
+    "limits": "Dispersion depends entirely on how you split the corpus: the same text chunked ten ways and fifty ways gives different numbers, so only compare values computed the same way. At least two non-empty parts are required."
+  },
+  "doc_duplicates": {
+    "what": "Finds candidate repeated documents using separate exact, normalized and fuzzy comparisons. Exact and normalized matches are different categories, not interchangeable definitions of duplication.",
+    "how": "Returns exact groups, normalized groups and fuzzy pairs. The threshold controls fuzzy matching on a 0–100 scale. This analysis reports findings; it does not remove your documents.",
+    "question": "Did the corpus accidentally include a speech twice, perhaps with different whitespace or minor editorial changes?",
+    "interpretation": "Start with exact matches, then inspect normalized matches and fuzzy pairs. A candidate match can be an intentional revision or quotation rather than an import error.",
+    "limits": "A permissive threshold can join genuinely different texts. Near-duplicate checks can be expensive on long documents and large collections. Review matches before making any deletion decisions."
+  },
+  "doc_similarity": {
+    "what": "Compares documents by their weighted vocabulary using TF-IDF and cosine similarity. Terms common in a document but less common across the collection receive more distinctive weight.",
+    "how": "Produces a table of document pairs plus pairs meeting the duplicate threshold. The threshold setting is on a 0–100 scale. An optional stopword file changes which vocabulary contributes.",
+    "question": "Which State of the Union speeches have the most similar vocabulary? Inspect the highest-scoring pairs alongside their original passages.",
+    "interpretation": "A higher score means more similar weighted vocabulary, not identical meaning. With 87 documents there are 3,741 distinct pairs. Changing the corpus can change TF-IDF weights and scores.",
+    "limits": "Word overlap does not detect agreement, contradiction, plagiarism or historical influence. Pair counts grow quadratically. Calibrate any duplicate threshold by reading examples."
+  },
+  "k_sentences": {
+    "what": "Extracts the first K and last K sentences of every document and reports how often each sentence-opening repeats, plus repetition windows.",
+    "how": "Set K for the opening and closing windows (defaults 2 and 2). The tool walks each parsed document in sentence order and outputs both the per-document windows and a repetition table.",
+    "question": "Do speeches open and close with the same formulas ('My fellow Americans', 'God bless...')? Which openings recur most?",
+    "interpretation": "The repetitions table counts sentence-level echoes: high counts mark ritual openings/closings. Compare the K-first and K-last halves for framing shifts.",
+    "limits": "Sentence segmentation comes from the parse; very short documents produce overlapping windows. The tool reports text windows, not semantic similarity."
+  },
+  "keyness": {
+    "what": "Compares two groups of documents and ranks words by how strongly they distinguish the groups (G2 log-likelihood).",
+    "how": "Give a regex over document names: matching documents form group A, the rest form group B. Positive Log Ratio means over-represented in group A.",
+    "question": "What words does discourse A use that discourse B does not? Which vocabulary marks a genre, an author, a period?",
+    "interpretation": "Rank words by G2 and read the top rows as the distinctive vocabulary of the matched group; check Log Ratio direction against the group label.",
+    "limits": "Both groups need at least one document. Output is capped by the row limit; set 0 to keep everything."
+  },
+  "kwic": {
+    "what": "Lists every occurrence of a word with its surrounding context in a table. This is the classical concordance view used in corpus linguistics.",
+    "how": "Enter a word or fragment and the context window width. Regex and case-sensitive matching are available. Each row keeps document and sentence provenance.",
+    "question": "In what surroundings does this word appear? Does 'freedom' collocate with 'speech' or with 'from'?",
+    "interpretation": "Scan left and right contexts for recurring collocates; frequent neighbors of the node word are candidates for further collocation analysis.",
+    "limits": "Matches stop at the hit limit; context stays inside the sentence. Lemma search needs a parse; use search for raw text lines."
+  },
+  "lexical_diversity": {
+    "what": "Measures vocabulary variety through complementary statistics: type-token ratio (TTR), Guiraud, MTLD and sampled vocd-D. A type is a distinct word; a token is a word occurrence.",
+    "how": "Uses raw text and produces one document-level table. The seed controls vocd sampling so you can repeat a run with the same settings.",
+    "question": "Which speeches rely most heavily on repeated vocabulary, and does the pattern remain when you compare similar-length speeches?",
+    "interpretation": "TTR is distinct words divided by word occurrences. It usually decreases as documents grow. MTLD and vocd-D address length sensitivity in different ways; inspect multiple measures together.",
+    "limits": "Vocabulary variety is not writing quality or intelligence. Tokenization, document length, names and transcription conventions affect the result. Very short documents may not support every measure."
+  },
+  "narrative": {
+    "what": "Tracks sentence-level sentiment and length, alongside character-mention outputs, to help explore how a document develops from beginning to end.",
+    "how": "Uses parsed text and VADER for emotion arcs; the character-related analysis also depends on its lexical resources. Outputs separate emotion, length, character mentions and character arcs.",
+    "question": "Where does a speech shift toward more negative vocabulary, and what is being discussed at those points?",
+    "interpretation": "The horizontal progression is through the document, not necessarily historical time. Inspect individual sentences around apparent peaks and compare different-length speeches carefully.",
+    "limits": "An arc is not an automatic plot interpretation or proof of persuasion. Sentiment and character heuristics can misread quotations, names and irony. Inspect diagnostics when resources are missing."
+  },
+  "ner": {
+    "what": "Uses named-entity tags to report people, organizations, places and other recognized categories. This desktop output aggregates tagged token forms within each document.",
+    "how": "The entity table groups token text and entity tag by document, recording counts and first/last sentence positions. A separate table filters location tags. Multiword names may appear as separate token entries.",
+    "question": "Which named people or places recur across speeches, and how accurate are those labels when you read their sentences?",
+    "interpretation": "The entity timeline describes sentence positions, not calendar dates. Location tracking is a table of mentions, not geocoding or a travel map. Review token fragments before counting whole names.",
+    "limits": "Historical names and unfamiliar spellings can be missed or mistagged. The tool does not resolve aliases or prove that two identical names identify the same person."
+  },
+  "ngram_cooccurrence": {
+    "what": "Counts unordered word pairs that co-occur within a sentence window: two words co-occur when they appear in the same sentence within the chosen window of positions, at most once per sentence pair. It is a distributional sketch of lexical company-keeping.",
+    "how": "Set the window size (default 5), the token field, and a minimum pair count. The tool walks each parsed sentence, collects token positions, and tallies every qualifying pair once. Output is a symmetric pair table ranked by count.",
+    "question": "Which terms keep the same company in this corpus? Do movement words co-occur with institutional words, or does the discourse keep them apart?",
+    "interpretation": "Higher counts mean the pair recurs across sentences; because pairs are counted once per sentence, the numbers reflect breadth of co-occurrence rather than raw repetition. Compare pairs across sub-corpora for contrast.",
+    "limits": "Unordered pairs lose linear order (use n-grams for that); windowed counts are sensitive to sentence length; function-word pairs dominate unless you filter by field choice or minimum count."
+  },
+  "ngrams": {
+    "what": "Counts contiguous word sequences (n-grams) over the documents and pairs them with pointwise-mutual-information collocations. N-grams show recurring phrases as they appear; collocations surface word pairs that occur together far more than chance would predict.",
+    "how": "Pick the n-gram size (1-5), the token field (surface form or lemma), and a minimum count that filters rare pairings. The parse supplies sentence and token boundaries, so n-grams never cross sentence edges. Results rank by frequency; collocations rank by PMI.",
+    "question": "Which phrases recur across the speeches, and which word pairs are statistically tightly bound (e.g. 'fellow Americans') rather than coincidental neighbours?",
+    "interpretation": "High-count n-grams are the repeated formulas of the corpus; high-PMI pairs are distinctive couplings even at low frequency. PMI favours rare pairs, so raise the minimum count before reading too much into the top of that table.",
+    "limits": "Counts are surface-level: no lemmatization unless you choose the lemma field, no stopword removal, and n-grams ignore document structure beyond sentence boundaries. Very small corpora make PMI unstable."
+  },
+  "nominalization": {
+    "what": "Finds candidate nouns related to verbs, such as development and develop, using WordNet derivational relationships. This can help examine how actions are expressed as things or processes.",
+    "how": "Uses parsed text and WordNet. A suffix prefilter narrows candidates when check-ending is enabled; the optional curated list can bypass that filter for specified words.",
+    "question": "Do some speeches favour noun constructions such as implementation over more direct verbal constructions?",
+    "interpretation": "Read candidate nouns in their sentences and inspect suggested base verbs. A dictionary relationship is evidence of a possible derivation, not proof of a particular rhetorical function.",
+    "limits": "WordNet is incomplete and words have multiple senses. Not every noun with a familiar suffix is a deverbal nominalization. The analysis does not automatically prove abstraction, evasiveness or poor style."
+  },
+  "readability": {
+    "what": "Estimates reading difficulty from surface features such as sentence length and syllable counts. The suite reports several measures, including Flesch, Fog and SMOG, rather than one universal readability score.",
+    "how": "Runs directly on imported text, producing document-level results without a language model. Compare the same column across documents; different formulas have different scales.",
+    "question": "Did the language of State of the Union speeches become easier to read across periods? Start by comparing speeches of similar length and checking a few passages yourself.",
+    "interpretation": "Higher Flesch Reading Ease generally means easier text; higher grade-level scores generally mean more demanding text. They are estimates, not measured comprehension.",
+    "limits": "Scores do not assess argument quality, factual accuracy or an actual reader's understanding. Short passages, headings, abbreviations and transcription errors can distort sentence and syllable counts."
+  },
+  "search": {
+    "what": "Finds matching text or parsed tokens with provenance so you can inspect language in context. A regular expression is a pattern language, rather than a literal search phrase.",
+    "how": "For this desktop workflow, use text mode for matching lines, or conll mode for matching the Lemma column in parsed token rows. CSV mode is not supported by the corpus batch adapter.",
+    "question": "Where do speeches mention education, and how is the surrounding language different across documents?",
+    "interpretation": "Text hits identify a document and line; parsed hits identify token rows. Lemmas group some inflected word forms, so a lemma match is not necessarily the exact original spelling.",
+    "limits": "This is pattern matching, not semantic search. Case sensitivity and regex settings change results. Conll mode needs a parser even though ordinary text search does not."
+  },
+  "sentence_complexity": {
+    "what": "Measures sentence structure from dependency parses: a model's representation of how words attach to one another. It complements surface readability measures.",
+    "how": "Parses the corpus with the selected English backend and writes sentence-level complexity measures. Read the table headers and compare sentences in their source context.",
+    "question": "Which speeches contain especially deeply structured sentences, and are those sentences also long?",
+    "interpretation": "A structural score describes the parser's analysis, not a judgment that a sentence is good or bad. Compare length and structure together before drawing conclusions.",
+    "limits": "Dependency trees are not constituency trees. The bundled spaCy parser does not establish CoreNLP constituency parity. Historical language, fragments and bad punctuation can reduce parsing accuracy."
+  },
+  "sentiment_vader_anew": {
+    "what": "Combines VADER polarity scoring with ANEW word-rating averages for valence, arousal and dominance. These measure different aspects of lexical tone.",
+    "how": "The desktop defaults to the included VADER scorer and writes document and sentence results. Select both analyses and choose your ANEW ratings CSV to also compute lexicon-based valence, arousal and dominance. No resource download is needed for VADER.",
+    "question": "Which speeches use more positively rated vocabulary, and which passages account for the difference?",
+    "interpretation": "Compare the same measure and settings across documents; do not average unrelated scales together. Read sentence-level VADER results alongside document aggregates.",
+    "limits": "Dictionary scores are not the speaker's actual feelings or the audience's response. Negation, irony, quotations and historical vocabulary can defeat the scoring assumptions. Check lexicon coverage and diagnostics."
+  },
+  "shapes": {
+    "what": "Story-shape metrics per sentence - token count plus noun and verb ratios - the deterministic core of the legacy shape-of-stories. Optionally emits a Sankey flow diagram over two chosen columns.",
+    "how": "No required parameters; the parse supplies sentences and POS. Add Sankey source/target columns (e.g. document to POS category) for the flow diagram.",
+    "question": "Do speeches follow a shape - opening with noun-heavy framing and closing with verb-heavy calls to action?",
+    "interpretation": "Rising verb ratio across sentence positions marks mobilization; noun-heavy stretches are topical exposition. The Sankey shows where categories flow between levels.",
+    "limits": "Ratios are POS-based proxies, not rhetorical categories. Sentence order is document order; no discourse parsing."
+  },
+  "spellcheck": {
+    "what": "Flags words that are absent from an explicitly supplied wordlist and offers similarity-based suggestions. It is a vocabulary-list comparison, not a grammar checker.",
+    "how": "Choose a wordlist resource and a suggestion threshold. Review the suggested changes against the original text before deciding whether a word is misspelled.",
+    "question": "Which unusual spellings in historical speeches are transcription errors, and which are valid names or older spellings?",
+    "interpretation": "An unknown word means only that the selected list does not contain it. Suggestions need human review; choose a list appropriate to the language and period.",
+    "limits": "Names, specialist terms and historical variants will often be flagged incorrectly. Do not automatically replace unknown words. Imported originals remain the source of record."
+  },
+  "style": {
+    "what": "Scores concreteness or iconicity using human word-rating norms. Concreteness concerns how perceptible a concept is; iconicity concerns a perceived relationship between a word's form and its meaning.",
+    "how": "Choose the analysis and provide its norm resource. The suite matches parsed forms or lemmas and creates sentence-level scores; iconicity can also produce words meeting rating and variability thresholds.",
+    "question": "Which passages use comparatively concrete vocabulary, and does that match your close reading?",
+    "interpretation": "Scores summarize rated vocabulary, not every aspect of a sentence. Compare documents with similar resource coverage and keep the norm scale in view.",
+    "limits": "Norm resources are user-supplied and may not represent historical or specialist meanings. Concreteness is not truthfulness, and iconicity is not an overall measure of literary quality."
+  },
+  "svo_compare": {
+    "what": "Pairwise document comparison over subject-verb-object triples: Jaccard similarity on subjects, verbs, objects, and full triples between every document pair.",
+    "how": "Runs the shared SVO extraction over the parse, groups triples by document, and computes four Jaccard coefficients per document pair. No parameters - the parse drives everything.",
+    "question": "Which documents talk about the world in the same grammatical terms? Do allies share subject-verb frames the way they share vocabulary?",
+    "interpretation": "Triple Jaccard near 1 means near-identical clause content; verb-only Jaccard captures stylistic convergence without topic overlap. Use the full-triple column as the headline and the others for diagnosis.",
+    "limits": "Extraction is dependency-based and English-tuned; very short documents produce few triples, making Jaccard coarse. Triple sets ignore counts (a repeated triple counts once)."
+  },
+  "table_charts": {
+    "what": "Publication-ready charts over your own CSV table: bar, line, scatter, histogram, box, heatmap, pie, sunburst, treemap, violin, radar, waffle, and calendar heatmap. The full typed chart pipeline of the suite.",
+    "how": "Upload the CSV, pick a kind and the x/y (and optionally group) columns. Duplicates per (x, group) require an aggregation choice. Export as interactive HTML or a native Excel workbook.",
+    "question": "What should the figure for the paper look like? Compare category totals, trends over years, or distributions side by side.",
+    "interpretation": "Every chart records its full preparation (aggregation, bins, normalization) in chart_data.csv, so the numbers behind the picture are auditable. Percent modes sum to 100 at the chosen level.",
+    "limits": "Excel export covers bar, line, pie, scatter and radar charts. Use HTML for other chart kinds. Negative values cannot be drawn as slices (pie/sunburst/treemap/waffle)."
+  },
+  "table_chi2": {
+    "what": "Tests association between two categorical columns by comparing observed cell counts with counts expected under independence.",
+    "how": "Select a CSV and the exact names of its two category columns. Each row should represent an observational unit, not an already aggregated frequency total disguised as one observation.",
+    "question": "Is a manually coded theme distributed differently across independent groups of speeches?",
+    "interpretation": "Inspect the contingency table and expected counts alongside the test statistic and p-value. Alpha is a decision threshold, not the probability that your hypothesis is true.",
+    "limits": "Sparse cells and dependent observations undermine the test assumptions. Statistical significance does not measure practical importance or establish causation. Repeated tests need a planned multiplicity strategy."
+  },
+  "table_crosstab": {
+    "what": "Summarizes how two categorical variables overlap in a cross-tabulation of counts. It is a descriptive starting point before interpreting group differences.",
+    "how": "Select a CSV with one observation per row and specify the two category column names. Category spelling and missing values affect which observations appear in each cell.",
+    "question": "How many speeches in each period were assigned each theme by a human coder?",
+    "interpretation": "Read counts against group sizes. A larger count can simply reflect a larger group; compare appropriate denominators before making a prevalence claim.",
+    "limits": "Counts alone are not a significance test, and categories depend on your coding decisions. Do not confuse a table of pre-aggregated counts with observation-level input."
+  },
+  "table_keyness": {
+    "what": "Compares word-frequency columns to find vocabulary that distinguishes a focus collection from a reference collection. What is distinctive depends on the reference you choose.",
+    "how": "Provide a CSV with a word column and two frequency columns using exact headings. The frequency columns must contain counts, not TF-IDF weights or percentages.",
+    "question": "Which words distinguish one selected group of speeches from another, using comparable tokenization and collection boundaries?",
+    "interpretation": "Inspect frequency and keyness information together. Read high-ranking words in context and document which collection each frequency column represents.",
+    "limits": "Distinctive frequency is not importance, intent or causation. Incomplete frequency inventories distort corpus totals. Rare words, reference choice and multiple comparisons can dominate apparent findings."
+  },
+  "table_kw": {
+    "what": "Kruskal–Wallis compares ranked values across independent groups. Dunn post-hoc comparisons help identify which pairs differ, with Bonferroni or Holm adjustment.",
+    "how": "Select the numerical value and group columns in an observation-level CSV, then choose the significance threshold and post-hoc correction.",
+    "question": "Do independent sets of speeches from several defined groups differ in a selected vocabulary measure?",
+    "interpretation": "The overall test does not identify the differing pairs by itself. Inspect corrected pairwise results alongside distributions and group sizes.",
+    "limits": "This is not a repeated-measures test for several tools scoring the same documents. Independence and distributional assumptions still matter. Adjusted p-values are not effect sizes or proof of causation."
+  },
+  "table_mw": {
+    "what": "Mann–Whitney U compares the ranks of a numerical or ordinal outcome between two independent groups. It asks whether values tend to differ between groups.",
+    "how": "Choose a CSV, a numerical value column and a group column containing two groups. Each row should represent an independent observation.",
+    "question": "Do readability scores tend to differ between two independently defined sets of speeches?",
+    "interpretation": "Read the test result with group distributions and sample sizes. It is not generally a test of equal means, and a median-shift interpretation requires additional distributional assumptions.",
+    "limits": "Paired measurements of the same speeches are not independent groups. Repeated authors, temporal dependence and confounding need consideration. A significant result does not explain why groups differ."
+  },
+  "table_rankcorr": {
+    "what": "Measures monotonic association between two numerical or ordered variables using Spearman's rho or Kendall's tau. Positive values indicate rankings that tend to move together; negative values indicate opposite rankings.",
+    "how": "Select two numerical columns in a CSV, with both values on each row belonging to the same observation. Choose the correlation method explicitly.",
+    "question": "Do longer speeches tend to have higher or lower scores on a particular readability measure?",
+    "interpretation": "Coefficients range from −1 to 1. A value near zero means little rank association, not necessarily no relationship of any kind. Read the result alongside a scatterplot.",
+    "limits": "Correlation does not establish causation or quantify the slope of a relationship. Constant columns, ties, missing values and dependent observations need scrutiny; rho and tau are not interchangeable scales."
+  },
+  "table_search": {
+    "what": "Searches the parsed CoNLL table with a single predicate over any column: exact, contains, prefix, suffix, or regex - the programmatic find-in-parsetable.",
+    "how": "Choose a CoNLL column (Form, Lemma, POS, NER, DepRel...), a value, a match operation, and optional case-sensitivity or negation. Output preserves the full matching rows with provenance.",
+    "question": "Where exactly does 'freedom' appear as a plain noun versus inside named entities? Which tokens carry a given dependency relation?",
+    "interpretation": "Rows keep Document/Sentence IDs, so results link back to the text. Negation flips the predicate; regex anchors are your job (^ and $).",
+    "limits": "Use one search condition per run. Very common values produce large tables; narrow the value or choose a more specific field."
+  },
+  "table_trend": {
+    "what": "Mann–Kendall tests for a monotonic pattern: values tending upward or downward in time order. It does not require the trend to be a straight line.",
+    "how": "Supply a CSV with a date column and numerical value column. Ensure dates identify the intended observation time and inspect the chronological series before testing.",
+    "question": "Do document-level readability measures tend to increase or decrease across the speech dates?",
+    "interpretation": "Interpret direction and significance alongside a plot and the underlying values. An absence of monotonic trend does not rule out a rise followed by a fall.",
+    "limits": "Autocorrelation, repeated observations and changes in corpus composition can undermine inference. This is not automatic seasonality adjustment, forecasting or evidence that time itself caused a change."
+  },
+  "table_wordcloud_gephi": {
+    "what": "Wordclouds (interactive HTML and optional raster PNG, including the butterfly shape) and Gephi GEXF network files over a word/weight CSV - the visualization layer of the legacy wordcloud and network tools.",
+    "how": "Wordcloud mode: choose the word column and the weight column, set max words and an optional title; tick image for a PNG (with the butterfly shape option). GEXF mode needs source and target columns for the edge list.",
+    "question": "Which words dominate the discourse, and how do terms connect when co-occurrence is drawn as a network?",
+    "interpretation": "Font size scales with weight; the PNG is seeded so reruns are byte-identical. The GEXF opens in Gephi for network exploration.",
+    "limits": "Weights must be numeric and positive; the wordcloud is display, not statistics. Shape masks need Pillow (installed with the suite)."
+  },
+  "text_statistics": {
+    "what": "Per-document surface summary: sentence count, token count, type count, average sentence length, average word length, and syllable estimates. The legacy compute_corpus_statistics table, derived from the parse.",
+    "how": "No parameters. Every document with tokens gets one row; documents with no alphabetic tokens still appear so joins stay aligned.",
+    "question": "How do sentence length and word length profile across the corpus? Which documents are the longest and densest?",
+    "interpretation": "Avg Sentence Length is the classic readability driver; Avg Syllables per Word proxies lexical complexity. Watch both together - long sentences with short words read differently than short sentences with long words.",
+    "limits": "Syllable counts are heuristic (English orthography rules), not dictionary-based. The parse, not raw text, defines tokens and sentences."
+  },
+  "tfidf": {
+    "what": "Ranks the terms that make each document distinctive, by weighting how often a term appears here against how rare it is across the rest of the corpus.",
+    "how": "Raise the minimum document frequency to drop one-off noise, and lower the maximum document ratio to suppress words that appear nearly everywhere. Sublinear term frequency dampens heavy repetition.",
+    "question": "What is this document about, compared with the others? Which words would I use to label it, or to find it again in a search?",
+    "interpretation": "Read the top-ranked terms per document as a candidate label, then confirm by reading the document. Weights are comparable across documents only while L2 normalization stays on.",
+    "limits": "With no stopword filtering, common function words can still rank highly on a small corpus, because rarity is judged only against the documents you supplied. A single document makes every IDF identical, reducing the ranking to plain term frequency."
+  },
+  "lexicon_series": {
+    "what": "Counts word groups you define yourself and reports them along an axis such as year, decade or speaker, as a rate per 1,000 words alongside the raw counts.",
+    "how": "Write your groups as 'Name: word, word; Other name: word, word'. Phrases are allowed and match as phrases, so 'civil rights' does not count every mention of rights. Choose what to count along: year and decade come from dates in the file names, pattern takes a regex whose first group names the axis value (for example _([a-z. ]+)_sotu to count by speaker). 'Only inside sentences about' takes a second set of groups and restricts counting to the sentences matching it.",
+    "question": "How did attention to a topic change over time? Which speaker returns to it most? When they talked about one subject, what vocabulary came with it?",
+    "interpretation": "Read Per 1000 rather than Occurrences when comparing across the axis: documents differ in length, so raw counts largely track how much was said. Sentence Percent is the share of sentences touching the group, which is steadier than occurrences when one passage repeats a word. A zero is a measurement, not a gap.",
+    "limits": "A word group is a list you chose, so it measures your list and not the concept behind it; keep it inspectable and say what is in it. Counting is on tokens, so a word welded to its neighbour by a bad character in the source is not found. Lemma is the dictionary form, so 'immigrants' is 'immigrant'; switch the field to Form to match exactly what was written. Documents that cannot be placed on the axis are reported and left out rather than grouped together."
+  },
+  "lda_gensim": {
+    "what": "Fits a topic model to patterns of word co-occurrence. Topics are weighted word collections; documents can mix several topics rather than belonging to a single theme. Separated from the MALLET workflow so the two LDA backends can be compared.",
+    "how": "Uses parsed tokens and the selected modeling settings, including topic count and seed. Inspect topic words alongside the document-topic output. Filtering nouns or stopwords changes what the model can see.",
+    "question": "What recurring vocabulary clusters occur in the speeches, and which documents help explain each cluster?",
+    "interpretation": "You name and interpret the topics after reading their words and representative documents. Repeat with different topic counts to check whether your interpretation is stable.",
+    "limits": "A topic number is an arbitrary identifier, not a historical category. Statistical clusters are not discovered ground truth. Small corpora, rare words and preprocessing can make topics unstable."
+  },
+  "lda_mallet": {
+    "what": "Finds recurring themes with MALLET's LDA, alongside the Gensim workflow so the two backends can be compared: which reads your corpus better?",
+    "how": "Needs the MALLET Java binary on your PATH. Choose the number of topics and a random seed; run it as a recorded job over the whole corpus.",
+    "question": "Does MALLET see the same themes in this corpus that Gensim does?",
+    "interpretation": "Topic keys are the words MALLET weighs most heavily per topic; the dominant table says which topic each document leans on. Two backends agreeing is evidence; two disagreeing is a finding about the corpus or the settings, not an error.",
+    "limits": "Without the MALLET binary the tool refuses to run rather than substituting another backend. Topics are estimated and can shift between runs; the seed makes a run repeatable, not correct. Few documents mean unstable topics."
+  },
+  "gender_annotator": {
+    "what": "Classifies person names found in the parsed corpus as male, female, both or unknown by looking each name up in a chosen name dictionary: US census, Carnegie Mellon, NLTK or US Social Security. Names come from NER PERSON spans or PROPN tokens, whichever source you pick.",
+    "how": "Choose which of the four dictionaries to consult and point names-dir at the folder holding its male.txt and female.txt lists. Choose source to take names from NER PERSON spans or from PROPN tokens; every looked-up name gets a gender label and a hit count from that dictionary.",
+    "question": "Does the cast read as mostly male or female, and does that change when a different dictionary is asked?",
+    "interpretation": "Counts are dictionary lookups over name strings, not a census of people. A name listed in both lists becomes both; a name in neither becomes unknown. Compare the same corpus across dictionaries before treating any one run as the answer.",
+    "limits": "Names are not people: initials, titles, surnames used alone and non-English names fall through as unknown, and one name can stand for several people. Coverage differs sharply across the four dictionaries, so compare them on one corpus rather than trusting a single run."
+  },
+  "date_annotator": {
+    "what": "Finds date expressions in raw text and normalizes them to one ISO date: March 5 2020, 5 March 2020 and 03/05/2020 all become the same value. The Type column records how much of a date was actually given.",
+    "how": "Set min-year and max-year to the plausible range of your corpus; numbers outside it are left alone, which keeps stray figures such as 1,500 soldiers from becoming years. Type distinguishes a full date from month_year, bare year and decade.",
+    "question": "When do these documents speak of events, and which periods dominate the mentions - as distinct from when were the documents themselves written?",
+    "interpretation": "One normalized date per expression makes mentions sortable and comparable, but Type says how strong each one is: a decade is a coarse bucket and a full date pins one day. Read the original phrase beside every normalized value on a sample before counting.",
+    "limits": "Numeric dates are read in US month/day order, so a day/month corpus is systematically misread - check a sample first. Bare years and decades are weak evidence of when a document is FROM; they usually mark discussed events, not authorship dates."
+  },
+  "quote_annotator": {
+    "what": "Extracts double-quoted spans and attaches a speaker with a transparent two-stage sieve: a reporting verb such as said, asked or replied beside a name first, else the nearest named person. The Cue column records which stage fired.",
+    "how": "Runs over the parsed corpus with no parameters. Each quote row keeps the quoted text, the candidate speaker, and the Cue value (reporting-verb match or nearest-name fallback), so the attribution decision stays inspectable.",
+    "question": "Who is quoted in this corpus, on what topics, and does the reporting frame give some voices more room than others?",
+    "interpretation": "Cue is the honest column: reporting-verb matches are stronger attributions than nearest-name fallbacks. Read the sentence around each quote before counting speakers, and treat the speaker column as a candidate list, not testimony.",
+    "limits": "It is a lightweight sieve, not a quote-attribution research model - pronouns and narrators can be named as speakers when no name is near. Nested quotes and scare quotes can split spans, and single quotes are not treated as quotation marks."
+  },
+  "gender_guess": {
+    "what": "Guesses the gender of the writing style from weak words - pronouns, prepositions, articles and other function words - scored on a formal axis and an informal axis after the GenderGuesser METHOD (Koppel and Argamon style categories) with our own small documented lexicon.",
+    "how": "Counts the weak-word features per document and maps the totals to the two axis scores and category labels (male, female, neutral or unknown). The lexicon ships with the suite and is documented; scripts/run_gender_guesser.py runs the original tool for comparison evidence.",
+    "question": "Does the function-word profile of these documents lean male or female on the formal and informal axes, and do the two axes agree?",
+    "interpretation": "The two axes can disagree, and that disagreement is information: formal and informal prose draw on different weak words. Read the scores as a stylistic profile of the text in front of you, then check the underlying counts before quoting a label.",
+    "limits": "Labels are predictions about writing style, not ground truth about authors - speeches are collaborative, quotations carry another voice. Documents under fifty words are labelled unknown. These are our own categories, not the proprietary GenderGuesser dictionaries; scripts/run_gender_guesser.py runs the original for evidence."
+  },
+  "verb_analysis": {
+    "what": "Classifies every verb by tense (past, present, future, gerund), voice (active or passive) and modality (ability, possibility, obligation), and records the governing modal word alongside.",
+    "how": "Reads the parse for each verb token and fills the tense, voice and modality columns plus a Modal column naming the auxiliary or modal involved. When UD morphology is missing it falls back to POS tags and word endings and says so in the output.",
+    "question": "Which tenses and voices dominate, and where do obligation or possibility modals cluster - what stance does the corpus take toward the events it describes?",
+    "interpretation": "Passive voice marks where the actor is backgrounded, not where the writer is evasive. The modality columns describe grammatical mood; read Modal beside Modality because the same surface word can carry different readings.",
+    "limits": "Without UD morphology the tool falls back to POS tags and word endings (and warns when it does), so tense labels on irregular verbs can be wrong. The modal may can mean possibility OR permission and one column cannot separate them - always read Modal beside Modality."
+  },
+  "ngram_viewer": {
+    "what": "Counts your words and phrases year by year and charts the series: culturomics over your own corpus. Years come from document filenames such as 1934_address.txt, not from document text.",
+    "how": "Give queries as a comma-separated list of one to three words each, and set case-sensitive and smooth (the moving-average window in years). Each query becomes a line on the chart and a year-by-year table behind it.",
+    "question": "How does this curve differ from the Google Ngram Viewer over Google Books? What does frequency over time look like when the corpus is yours and the years are exact?",
+    "interpretation": "Peaks and dips are counts in your corpus for those years, sized by what you collected: a gap can mean no documents that year, not silence about the topic. Compare curves within one run rather than against published Google curves.",
+    "limits": "Without dates in filenames there is no time series and the run fails with instructions - that is exactly why the co-occurrence viewer works on undated corpora and this one cannot. Filename years are not checked against document content, and sparse years make smooth windows lumpy."
+  },
+  "sentiment_neural_bert": {
+    "what": "Sentence-by-sentence sentiment from a Hugging Face BERT classifier. The signed Compound column is what the story-shape tools consume, so keep it in view when building an arc.",
+    "how": "Splits the corpus into sentences and scores each with the transformer classifier, writing one row per sentence with document provenance and the signed Compound score. No lexicon is involved; the model weights do the work.",
+    "question": "Where does the emotional tone of this document rise and fall, sentence by sentence?",
+    "interpretation": "Compound is a signed score: read its direction and relative height across a document rather than treating one value as an absolute feeling. The arc is only as good as the sentence scores under it, so spot-check the sentences at the peaks.",
+    "limits": "Long sentences are truncated at 256 words (and said so in the output), so a score at the cap reads only the opening stretch. The model downloads on first use and needs network access that once; later runs use the cached copy."
+  },
+  "sentiment_neural_spacy": {
+    "what": "Sentence-by-sentence sentiment from a spaCy pipeline's textcat head, one of four neural annotators to compare side by side on the same corpus.",
+    "how": "Runs your configured spaCy pipeline over each sentence and reads its textcat scores into the standard sentiment table. It expects a pipeline trained with textcat; it does not train one for you.",
+    "question": "Does this annotator agree with the BERT, Stanza and CoreNLP readings of the same sentences, and where does it diverge?",
+    "interpretation": "Agreement across backends is evidence about the corpus; disagreement is evidence about the models or the text. Compare the same sentences across all four tables before trusting any one arc.",
+    "limits": "Vanilla spaCy models (en_core_web_sm) ship NO sentiment head, so this tool fails loudly with an install pointer rather than inventing a score or falling back to a lexicon - you need a pipeline trained with textcat before it will run."
+  },
+  "sentiment_neural_stanza": {
+    "what": "Sentence-by-sentence sentiment from Stanza's own sentiment processor, one of four neural annotators to compare on the same corpus.",
+    "how": "Splits the text into Stanza sentences, runs the sentiment processor on each, and writes the standard sentiment table with document provenance. Install the language package that carries sentiment before running.",
+    "question": "Does the Stanza reading match the other three backends, and does its coarse scale smooth away the peaks the others see?",
+    "interpretation": "Scores land on -1/0/+1, so an arc drawn from them is stepped, not smooth: a flat stretch means every sentence landed in the same hard class, not that nothing happened. Use the classes for coarse shape and a finer backend for detail.",
+    "limits": "It is a three-way HARD class (negative/neutral/positive), so scores land on -1/0/+1 rather than a smooth confidence. The sentiment processor ships with some language packages only; other languages parse in Stanza but do not score sentiment here."
+  },
+  "sentiment_neural_corenlp": {
+    "what": "Sentence-by-sentence sentiment from Stanford CoreNLP's sentiment annotator (the RNTN) through a running Java server, one of four neural annotators to compare on the same corpus.",
+    "how": "Points at a live CoreNLP server; CoreNLP does its own sentence splitting on the server before scoring. Output is the standard sentiment table, but the row counts follow CoreNLP's sentences, not the suite's.",
+    "question": "Run the same corpus through all four sentiment backends and compare: which one tells the clearest story, and does the shape-of-stories result follow it?",
+    "interpretation": "The better shape-of-stories result follows from the better sentiment scores, so judge the sentence tables first and the arcs second. Compare all four backends on the same corpus; agreement is evidence and disagreement is a finding about the models or the splitter.",
+    "limits": "Needs the CoreNLP server and its models jar running (the start command is in the error when it is not); without it the tool refuses to run rather than substituting another backend. CoreNLP splits sentences on the server, so the four backends' tables are parallel in columns but not in row counts - the splitter is part of what you are comparing."
+  },
+  "shape_hc": {
+    "what": "Hierarchical clustering of story-shape trajectories with a dendrogram: which documents tell similarly shaped stories, arranged as a tree of merge heights. A natural question is Vonnegut's: do these patterns follow Kurt Vonnegut's shapes?",
+    "how": "Each document becomes a trajectory of sentence-level shape metrics (from the shapes tool), trajectories are compared pairwise, and the dendrogram records at what height each pair or group merges. Read the tree from the leaves up.",
+    "question": "Do these patterns follow Kurt Vonnegut's shapes? Which documents tell similarly shaped stories, and where does the tree split them?",
+    "interpretation": "A low merge height means the two trajectories stayed close through the document; a high merge means only their broad outlines matched. A cluster is a family of shapes - name the shared arc by reading the member trajectories, not the height alone.",
+    "limits": "It groups trajectories it can see (sentence length and noun/verb ratios), not plot or character - two documents in one cluster are alike in shape only. Clustering is unsupervised and will draw a tree even when no real groups exist."
+  },
+  "shape_svd": {
+    "what": "SVD shape components: the orthogonal axes along which your stories' shapes vary, each with its share of variance. A way to ask what dimensions of shape this corpus actually uses.",
+    "how": "The sentence-shape feature matrix is decomposed; each component is returned with its variance share and the document weights along it. Read a component as a direction in shape-space and the share as how much of the corpus moves along it.",
+    "question": "What are the dominant axes of shape variation in this corpus - is one arc doing most of the work, or several?",
+    "interpretation": "A component is a shape (up early, down late is one arc) and the variance share says how much of the corpus it accounts for. Inspect the sign pattern along the sentences to see the arc, then read documents with extreme weights to see who uses it.",
+    "limits": "Components are mathematical axes of variation, not named plot types - the labels Vonnegut gave his shapes are yours to argue, not the SVD's. Signs are arbitrary (a component and its negative describe the same axis), and small corpora yield unstable components."
+  },
+  "shape_nmf": {
+    "what": "NMF non-negative shape parts: additive building blocks of story shapes, produced by non-negative matrix factorization of the sentence-shape features.",
+    "how": "Each feature column is shifted up by its own minimum before the fit so no value is negative (NMF cannot see negative numbers), and the shift is not undone. Parts and the document weights over them are reported for the shifted matrix.",
+    "question": "Which reusable shape-ingredients does this corpus combine - is a story here built from a rise, a fall and a plateau?",
+    "interpretation": "Parts add up, which is why they read as ingredients rather than axes: a document's shape is a weighted sum of parts. Name an ingredient by reading its profile and the documents that load heavily on it.",
+    "limits": "NMF cannot see negative numbers, so each feature column is shifted up by its own minimum before the fit and the shift is not undone - the parts are non-negative contributions and the reconstruction is of the shifted matrix, not of the original features. Part counts are a setting you choose, and parts can split or merge between runs."
+  },
+  "geocode": {
+    "what": "Turns the places named in your corpus into map coordinates. Three providers: offline (a small built-in gazetteer, no network), Google (needs GOOGLE_MAPS_KEY) and Nominatim (no key, rate-limited).",
+    "how": "Choose a provider and run over the extracted place names; every place comes back with a Status, coordinates when found, and the provider that answered. For the GIS pipeline, run the CoreNLP NER extractor first so the geocoder is handed places rather than every capitalized word.",
+    "question": "Which different ways do you have to improve geocoding? Why do you need to run the CoreNLP NER extractor in the GIS pipeline?",
+    "interpretation": "Coordinates are a lookup result, not a verified location: read Status and the provider column beside every row. The GIS pipeline needs to know WHICH words are places first - that is what the CoreNLP NER extractor supplies, and geocoding without it spends lookups on words that were never places.",
+    "limits": "The offline gazetteer knows only a handful of world cities and misses almost everything else. Unknown places come back Status=UNKNOWN rather than silently dropped. Google needs GOOGLE_MAPS_KEY; Nominatim is rate-limited and slow on large corpora."
+  },
+  "svo_map": {
+    "what": "Maps where narrative EVENTS happen: every subject-verb-object triple placed by its document's geocoded location, rendered as pins, heat and a Google Earth KML file.",
+    "how": "Joins each document's triples to that document's geocoded places and emits (triple, place) pairs with verb weights for the heat layer. The KML opens in Google Earth Pro; the pin and heat views cover the same data in the desktop.",
+    "question": "What does the Google Earth Pro of SVOs tell you? How does the map differ from the map produced by the GIS pipeline?",
+    "interpretation": "The SVO map is a map of actions (verb-weighted), not just of place mentions: pins mark where the narrative does things, so a verb-heavy document burns hotter than one that only names locations. Compare it with the GIS pipeline's mention map to see event against setting.",
+    "limits": "A triple with no geography in its document cannot be placed and is reported unplaced, not guessed onto the map. When a document names several places every (triple, place) pair is emitted, so counts are event-place pairs, not events - a speech naming five cities contributes five pins per triple."
+  },
+  "word2vec_bert": {
+    "what": "Word2Vec via BERT: which words come together in BERT's reading of your corpus, with a neighbour list and a vocabulary map - the same tables as the Gensim Word2Vec tool so the two Word2Vec approaches, BERT and Gensim, can be compared fairly: which gives better results?",
+    "how": "Runs the pretrained BERT model over your corpus, splits words into subword pieces, averages the contextual embeddings per word, and returns the neighbour and vocabulary tables in the Gensim tool's format. The model downloads on first use.",
+    "question": "Of the two Word2Vec approaches - BERT, Gensim - which gives better results on this corpus, and what does better mean here?",
+    "interpretation": "Compare like for like: the same query words, the same tables, and sentences from your corpus beside every neighbour list. Better can mean cleaner neighbours, better coverage of your vocabulary, or better agreement with your reading - say which one you used.",
+    "limits": "BERT is a PRETRAINED model reading your corpus (it splits words into subword pieces and averages contextual embeddings), NOT a model trained on your corpus the way the Gensim tool trains - so it never learns your corpus-specific senses. The model downloads on first use, and long contexts are truncated."
+  },
+  "word2vec_gensim": {
+    "what": "Trains Gensim Word2Vec on your corpus, placing words in a numerical space based on surrounding vocabulary. Neighbours are words with similar learned contexts, not necessarily synonyms.",
+    "how": "Uses parsed tokens and Gensim. Set minimum count, vector dimensions, context window, epochs and seed; optionally choose a query word for neighbours. Outputs include vectors, neighbours and a t-SNE projection.",
+    "question": "Which words occur in contexts similar to freedom or security in this collection?",
+    "interpretation": "Inspect neighbours in original sentences. Minimum count can exclude rare query words. A two-dimensional t-SNE plot is an exploratory view of higher-dimensional vectors.",
+    "limits": "Corpus size and uneven word frequencies limit reliability. Nearby words need not mean the same thing, and plot distances can be misleading. Separately trained spaces are not automatically comparable across periods. (Compare with Word2Vec via BERT on the same corpus.)"
+  },
+  "lda_stability": {
+    "what": "Fits the same topic model several times with different random seeds and matches each run's topics to a reference run by their top words, so you can see which topics come back and which were one run's accident.",
+    "how": "Choose the number of topics, how many seeds to try, and the overlap (Jaccard of top words) a topic must reach to count as stable. The match table pairs each reference topic with its closest topic under every other seed.",
+    "question": "Which of these topics would I still find if I ran the model again, and which should I not build an argument on?",
+    "interpretation": "A topic that matches closely under every seed is one the corpus supports. A topic that falls apart under a different seed is an artefact of that run; treat its words as noise rather than as a theme.",
+    "limits": "Stability is not correctness: a topic can come back every time and still be a stopword cluster or a formula of the genre. The check covers only the seeds tried, and top-word overlap ignores how the topic spreads over documents."
+  }
+}

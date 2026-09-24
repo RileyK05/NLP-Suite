@@ -1,0 +1,5 @@
+Document ID,Document,Happiness,Hits,Tokens
+1,pos.txt,6.95,6,6
+2,neg.txt,3.954,7,7
+3,neu.txt,5.197,6,6
+4,mixed.txt,4.955,4,4

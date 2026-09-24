@@ -1,0 +1,5 @@
+WordA,WordB,Cosine
+cat,kitten,0.0953
+cat,car,-0.1791
+engine,wheel,-0.0728
+engine,purr,-0.0028

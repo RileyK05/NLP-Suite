@@ -1,0 +1,5 @@
+Document ID,Document,Tokens,Hits,Pos,Neg,Obj,Net
+1,pos.txt,6,3,0.5417,0.0,0.4583,0.5417
+2,neg.txt,7,4,0.0312,0.5625,0.4062,-0.5312
+3,neu.txt,6,2,0.0,0.0,1.0,0.0
+4,mixed.txt,4,3,0.3333,0.2917,0.375,0.0417

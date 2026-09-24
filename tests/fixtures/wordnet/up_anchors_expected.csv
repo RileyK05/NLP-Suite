@@ -1,0 +1,8 @@
+Anchor,Word,WordNet Category,Intermediate synset 1,Intermediate synset 2,Intermediate synset 3
+canine,dog,(other) animal,dog.n.01,,
+canine,cat,(other) animal,cat.n.01,,
+canine.n.02,dog,canine,dog.n.01,canine.n.02,
+carnivore,dog,carnivore,dog.n.01,canine.n.02,carnivore.n.01
+person,dog,(other) animal,dog.n.01,,
+dog.n.01,dog,dog,dog.n.01,,
+zxqfrbl,dog,animal,dog.n.01,,

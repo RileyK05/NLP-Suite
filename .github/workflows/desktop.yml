@@ -1,0 +1,256 @@
+name: Desktop platform builds
+
+# Push a version tag (v1.2.3) to build every platform and draft a GitHub
+# Release with the installers attached. Run it by hand (Actions -> Run
+# workflow) to build test candidates without touching Releases.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      mac_only:
+        description: Build only Apple Silicon and Intel Mac candidates
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.mac_only && '[{"os":"macos-15","platform":"macos-arm64"},{"os":"macos-15-intel","platform":"macos-x64"}]' || '[{"os":"windows-2022","platform":"windows-x64"},{"os":"macos-15","platform":"macos-arm64"},{"os":"macos-15-intel","platform":"macos-x64"},{"os":"ubuntu-22.04","platform":"linux-x64"}]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      LOKY_MAX_CPU_COUNT: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2
+          # linuxdeploy cannot run under the runner's sandboxed FUSE; extract-and-run works everywhere.
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+      - name: Install pinned Python environment
+        run: |
+          python -m pip install -r desktop/requirements-runtime-py312.txt
+          python -m pip install --no-deps .
+          python -m pip install pytest
+          python -m pip check
+      - name: Desktop backend and packaging tests
+        # pytest does not create --basetemp's parent; on a fresh checkout out/ does not exist.
+        run: |
+          mkdir -p out/ci-pytest
+          python -m pytest tests/test_desktop.py tests/test_desktop_guides.py tests/test_desktop_portability.py tests/test_desktop_packaging.py tests/test_macos_payload.py -p no:cacheprovider --basetemp=out/ci-pytest
+      - name: Frontend verification
+        working-directory: desktop
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Download redistributable offline WordNet data
+        run: python -m nltk.downloader -d desktop/.toolchain/nltk_data wordnet
+      - name: Build native frozen engine
+        run: python scripts/build_desktop_backend.py --with-parser
+      - name: Exercise frozen engine
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          python scripts/smoke_desktop.py desktop/src-tauri/binaries/releases/$VERSION/nlp-runtime/nlp-runtime${{ runner.os == 'Windows' && '.exe' || '' }} --workspace out/ci-desktop-smoke --with-parser --job-timeout 300
+      - name: Select Rust toolchain
+        run: rustup default stable
+      - name: Rust tests
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
+      - name: Package native application
+        working-directory: desktop
+        run: |
+          # The AppImage bundler's linuxdeploy dies inside the sandboxed
+          # runner (extract-and-run is not enough); the deb bundles fine and
+          # is the supported install path (START-HERE.txt documents it).
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            npm run package -- --config src-tauri/tauri.linux.conf.json
+          else
+            npm run package
+          fi
+      - name: Deep-sign the Mac application
+        # Tauri signs the bundle shallowly: nested Mach-O images from the
+        # frozen engine (PyInstaller's Python.framework) carry a stale
+        # signature whose resources were stripped, and codesign --verify
+        # --strict then fails on the installed payload. Re-sign every
+        # Mach-O image explicitly, innermost first (codesign --deep does
+        # not rebuild nested signatures reliably). No failure masked.
+        if: runner.os == 'macOS'
+        run: |
+          APP=$(find desktop/src-tauri/target/release/bundle/macos -maxdepth 1 -name "*.app" | head -1)
+          test -n "$APP"
+          python - "$APP" <<'PY'
+          import subprocess, sys
+          from pathlib import Path
+
+          app = Path(sys.argv[1])
+          magics = {b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf", b"\xbe\xba\xfe\xca"}
+          for f in app.rglob("*"):
+              if not f.is_file() or f.is_symlink():
+                  continue
+              with f.open("rb") as h:
+                  if h.read(4) not in magics:
+                      continue
+              subprocess.run(
+                  ["/usr/bin/codesign", "--force", "--sign", "-", str(f)],
+                  check=True,
+              )
+              print("signed:", f.relative_to(app))
+          PY
+          /usr/bin/codesign --force --deep --sign - "$APP"
+          /usr/bin/codesign --verify --deep --strict "$APP"
+          /usr/bin/codesign --display --strict "$APP/Contents/Resources/nlp-runtime/_internal/Python.framework/Versions/3.12/Python"
+      - name: Validate and collect distribution files
+        run: |
+          python scripts/verify_desktop_payload.py --install-in-ci
+          python scripts/collect_desktop_release.py --destination out/distribution
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nlp-suite-${{ matrix.platform }}
+          path: out/distribution/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-evidence-${{ matrix.platform }}
+          path: |
+            out/desktop-package/runtime-inventory.json
+            out/desktop-package/resources/*
+            out/ci-desktop-smoke/smoke.log
+            out/installed-payload-check/macos-validation.json
+            out/installed-payload-check/workspace/backend.log
+            out/installed-payload-check/analysis-workspace/smoke.log
+          if-no-files-found: warn
+
+  release:
+    name: draft GitHub release
+    needs: package
+    # A failed platform does not hold back the others: the draft lists what
+    # was attached and what was not, and nothing is public until a maintainer
+    # presses Publish.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tag matches the product version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $VERSION. Run scripts/bump_version.py before tagging."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nlp-suite-*
+          path: built
+      - name: Build the Python wheel
+        run: |
+          python -m pip install build
+          python -m build --wheel --outdir built/python
+      - name: Stage release assets
+        # GitHub turns spaces in asset names into dots; name them predictably
+        # instead, then checksum the names users will actually download.
+        run: |
+          mkdir release
+          for file in built/nlp-suite-*/*.exe built/nlp-suite-*/*.dmg built/nlp-suite-*/*.deb built/nlp-suite-*/*.AppImage built/python/*.whl; do
+            [ -e "$file" ] || continue
+            name=$(basename "$file")
+            cp "$file" "release/${name// /-}"
+          done
+          if ! ls release | grep -qE '\.(exe|dmg|deb)$'; then
+            echo "::error::No platform built successfully; nothing to release."
+            exit 1
+          fi
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          ls -la release
+      - name: Write release notes
+        run: |
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          row() {  # platform label, glob, file hint
+            local match
+            match=$(cd release && ls $2 2>/dev/null | head -1)
+            if [ -n "$match" ]; then
+              echo "| $1 | \`$match\` |"
+            else
+              echo "| $1 | Not in this release ([build log]($RUN_URL)) |"
+            fi
+          }
+          {
+            echo "# NLP Suite $VERSION (beta)"
+            echo
+            echo "## Download"
+            echo
+            echo "Open **Assets** below and pick the file for your computer. No Python or other setup is needed."
+            echo "**Source code (zip / tar.gz) is not the app.**"
+            echo
+            echo "| Your computer | Download |"
+            echo "| --- | --- |"
+            row "Windows 10 / 11 (64-bit)" "*_x64-setup.exe"
+            row "Mac with Apple Silicon (M1 and later)" "*_aarch64.dmg"
+            row "Mac with Intel processor" "*_x64.dmg"
+            row "Linux (Debian / Ubuntu, 64-bit)" "*_amd64.deb"
+            echo
+            echo "**Windows:** run the EXE. If SmartScreen says \"Windows protected your PC\", click **More info → Run anyway** (the app is not code-signed yet)."
+            echo
+            echo "**Mac:** open the DMG and drag NLP Suite to Applications. The app is not notarized yet, so the first launch is blocked: open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to NLP Suite. Requires macOS 15 or later."
+            echo
+            echo "**Linux:** \`sudo apt install ./NLP-Suite_${VERSION}_amd64.deb\`"
+            echo
+            echo "**Python users:** \`pip install\` the attached \`.whl\` for the analysis engine and command line (Python 3.12). See the README."
+            echo
+            echo "## First steps"
+            echo
+            echo "1. Click **New project**, then **Try example documents**."
+            echo "2. Open **Analyses**, pick **Readability**, and press **Run**."
+            echo "3. The **Learn** tab explains every tool and where it can mislead you."
+            echo
+            echo "## Changes"
+            echo
+            echo "_Maintainer: summarise user-visible changes here before publishing._"
+            echo
+            echo "## Verify your download (optional)"
+            echo
+            echo "Compare against \`SHA256SUMS.txt\`. Windows: \`certutil -hashfile <file> SHA256\`. Mac/Linux: \`shasum -a 256 <file>\`."
+            echo
+            echo "---"
+            echo "Beta: not a full equivalence certification for NLP Suite 1.6.38. Keep your own backups of original research files."
+          } > release-notes.md
+          cat release-notes.md
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/* --draft --verify-tag \
+              --title "NLP Suite $VERSION (beta)" --notes-file release-notes.md
+          fi

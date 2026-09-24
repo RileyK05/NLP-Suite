@@ -1,0 +1,9 @@
+ID,Form,Lemma,POS,NER,Head,DepRel,Deps,Clause Tag,Record ID,Sentence ID,Document ID,Document
+1,The,the,DT,O,0,dep,_,,1,1,1,doc1.txt
+2,cats,cat,NNS,O,0,dep,_,,2,1,1,doc1.txt
+3,ran,run,VBD,O,0,root,_,,3,1,1,doc1.txt
+4,fast,fast,RB,O,0,dep,_,,4,1,1,doc1.txt
+1,The,the,DT,O,0,dep,_,,5,2,1,doc1.txt
+2,cats,cat,NNS,O,0,dep,_,,6,2,1,doc1.txt
+3,ran,run,VBD,O,0,root,_,,7,2,1,doc1.txt
+4,fast,fast,RB,O,0,dep,_,,8,2,1,doc1.txt

@@ -1,0 +1,34 @@
+# What the SOURCE DISTRIBUTION carries. The wheel is governed by
+# [tool.setuptools.packages.find] in pyproject.toml; this file governs the sdist.
+#
+# Shipping is currently incidental here: setuptools' defaults happen to leave
+# most of this repository out. That is not a guarantee, so the exclusions are
+# stated. tests/test_distribution.py asserts the personal-material rules hold.
+#
+# The product is the four packages (core, tools, app, desktop_backend) plus the
+# README. Everything below is development or personal material:
+#
+#   scripts/   release tooling AND one-off coursework builders (hw1/hw2)
+#   docs/      maintainer documentation, read on GitHub
+#   desktop/   Tauri app source; the desktop ships as an installer, not an sdist
+#   tests/     run from a clone; an sdist copy cannot run without conftest.py
+#   corpus/    research corpora (gitignored)
+#   out/       run artifacts (gitignored)
+#
+include README.md
+include LICENSE
+
+prune tests
+prune scripts
+prune docs
+prune desktop
+prune assets
+prune .github
+prune .opencode
+
+# Personal, never part of the product.
+exclude review_first.md
+exclude conftest.py
+
+global-exclude *.py[cod]
+global-exclude .DS_Store

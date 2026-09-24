@@ -1,0 +1,9 @@
+ID,Form,Lemma,POS,NER,Head,DepRel,Deps,Clause Tag,Record ID,Sentence ID,Document ID,Document,feats
+1,The,the,DET,O,0,dep,_,,1,1,1,doc1.txt,Definite=Def|PronType=Art
+2,cats,cat,NOUN,O,0,dep,_,,2,1,1,doc1.txt,Number=Plur
+3,ran,run,VERB,O,0,root,_,,3,1,1,doc1.txt,Tense=Past|VerbForm=Fin
+4,fast,fast,ADV,O,0,dep,_,,4,1,1,doc1.txt,_
+1,The,the,DET,O,0,dep,_,,5,2,1,doc1.txt,Definite=Def|PronType=Art
+2,cats,cat,NOUN,O,0,dep,_,,6,2,1,doc1.txt,Number=Plur
+3,ran,run,VERB,O,0,root,_,,7,2,1,doc1.txt,Tense=Past|VerbForm=Fin
+4,fast,fast,ADV,O,0,dep,_,,8,2,1,doc1.txt,_

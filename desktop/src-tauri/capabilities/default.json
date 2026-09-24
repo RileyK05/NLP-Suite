@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Local workspace window: file selection, no arbitrary shell or filesystem access from JavaScript.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
