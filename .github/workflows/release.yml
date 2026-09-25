@@ -1,0 +1,56 @@
+name: Publish the draft release
+
+# The last step of a release, as a button: publishes the draft that
+# "Desktop platform builds" (release: true) left for this version. GitHub
+# creates the v<version> tag at the draft's target commit, the release
+# becomes "latest", and installed apps see it through latest.json.
+#
+# Refuses a draft that is missing any platform's installer, so a partial
+# build can never become the release people download.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'RileyK05/NLP-Suite'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          TAG="v$VERSION"
+          draft=$(gh release view "$TAG" --json isDraft --jq .isDraft) || { echo "::error::No release $TAG: run Desktop platform builds with release first"; exit 1; }
+          if [ "$draft" != "true" ]; then
+            echo "$TAG is already published"
+            exit 0
+          fi
+          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for suffix in _x64-setup.exe _aarch64.dmg _x64.dmg _amd64.deb; do
+            echo "$assets" | grep -q -- "$suffix\$" || { echo "::error::$TAG has no $suffix installer; not publishing"; exit 1; }
+          done
+          echo "$assets" | grep -qx latest.json || echo "::warning::No latest.json: installed apps will not be offered this update (signing secrets missing)"
+          # The build leaves a placeholder under "Changes"; docs/releases/<version>.md replaces it.
+          changes="docs/releases/$VERSION.md"
+          [ -f "$changes" ] || { echo "::error::Write $changes (what changed, for users) before publishing"; exit 1; }
+          gh release view "$TAG" --json body --jq .body > notes.md
+          python - "$changes" <<'PY'
+          import sys
+          from pathlib import Path
+          placeholder = "_Maintainer: summarise user-visible changes here before publishing._"
+          notes = Path("notes.md").read_text(encoding="utf-8")
+          changes = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
+          if placeholder not in notes:
+              sys.exit("The draft's notes have no Changes placeholder; edit them on GitHub instead")
+          Path("notes.md").write_text(notes.replace(placeholder, changes), encoding="utf-8")
+          PY
+          gh release edit "$TAG" --notes-file notes.md --draft=false --latest
+          echo "Published $TAG"
