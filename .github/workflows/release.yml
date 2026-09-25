@@ -6,7 +6,9 @@ name: Publish the draft release
 # becomes "latest", and installed apps see it through latest.json.
 #
 # Refuses a draft that is missing any platform's installer, so a partial
-# build can never become the release people download.
+# build can never become the release people download. Run again on a
+# published release, it only rewrites the notes' Changes section from
+# docs/releases/<version>.md.
 on:
   workflow_dispatch:
 
@@ -29,10 +31,6 @@ jobs:
           VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
           TAG="v$VERSION"
           draft=$(gh release view "$TAG" --json isDraft --jq .isDraft) || { echo "::error::No release $TAG: run Desktop platform builds with release first"; exit 1; }
-          if [ "$draft" != "true" ]; then
-            echo "$TAG is already published"
-            exit 0
-          fi
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           for suffix in _x64-setup.exe _aarch64.dmg _x64.dmg _amd64.deb; do
             echo "$assets" | grep -q -- "$suffix\$" || { echo "::error::$TAG has no $suffix installer; not publishing"; exit 1; }
@@ -43,14 +41,22 @@ jobs:
           [ -f "$changes" ] || { echo "::error::Write $changes (what changed, for users) before publishing"; exit 1; }
           gh release view "$TAG" --json body --jq .body > notes.md
           python - "$changes" <<'PY'
+          import re
           import sys
           from pathlib import Path
-          placeholder = "_Maintainer: summarise user-visible changes here before publishing._"
+          # Everything between "## Changes" and the next heading is replaced,
+          # so re-running this corrects the notes of a published release too.
           notes = Path("notes.md").read_text(encoding="utf-8")
           changes = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
-          if placeholder not in notes:
-              sys.exit("The draft's notes have no Changes placeholder; edit them on GitHub instead")
-          Path("notes.md").write_text(notes.replace(placeholder, changes), encoding="utf-8")
+          section = re.compile(r"(## Changes\n\n).*?(?=\n## )", re.DOTALL)
+          if not section.search(notes):
+              sys.exit("The notes have no '## Changes' section; edit them on GitHub instead")
+          Path("notes.md").write_text(section.sub(lambda m: m.group(1) + changes + "\n", notes, count=1), encoding="utf-8")
           PY
-          gh release edit "$TAG" --notes-file notes.md --draft=false --latest
-          echo "Published $TAG"
+          if [ "$draft" = "true" ]; then
+            gh release edit "$TAG" --notes-file notes.md --draft=false --latest
+            echo "Published $TAG"
+          else
+            gh release edit "$TAG" --notes-file notes.md
+            echo "$TAG was already published: its notes were updated"
+          fi
