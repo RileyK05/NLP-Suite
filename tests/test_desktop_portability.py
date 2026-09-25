@@ -70,20 +70,22 @@ def test_restore_commit_failure_rolls_back_files(tmp_path: Path, monkeypatch: py
     assert [path.name for path in (workspace.root / "projects").iterdir()] == [project["id"]]
 
 
-def test_missing_transformers_are_not_advertised_ready() -> None:
+def test_a_missing_model_runtime_is_not_advertised_ready() -> None:
+    """The app runs BERT through ONNX Runtime; without it the tool cannot run."""
     spec = get_tool("bert_extract")
     assert spec is not None
     result = availability(spec, {"spacy": True, "en_core_web_sm": True})
     assert result["state"] == "needs_setup"
-    assert "transformers" in result["missing"]
+    assert {"onnxruntime", "tokenizers"} <= set(result["missing"])
 
 
-def test_bert_topics_requires_torch_not_just_transformers() -> None:
-    """Advertising this tool without torch would offer a run that cannot finish.
+def test_bert_topics_fallback_needs_torch_not_just_transformers() -> None:
+    """The development fallback without torch would offer a run that cannot finish.
 
-    ``TransformerBackend.embed`` does ``import torch`` and runs the model under
-    ``torch.no_grad()``, so transformers alone is not enough: the tool would
-    appear ready in the desktop and then fail at embed time.
+    ``TransformerBackend`` runs the model under ``torch.no_grad()``, so
+    transformers alone is not a route: without the ONNX runtime either, the
+    tool must say it needs setup rather than appear ready and fail at embed
+    time.
     """
     spec = get_tool("bert_topics")
     assert spec is not None
@@ -91,7 +93,7 @@ def test_bert_topics_requires_torch_not_just_transformers() -> None:
     assert availability(spec, ready)["state"] == "available"
     without_torch = availability(spec, {**ready, "torch": False})
     assert without_torch["state"] == "needs_setup"
-    assert "torch" in without_torch["missing"]
+    assert "onnxruntime" in without_torch["missing"]
 
 
 def test_lexicon_requirement_is_visible() -> None:

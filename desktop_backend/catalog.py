@@ -57,6 +57,12 @@ CORPUS_TOOLS = (
     "geocode",
     "svo_map",
     "word2vec_bert",
+    # BERT-family tools: the models ship with the app (core.models) and run
+    # through ONNX Runtime, so they have a desktop contract now.
+    "word_sense_induction",
+    "bert_extract",
+    "bert_topics",
+    "doc_embeddings",
 )
 
 INTERNAL_TOOLS = frozenset(
@@ -64,9 +70,6 @@ INTERNAL_TOOLS = frozenset(
         "coreference",
         "semantic",
         "knowledge_graph",
-        "word_sense_induction",
-        "bert_extract",
-        "bert_topics",
         "sentiment_swn_hedono",
         "nrc",
     }

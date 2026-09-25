@@ -19,7 +19,7 @@ import math
 
 import pandas as pd
 
-from core.analysis.contextual import EmbeddingBackend, TransformerBackend, default_backend
+from core.analysis.contextual import EmbeddingBackend, embed_sentences, text_backend, truncation_note
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
@@ -59,7 +59,7 @@ def summarize(
     resolved = backend
     diags: list[Diagnostic] = []
     if resolved is None:
-        decided = default_backend(model or "bert-base-uncased")
+        decided = text_backend(model or "bert-base-uncased")
         if decided.value is None:
             return Result.failure(*decided.diagnostics)
         resolved = decided.unwrap()
@@ -79,8 +79,8 @@ def summarize(
         if not texts:
             continue
         try:
-            vectors = resolved.embed(texts, texts)
-        except RuntimeError as exc:
+            vectors = embed_sentences(resolved, texts)
+        except (RuntimeError, ValueError) as exc:
             return Result.failure(Diagnostic.error("BERT_MODEL_MISSING", str(exc)))
         dim = len(vectors[0])
         centroid = [sum(vec[i] for vec in vectors) / len(vectors) for i in range(dim)]
@@ -95,4 +95,5 @@ def summarize(
                 "Sentence IDs": ",".join(str(sent_ids[i]) for i in picked),
             }
         )
+    diags.extend(truncation_note(resolved))
     return Result.success(pd.DataFrame(rows, columns=_COLUMNS), *diags)

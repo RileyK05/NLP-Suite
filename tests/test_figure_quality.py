@@ -61,8 +61,6 @@ NO_EXAMPLE: dict[str, str] = {
             "wordnet_ranked_categories",
             "gender_annotator_mentions_over_time",
             "word2vec_bert_neighbours",
-            "word2vec_bert_saved_vectors",
-            "word2vec_bert_tsne",
             "word2vec_gensim_neighbours",
             "mallet_document_topics",
             "mallet_topic_terms",

@@ -15,29 +15,33 @@ The algorithms are deliberately different, and the difference is the finding:
   model downloads on first use.
 
 Model loading and per-occurrence embedding are reused from
-:mod:`core.analysis.contextual` (its ``TransformerBackend``); the type-level
-aggregation lives here. ``transformers``/``torch`` are lazy imports; a missing
-install fails as ``W2V_BERT_UNAVAILABLE`` with the fix command instead of
-returning fake vectors.
+:mod:`core.analysis.contextual` (``default_backend``: the installed ONNX
+model, else ``transformers`` in a source checkout); the type-level
+aggregation lives here. A missing model fails as ``W2V_BERT_UNAVAILABLE``
+telling the reader to add it from the Models page, instead of returning
+fake vectors.
+
+Each occurrence is located by its surface form even when the vocabulary is
+lemmas: "was" is found in its sentence and counted towards "be".
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
 import math
 
 import numpy as np
 import pandas as pd
 
-from core.analysis.contextual import EmbeddingBackend, TransformerBackend, default_backend
+from core.analysis.contextual import EmbeddingBackend, default_backend, truncation_note
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
-__all__ = ["TrainedBert", "distances", "project_tsne", "train_bert", "vectors"]
+__all__ = ["TrainedBert", "distances", "neighbours", "project_tsne", "train_bert", "vectors"]
 
 _TSNE_MIN_WORDS = 5
-_FIX = "pip install transformers torch (the 'embeddings' extra); the model downloads on first use"
+_FIX = "Open Models in the sidebar and add BERT base."
 _VECTOR_COLUMNS = ["Word", "Count", "Vector"]
 _NEIGHBOR_COLUMNS = ["Word", "Neighbor", "Cosine"]
 _TSNE_COLUMNS = ["Word", "X", "Y"]
@@ -59,6 +63,10 @@ class TrainedBert:
     field: str
     min_count: int
     layers: int
+    #: ``(word, period, uses, vector)``: the word's mean occurrence vector
+    #: within one period, for words used at least twice there. Empty unless
+    #: ``train_bert`` was given the documents' periods.
+    by_period: tuple[tuple[str, str, int, tuple[float, ...]], ...] = ()
 
     def _index(self, word: str) -> int:
         try:
@@ -78,16 +86,18 @@ class TrainedBert:
     def neighbors(self, query: str, top_n: int = 5) -> list[tuple[str, float]]:
         """``(word, cosine)`` pairs nearest to *query*, best first."""
         key = query.strip().lower()
-        scored = sorted(
-            ((word, self.similarity(key, word)) for word in self.words if word != key),
-            key=lambda pair: pair[1],
-            reverse=True,
-        )
-        return scored[:top_n]
+        index = self._index(key)
+        matrix = np.array(self.vectors, dtype=float)
+        norms = np.linalg.norm(matrix, axis=1)
+        norms[norms == 0] = 1.0
+        cosines = (matrix @ matrix[index]) / (norms * norms[index])
+        # Stable sort on -cosine keeps the alphabetical order of ties, as before.
+        order = [i for i in np.argsort(-cosines, kind="stable").tolist() if i != index]
+        return [(self.words[i], float(cosines[i])) for i in order[:top_n]]
 
 
-def _occurrences(frame: pd.DataFrame, column: str) -> list[tuple[str, str]]:
-    """(type, sentence context) per usable token, in row order.
+def _occurrences(frame: pd.DataFrame, column: str) -> list[tuple[str, str, str, str]]:
+    """(type, surface form, sentence context, document id) per usable token, in row order.
 
     Types are lowercased and alphabetic-only, matching
     ``word_embeddings._sentences_from_frame``, so the two Word2Vec
@@ -96,7 +106,7 @@ def _occurrences(frame: pd.DataFrame, column: str) -> list[tuple[str, str]]:
     sent_text: dict[tuple[object, object], str] = {}
     for (doc_id, sent_id), group in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
         sent_text[(doc_id, sent_id)] = " ".join(str(form) for form in group[Col.FORM.value].tolist())
-    pairs: list[tuple[str, str]] = []
+    pairs: list[tuple[str, str, str, str]] = []
     for _, row in frame.iterrows():
         raw = row[column]
         if raw is None:
@@ -110,7 +120,7 @@ def _occurrences(frame: pd.DataFrame, column: str) -> list[tuple[str, str]]:
         if not text or not text.isalpha():
             continue
         key = (row[Col.DOCUMENT_ID.value], row[Col.SENTENCE_ID.value])
-        pairs.append((text, sent_text.get(key, "")))
+        pairs.append((text, str(row[Col.FORM.value]).lower(), sent_text.get(key, ""), str(key[0])))
     return pairs
 
 
@@ -119,56 +129,24 @@ def _resolve_backend(backend: EmbeddingBackend | None, model: str) -> tuple[Embe
         return backend, []
     resolved = default_backend(model)
     if resolved.value is None:
-        return None, [
-            Diagnostic.error(
-                "W2V_BERT_UNAVAILABLE",
-                "transformers is not installed; Word2Vec via BERT needs the optional 'embeddings' extra",
-                fix=_FIX,
-            )
-        ]
+        reason = resolved.diagnostics[0].message if resolved.diagnostics else f"{model} is not installed"
+        return None, [Diagnostic.error("W2V_BERT_UNAVAILABLE", reason, model=model, fix=_FIX)]
     return resolved.unwrap(), list(resolved.diagnostics)
 
 
-def _embed_last_hidden(backend: EmbeddingBackend, pairs: list[tuple[str, str]]) -> list[list[float]]:
-    """Per-occurrence vectors: mean of the word's subword pieces in context."""
-    return backend.embed([word for word, _ in pairs], [context for _, context in pairs])
-
-
-def _embed_layer(backend: TransformerBackend, pairs: list[tuple[str, str]], layers: int) -> list[list[float]]:
-    """Per-occurrence vectors from hidden state ``layers`` (same piece rule).
+def _embed(backend: EmbeddingBackend, pairs: list[tuple[str, str, str, str]], layers: int) -> list[list[float]]:
+    """Per-occurrence vectors: the mean of the form's pieces in hidden state *layers*.
 
     Layer selection is not on the shared ``EmbeddingBackend`` protocol (it
-    answers one question: embed these words in these contexts), so it reaches
-    the transformer loader :mod:`core.analysis.contextual` already provides
-    rather than re-implementing model plumbing here.
+    answers one question: embed these words in these contexts); the real
+    backends (ONNX and transformers) both offer ``embed_layer``.
     """
-    from core.analysis.contextual import _piece_text
-
-    pipe = backend._load()
-    tokenizer = pipe.tokenizer
-    vectors: list[list[float]] = []
-    for word, context in pairs:
-        encoding = tokenizer(context, return_tensors="pt", truncation=True)
-        word_ids = encoding.word_ids()
-        pieces = [
-            i
-            for i, wid in enumerate(word_ids)
-            if wid is not None and _piece_text(tokenizer, encoding, i).lower().lstrip("#") in word
-        ]
-        if not pieces:
-            pieces = [i for i, wid in enumerate(word_ids) if wid is not None]
-        import torch
-
-        with torch.no_grad():
-            outputs = pipe.model(
-                **{k: v for k, v in encoding.items() if k != "overflow_to_sample_mapping"},
-                output_hidden_states=True,
-            )
-        hidden = outputs.hidden_states[layers]
-        selected = hidden[0][pieces].mean(dim=0).tolist()
-        norm = math.sqrt(sum(value * value for value in selected)) or 1.0
-        vectors.append([value / norm for value in selected])
-    return vectors
+    forms = [pair[1] for pair in pairs]
+    contexts = [pair[2] for pair in pairs]
+    if layers == -1:
+        return backend.embed(forms, contexts)
+    layered = backend.embed_layer  # type: ignore[attr-defined]  # checked by the caller
+    return list(layered(forms, contexts, layers))
 
 
 def train_bert(
@@ -179,6 +157,7 @@ def train_bert(
     min_count: int = 2,
     layers: int = -1,
     backend: EmbeddingBackend | None = None,
+    periods: Mapping[str, str] | None = None,
 ) -> Result[TrainedBert]:
     """Mean-pooled BERT type vectors over the corpus's token occurrences.
 
@@ -186,6 +165,12 @@ def train_bert(
     mean of its subword pieces), and the type vector is the (renormalized)
     mean of those occurrence vectors. ``layers=-1`` is the last hidden state;
     other indices read that hidden state through the transformer backend.
+
+    *periods* maps document ids to a period label ("1940s"). Given, the same
+    occurrence vectors are also averaged per word within each period
+    (``by_period``), which costs no further embedding: a contextual model
+    reads every period into one space, so a word's vector in the 1940s and
+    in the 2000s can be compared directly, with no alignment step.
     """
     if field not in ("form", "lemma"):
         return Result.failure(Diagnostic.error("W2V_BERT_BAD_FIELD", f"field must be 'form' or 'lemma', got {field!r}"))
@@ -217,8 +202,8 @@ def train_bert(
     if not occurrences:
         return Result.failure(Diagnostic.error("W2V_BERT_NO_TOKENS", "no usable tokens; nothing to embed"))
     counts: dict[str, int] = {}
-    for word, _ in occurrences:
-        counts[word] = counts.get(word, 0) + 1
+    for occurrence in occurrences:
+        counts[occurrence[0]] = counts.get(occurrence[0], 0) + 1
     kept = {word for word, count in counts.items() if count >= min_count}
     if not kept:
         return Result.failure(
@@ -230,29 +215,28 @@ def train_bert(
     resolved, diags = _resolve_backend(backend, model)
     if resolved is None:
         return Result[TrainedBert](None, tuple(diags))
-    if layers != -1 and not isinstance(resolved, TransformerBackend):
+    if layers != -1 and not callable(getattr(resolved, "embed_layer", None)):
         return Result.failure(
             Diagnostic.error(
                 "W2V_BERT_BAD_PARAM",
-                f"layers={layers} needs the transformer backend; use layers=-1 with an injected backend",
+                f"layers={layers} needs a backend that reads hidden layers; use layers=-1 with an injected backend",
                 layers=layers,
             )
         )
     targets = [pair for pair in occurrences if pair[0] in kept]
     try:
-        if layers == -1:
-            occurrence_vectors = _embed_last_hidden(resolved, targets)
-        else:
-            occurrence_vectors = _embed_layer(cast(TransformerBackend, resolved), targets, layers)
-    except RuntimeError as exc:
+        occurrence_vectors = _embed(resolved, targets, layers)
+    except (RuntimeError, ValueError) as exc:
         return Result.failure(Diagnostic.error("W2V_BERT_UNAVAILABLE", str(exc), fix=_FIX))
+    diags.extend(truncation_note(resolved))
 
     width = len(occurrence_vectors[0]) if occurrence_vectors else 0
+    matrix = np.asarray(occurrence_vectors, dtype=float).reshape(len(targets), width)
+    order = [pair[0] for pair in targets]
     sums: dict[str, list[float]] = {}
-    for (word, _), vec in zip(targets, occurrence_vectors, strict=True):
-        accumulator = sums.setdefault(word, [0.0] * len(vec))
-        for index, value in enumerate(vec):
-            accumulator[index] += value
+    for word, total in _sums(order, matrix).items():
+        sums[word] = total.tolist()
+    by_period = _period_means(targets, matrix, periods) if periods else ()
 
     words = sorted(kept)
     vectors: list[tuple[float, ...]] = []
@@ -270,9 +254,45 @@ def train_bert(
             field=field,
             min_count=min_count,
             layers=layers,
+            by_period=by_period,
         ),
         *diags,
     )
+
+
+def _sums(keys: list[str], matrix: np.ndarray) -> dict[str, np.ndarray]:
+    """Row sums of *matrix* per key, keys in first-seen order."""
+    codes, uniques = pd.factorize(pd.Series(keys, dtype=object), sort=False)
+    totals = np.zeros((len(uniques), matrix.shape[1]))
+    np.add.at(totals, codes, matrix)
+    return {str(key): totals[i] for i, key in enumerate(uniques)}
+
+
+def _period_means(
+    targets: list[tuple[str, str, str, str]], matrix: np.ndarray, periods: Mapping[str, str]
+) -> tuple[tuple[str, str, int, tuple[float, ...]], ...]:
+    """Each word's mean occurrence vector per period, where it was used twice or more.
+
+    Occurrences in undated documents belong to no period and are left out.
+    """
+    rows = [i for i, pair in enumerate(targets) if pair[3] in periods]
+    if not rows:
+        return ()
+    keys = [(targets[i][0], periods[targets[i][3]]) for i in rows]
+    codes, uniques = pd.factorize(pd.Series(keys, dtype=object), sort=False)
+    totals = np.zeros((len(uniques), matrix.shape[1]))
+    np.add.at(totals, codes, matrix[rows])
+    uses = np.bincount(codes, minlength=len(uniques))
+    out: list[tuple[str, str, int, tuple[float, ...]]] = []
+    for position, (word, period) in enumerate(uniques):
+        n = int(uses[position])
+        if n < 2:
+            continue
+        mean = totals[position] / n
+        norm = float(np.linalg.norm(mean)) or 1.0
+        out.append((str(word), str(period), n, tuple(float(v) for v in mean / norm)))
+    out.sort(key=lambda row: (row[0], row[1]))
+    return tuple(out)
 
 
 def vectors(trained: TrainedBert) -> Result[pd.DataFrame]:
@@ -324,7 +344,16 @@ def distances(
     trained = train_bert(frame, field=field, model=model, min_count=min_count, layers=layers, backend=backend)
     if trained.value is None:
         return Result.failure(*trained.diagnostics)
-    model_view = trained.unwrap()
+    return neighbours(trained.unwrap(), query, top_n=top_n)
+
+
+def neighbours(model_view: TrainedBert, query: str, *, top_n: int = 5) -> Result[pd.DataFrame]:
+    """Cosine nearest neighbours for *query* in an already-built vector space."""
+    if not query or not query.strip():
+        return Result.failure(Diagnostic.error("W2V_BERT_BAD_QUERY", "query must be non-empty"))
+    if top_n < 1:
+        return Result.failure(Diagnostic.error("W2V_BERT_BAD_K", f"top_n must be >=1, got {top_n}"))
+    field = model_view.field
     key = query.strip().lower()
     if key not in model_view.words:
         context: dict[str, object] = {"query": query}

@@ -29,6 +29,7 @@ STYLES = SOURCE / "styles.css"
 DYNAMIC_CLASSES = {
     "family-",  # ToolCard: one per tool family
     "viz-origin-",  # VisualizationCatalog: one per provenance
+    "status-",  # Models: one per model status (.model-status.status-ready ...)
     "lucide",  # icon library's own class
 }
 

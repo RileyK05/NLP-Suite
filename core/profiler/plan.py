@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import math
 from os import PathLike
 
+from core.models.registry import get_model
 from core.profiler.registry import TOOL_REGISTRY, ParamSpec, ToolSpec, get_tool
 from core.result import Diagnostic, Result
 
@@ -117,6 +118,19 @@ def _check_value(tool: str, param: ParamSpec, value: object) -> Diagnostic | Non
     return None
 
 
+def _canonical_model(param: ParamSpec, value: object) -> object:
+    """A model named any older way ("google-bert/bert-base-uncased") becomes its id.
+
+    Saved runs and recipes carry the Hugging Face names the tools used to
+    take; the model choices are now registry ids, and a re-run must not fail
+    over a spelling.
+    """
+    if param.name != "model" or not isinstance(value, str) or not param.choices:
+        return value
+    spec = get_model(value)
+    return spec.id if spec is not None and spec.id in param.choices else value
+
+
 def _fill_params(tool: str, supplied: dict[str, object]) -> tuple[dict[str, object], Diagnostic | None]:
     return _fill_spec_params(_spec_of(tool), supplied)
 
@@ -148,6 +162,7 @@ def _fill_spec_params(spec: ToolSpec, supplied: dict[str, object]) -> tuple[dict
         if value is None and not param.required:
             filled[param.name] = None
             continue
+        value = _canonical_model(param, value)
         bad = _check_value(tool, param, value)
         if bad is not None:
             return {}, bad

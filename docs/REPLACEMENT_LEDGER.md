@@ -229,8 +229,8 @@ commit from `CHUNK_LEDGER.md` where applicable.
 | CAP-TOPIC-04 | BERT topics (`topic_modeling_bert_util`) | `core/analysis/bert_topics.py` + `tools/bert_topics.py` | T, G | review | — | — | FR-5.9; KMeans over doc-mean sentence embeddings via EmbeddingBackend, discriminative term labels, seeded/deterministic; needs the `[embeddings]` extra. Legacy file was an abandoned notebook, so this is new-from-spec, not a port |
 | CAP-TOPIC-05 | Topic stability across seeds (new-from-spec) | `core/analysis/topic_stability.py` + `tools/lda_stability.py` (tool `lda_stability`) | T | review | — | — | FR-5.7 extension; refits at several seeds, Hungarian-matches topics to the reference by top-word Jaccard, judged on the worst seed; summary.csv + matches.csv; the legacy suite had no stability check |
 | CAP-EMBED-01 | word2vec train + distances (`word2vec_Gensim_util`) | `core/analysis/word_embeddings.py` (seeded Gensim) + `core/viz/embeddings.py::tsne_html` | T, G | review | `502fce0` | — | FR-5.5; vectors/neighbours/tsne CSVs + tsne.html scatter (legacy word2vec_tsne_plot_util parity); CLI writes all four artifacts |
-| CAP-EMBED-02 | Contextual embeddings (`BERT_util`) | `core/analysis/contextual.py::TransformerBackend` (lazy transformers, loud without) | T | review | — | — | FR-5.6; MD5 production fake removed, hash double lives in conftest only |
-| CAP-EMBED-03 | WSI senses (`WSI_*`) | `core/analysis/contextual.py::wsi_senses` (median-split baseline over backend vectors) | T | review | — | — | FR-5.6; baseline for plumbing, not a clustering claim |
+| CAP-EMBED-02 | Contextual embeddings (`BERT_util`) | `core/analysis/contextual.py` over `core/models/onnx_backend.py` (ONNX BERT shipped with the app; `TransformerBackend` dev fallback) | T | review | — | — | FR-5.6; MD5 production fake removed, hash double lives in conftest only; words read at their own pieces (`core/models/align.py`) |
+| CAP-EMBED-03 | WSI senses (`WSI_*`) | `core/analysis/contextual.py::wsi_senses` (seeded 2-means per lemma, kept only when the senses separate) | T | review | — | — | FR-5.6; replaced the median split on the first vector component |
 | CAP-NGRAM-01 | N-grams 1..5 (`NGrams_util`) | `core/analysis/ngrams.py` | T, G | review | `502fce0` | — | |
 | CAP-NGRAM-02 | Bigram collocations, PMI (`NGrams_collocation_statistics_util`) | `core/analysis/ngrams.py::collocations` | T, G | review | `502fce0` | — | |
 | CAP-NGRAM-03 | Window co-occurrence (`NGrams_CoOccurrences_util`) | `core/analysis/ngram_cooccurrence.py` | T, G | review | `502fce0`, `c1f5d9e` | — | dead-loop removed FR-0 |
@@ -352,6 +352,7 @@ independent review; Implementation is `—` because the work is uncommitted.
 | CAP-GIS-11 | Pin maps and heatmaps (`GIS_heatMap*`, `GIS_Google_Earth_main`) | `core/gis/pins.py` + `tools/gis_map.py` | T, G | review | — | — | CSV in, pins/heat/KML/tour out; weight column drives pin radius |
 | CAP-GIS-12 | SVO to GIS handoff: narrative events on a map | `core/analysis/svo_map.py` | T, G | review | — | — | one row per (triple, place) pair; verb-weighted, unlike a place-mention map |
 | CAP-EMBED-10 | Word2Vec via BERT (`word2vec_BERT` family) | `core/analysis/word2vec_bert.py` | T, G | review | — | — | same vectors/neighbours/tsne contracts as `word_embeddings` so HW2 compares like with like |
+| CAP-EMBED-11 | Document and sentence embeddings (new; no legacy tool) | `core/analysis/doc_embeddings.py` over `core/models` (ONNX sentence models) | T | review | — | — | FR-5.12; doc_pairs.csv in doc_similarity's shape, neighbours, clustered map, semantic search |
 
 ## Review log
 

@@ -35,6 +35,12 @@ __all__ = [
 WORD = "Word"
 NEIGHBOR = "Neighbor"
 COSINE = "Cosine"
+GROUP = "Group"
+_OTHER_WORDS = "(other words)"
+_GROUP_NOTE = (
+    "Colour is a meaning group: k-means over the words' original vectors (not the map), each group named by its "
+    "three words nearest its centre. Function words and rare words belong to no group and are grey."
+)
 _TOP_N = PanelParam(
     name="top-n",
     type="int",
@@ -398,12 +404,21 @@ def tsne_projection(
             taken[candidate] = True
             nearest = np.minimum(nearest, ((coords - coords[candidate]) ** 2).sum(axis=1))
     selected_set = set(selected)
+    # Runs from this release name each word's meaning group: the map's
+    # regions get names, which is most of what a t-SNE map can honestly say.
+    grouped = GROUP in working.columns and working[GROUP].fillna("").astype(str).str.strip().ne("").any()
+    group_of = working[GROUP].fillna("").astype(str).str.strip() if grouped else None
+    groups: tuple[str, ...] = ()
+    if group_of is not None:
+        named = group_of[group_of != ""].value_counts()
+        groups = (*sorted(named.index, key=lambda name: (-int(named[name]), name)), _OTHER_WORDS)
 
     marks: list[PanelMark] = []
     for index, (_, row) in enumerate(working.iterrows()):
         word, x, y = str(row[WORD]), float(row["X"]), float(row["Y"])
         filters = tuple((column, str(row[column])) for column in evidence_columns)
         frequency = int(row["Count"]) if counted else None
+        group = (str(group_of.iloc[index]) or _OTHER_WORDS) if group_of is not None else ""
         marks.append(
             PanelMark(
                 key=f"point-{index}:{word}",
@@ -412,6 +427,7 @@ def tsne_projection(
                 y=y,
                 size=float(frequency) if frequency is not None else None,
                 labelled=index in selected_set,
+                group=group,
                 evidence=Evidence(
                     scope="rows",
                     filters=filters,
@@ -429,15 +445,19 @@ def tsne_projection(
         panel=panel.name,
         shape="scatter_labelled",
         title="Word-vector t-SNE projection",
-        subtitle=f"{shown} · point size is frequency · {len(selected_set)} labelled"
-        if counted
-        else f"{shown} · {len(selected_set)} labels",
+        subtitle=(
+            f"{shown} · point size is frequency · {len(selected_set)} labelled"
+            if counted
+            else f"{shown} · {len(selected_set)} labels"
+        )
+        + (" · colour: meaning group, named by its central words" if groups else ""),
         marks=tuple(marks),
         x_label="t-SNE dimension 1",
         y_label="t-SNE dimension 2",
         provenance=provenance,
         data=working.reset_index(drop=True),
-        notes=_TSNE_NOTES,
+        groups=groups,
+        notes=(*_TSNE_NOTES, _GROUP_NOTE) if groups else _TSNE_NOTES,
     )
     return Result.success(prepared, *diagnostics)
 

@@ -1,0 +1,60 @@
+name: Publish dev to public
+
+# Two tracks: dev (RileyK05/New_NLP_Suite main, private, where all work
+# happens) and public (RileyK05/NLP-Suite, what people download). This is
+# the only way public changes: it mirrors dev minus .publicignore, commits,
+# pushes, and can go straight on to building a draft release.
+#
+# Needs the PUBLISH_TOKEN secret on the public repository: a fine-grained
+# token with Contents read on New_NLP_Suite, and Contents + Workflows write
+# on NLP-Suite (the built-in token cannot push workflow files).
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Then build every platform and draft the release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  publish:
+    if: github.repository == 'RileyK05/NLP-Suite'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.PUBLISH_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          repository: RileyK05/New_NLP_Suite
+          ref: main
+          token: ${{ secrets.PUBLISH_TOKEN }}
+          path: _dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Mirror dev into public
+        run: |
+          mv _dev "$RUNNER_TEMP/dev"
+          DEV=$(git -C "$RUNNER_TEMP/dev" rev-parse --short HEAD)
+          python "$RUNNER_TEMP/dev/scripts/publish_snapshot.py" --dev "$RUNNER_TEMP/dev" --out .
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Public already matches dev $DEV"
+          else
+            git -c user.name="Riley Kehoe" -c user.email="149320297+RileyK05@users.noreply.github.com" \
+              commit -q -m "NLP Suite $VERSION (dev $DEV)"
+            git push origin HEAD:main
+            git diff --stat HEAD~1 HEAD | tail -1
+          fi
+      - name: Build installers and draft the release
+        if: ${{ inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run desktop.yml --ref main -f release=true

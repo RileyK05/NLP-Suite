@@ -18,14 +18,16 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
+from core.analysis import word_meaning
 from core.analysis.bert_extract import summarize as summarize_bert
 from core.analysis.bert_topics import bert_topics
 from core.analysis.clause_svo import clause_frequencies, extract_svo
 from core.analysis.collocations import collocations as collocation_measures
 from core.analysis.conll_wordlist import run as wordlist
-from core.analysis.contextual import contextual_vectors, wsi_senses
+from core.analysis.contextual import contextual_vectors, sense_uses, wsi_senses
 from core.analysis.coreference import run as run_coreference
 from core.analysis.corpus_statistics import run as corpus_statistics
 from core.analysis.dispersion import dispersion as dispersion_measures
@@ -573,6 +575,9 @@ def _adapt_word_embeddings(ctx: BatchContext, params: dict[str, object]) -> Resu
         diags.extend(plot.diagnostics)
         if plot.value is not None:
             frames["tsne.html"] = pd.DataFrame({"html": [plot.unwrap()]})
+    if model.words:
+        space = word_meaning.space_of(model.words, model.counts, np.asarray(model.vectors, dtype=float))
+        _meaning_columns(frames, ctx.table, "form" if field == Col.FORM else "lemma", space)
     query = params.get("query")
     if query is not None:
         if not isinstance(query, str):
@@ -748,14 +753,23 @@ def _adapt_contextual(ctx: BatchContext, params: dict[str, object]) -> Result[di
     vectors = contextual_vectors(ctx.table, field=field, model=model)
     if vectors.value is None:
         return Result.failure(*vectors.diagnostics)
-    senses = wsi_senses(ctx.table, field=Col.LEMMA if field == Col.FORM else Col.FORM, model=model)
+    # Senses group by lemma over the same token vectors; reuse them rather
+    # than embedding every token of the corpus a second time.
+    senses = wsi_senses(
+        ctx.table, field=Col.LEMMA if field == Col.FORM else Col.FORM, model=model, vectors=vectors.unwrap()
+    )
     if senses.value is None:
         return Result.failure(*senses.diagnostics)
-    return Result.success(
-        {"contextual_vectors.csv": vectors.unwrap(), "wsi.csv": senses.unwrap()},
-        *vectors.diagnostics,
-        *senses.diagnostics,
-    )
+    frames = {"contextual_vectors.csv": vectors.unwrap(), "wsi.csv": senses.unwrap()}
+    # The sentences behind each sense, for the figures that let a reader judge the split.
+    shown = display_names(ctx.corpus.docs) if ctx.corpus is not None else {}
+    uses = sense_uses(ctx.table, senses.unwrap(), names={str(doc): name for doc, name in shown.items()} or None)
+    if not uses.empty:
+        classes = word_meaning.word_classes(ctx.table, Col.LEMMA.value)
+        frames["senses.csv"] = uses.assign(
+            **{word_meaning.WORD_CLASS: uses["Lemma"].astype(str).str.lower().map(classes).fillna("")}
+        )
+    return Result.success(frames, *vectors.diagnostics, *senses.diagnostics)
 
 
 def _adapt_clause_svo(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
@@ -1503,10 +1517,7 @@ def _adapt_sentiment_neural_bert(ctx: BatchContext, params: dict[str, object]) -
 
     if ctx.table is None:
         return _missing_input("sentiment_neural_bert", "table")
-    result = bert_sentences(
-        ctx.table,
-        model=_str(params, "model", "distilbert-base-uncased-finetuned-sst-2-english"),
-    )
+    result = bert_sentences(ctx.table, model=_str(params, "model", "distilbert-sst2"))
     return _neural_sentiment_frames(result)
 
 
@@ -1790,9 +1801,61 @@ def _tsne_with_counts(tsne: pd.DataFrame, vectors: pd.DataFrame) -> pd.DataFrame
     return tsne.assign(Count=tsne["Word"].astype(str).map(counts))
 
 
+#: Groups a word map is coloured by, and how many of the most frequent
+#: content words the groups are found among.
+_MAP_GROUPS = 8
+_MAP_GROUP_WORDS = 2000
+#: A before and an after.
+_PERIODS_NEEDED = 2
+
+
+def _meaning_columns(
+    frames: dict[str, pd.DataFrame], table: pd.DataFrame, field: str, space: word_meaning.Space
+) -> None:
+    """Word class on vectors.csv and a meaning group on tsne.csv, in place.
+
+    The word class lets a figure keep to nouns (themes) or adjectives
+    (qualities); the group turns the t-SNE cloud into named regions. Both are
+    additive columns: every earlier reader of these tables still works.
+    """
+    from core.analysis.lda import STOPWORDS
+
+    column = Col.FORM.value if field == "form" else Col.LEMMA.value
+    classes = word_meaning.word_classes(table, column)
+    vectors = frames["vectors.csv"]
+    frames["vectors.csv"] = vectors.assign(
+        **{word_meaning.WORD_CLASS: vectors["Word"].astype(str).str.lower().map(classes).fillna("")}
+    )
+    if "tsne.csv" not in frames:
+        return
+    among = word_meaning.candidates(space, exclude=STOPWORDS)[:_MAP_GROUP_WORDS]
+    if len(among) < 2 * _MAP_GROUPS:
+        return
+    group_of: dict[str, str] = {}
+    for group in word_meaning.meaning_groups(space, among, groups=_MAP_GROUPS):
+        for member in group.members:
+            group_of[space.words[member]] = group.name
+    tsne = frames["tsne.csv"]
+    frames["tsne.csv"] = tsne.assign(Group=tsne["Word"].astype(str).str.lower().map(group_of).fillna(""))
+
+
+def _periods(corpus: Corpus | None) -> dict[str, str]:
+    """Each dated document's period: its decade, or its year when all share one decade.
+
+    Empty when fewer than two periods would result: change needs a before
+    and an after.
+    """
+    dates = _document_dates(corpus)
+    decades = {doc: f"{when.year // 10 * 10}s" for doc, when in dates.items()}
+    if len(set(decades.values())) >= _PERIODS_NEEDED:
+        return decades
+    years = {doc: str(when.year) for doc, when in dates.items()}
+    return years if len(set(years.values())) >= _PERIODS_NEEDED else {}
+
+
 def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.word2vec_bert import (
-        distances as bert_distances,
+        neighbours as bert_neighbours,
         project_tsne as bert_tsne,
         train_bert,
         vectors as bert_vectors,
@@ -1800,11 +1863,13 @@ def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result
 
     if ctx.table is None:
         return _missing_input("word2vec_bert", "table")
+    field = _str(params, "field", "lemma")
     trained = train_bert(
         ctx.table,
-        field=_str(params, "field", "lemma"),
+        field=field,
         model=_str(params, "model", "bert-base-uncased"),
         min_count=_int(params, "min-count", 2),
+        periods=_periods(ctx.corpus),
     )
     if trained.value is None:
         return Result.failure(*trained.diagnostics)
@@ -1825,20 +1890,68 @@ def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result
         diags.extend(plot.diagnostics)
         if plot.value is not None:
             frames["tsne.html"] = pd.DataFrame({"html": [plot.unwrap()]})
+    if model.words:
+        from core.analysis.lda import STOPWORDS
+
+        space = word_meaning.space_of(model.words, model.counts, np.asarray(model.vectors, dtype=float))
+        _meaning_columns(frames, ctx.table, field, space)
+        over_time, change = word_meaning.meaning_over_time(space, model.by_period, exclude=STOPWORDS)
+        if not change.empty:
+            classes = dict(
+                zip(frames["vectors.csv"]["Word"], frames["vectors.csv"][word_meaning.WORD_CLASS], strict=True)
+            )
+            frames["meaning_over_time.csv"] = over_time
+            frames["meaning_change.csv"] = change.assign(
+                **{word_meaning.WORD_CLASS: change["Word"].map(classes).fillna("")}
+            )
+        elif model.by_period:
+            diags.append(
+                Diagnostic.info(
+                    "W2V_BERT_NO_CHANGE",
+                    "No word was used often enough in two periods to compare its meaning over time; "
+                    "a larger or longer corpus gives the change figures something to show.",
+                )
+            )
     query = params.get("query")
     if isinstance(query, str) and query.strip():
-        found = bert_distances(
-            ctx.table,
-            query,
-            field=_str(params, "field", "lemma"),
-            model=_str(params, "model", "bert-base-uncased"),
-            top_n=_int(params, "top-n", 5),
-            min_count=_int(params, "min-count", 2),
-        )
+        # The neighbours of the space just built: embedding the corpus again
+        # for them doubled the cost of every run with a query.
+        found = bert_neighbours(model, query, top_n=_int(params, "top-n", 5))
         diags.extend(found.diagnostics)
         if found.value is None:
             return Result.failure(*diags)
         frames["neighbours.csv"] = found.unwrap()
+    return Result.success(frames, *diags)
+
+
+def _adapt_doc_embeddings(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+    from core.analysis.doc_embeddings import DEFAULT_MODEL, embed_corpus, semantic_search
+
+    if ctx.table is None:
+        return _missing_input("doc_embeddings", "table")
+    model = _str(params, "model", DEFAULT_MODEL)
+    embedded = embed_corpus(
+        ctx.table,
+        model=model,
+        unit=_str(params, "unit", "document"),
+        top_n=_int(params, "top-n", 5),
+        seed=_int(params, "seed", 42),
+    )
+    if embedded.value is None:
+        return Result.failure(*embedded.diagnostics)
+    tables = embedded.unwrap()
+    frames: dict[str, pd.DataFrame] = {"doc_vectors.csv": tables.vectors, "doc_map.csv": tables.map}
+    if not tables.pairs.empty:
+        frames["doc_pairs.csv"] = tables.pairs
+        frames["doc_neighbours.csv"] = tables.neighbours
+    diags = list(embedded.diagnostics)
+    query = params.get("query")
+    if isinstance(query, str) and query.strip():
+        found = semantic_search(ctx.table, query, model=model)
+        diags.extend(found.diagnostics)
+        if found.value is None:
+            return Result.failure(*diags)
+        frames["search_results.csv"] = found.unwrap()
     return Result.success(frames, *diags)
 
 
@@ -1899,6 +2012,7 @@ ADAPTERS: dict[str, Adapter] = {
     "geocode": _adapt_geocode,
     "svo_map": _adapt_svo_map,
     "word2vec_bert": _adapt_word2vec_bert,
+    "doc_embeddings": _adapt_doc_embeddings,
 }
 
 ADAPTER_NEEDS: dict[str, Needs] = {

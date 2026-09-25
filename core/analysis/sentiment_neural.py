@@ -8,9 +8,11 @@ So these are four separate tools over one shared table contract — the
 
 What each backend actually is, and the suite never papers over the gaps:
 
-* ``bert``      — a Hugging Face sequence classifier over each sentence
-  (``transformers``/``torch``, the optional ``embeddings`` extra). Long
-  sentences are truncated at 256 words with a warning, not silently cut.
+* ``bert``      — DistilBERT fine-tuned on SST-2 over each sentence, run
+  through ONNX Runtime from the model that ships with the app
+  (``transformers`` is the fallback in a source checkout). Two classes,
+  no neutral. Long sentences are truncated at 256 words with a warning,
+  not silently cut.
 * ``spacy``     — a spaCy pipeline's ``textcat`` head over each sentence read
   as a one-sentence document. Vanilla ``en_core_web_sm`` has NO sentiment
   head; the tool says so and stops rather than inventing a score.
@@ -50,7 +52,7 @@ _DOCUMENT_COLUMNS = ["Document ID", "Document", "Sentences", "Mean Compound", "P
 #: BERT-style classifiers have a context window; 256 whitespace words is a
 #: conservative cut that keeps almost every real sentence inside the model.
 _TRUNCATE_WORDS = 256
-_FIX_TRANSFORMERS = "pip install transformers torch (the 'embeddings' extra); the model downloads on first use"
+_FIX_TRANSFORMERS = "Open Models in the sidebar and add DistilBERT sentiment (SST-2)."
 _FIX_SPACY = (
     "install a spaCy pipeline that carries a sentiment textcat head (a trained "
     "textcat project or a model that ships one); en_core_web_sm has none"
@@ -191,42 +193,79 @@ def summarize_neural(annotated: pd.DataFrame) -> Result[pd.DataFrame]:
 # ---------------------------------------------------------------- BERT
 
 
+def _bert_scorer(model: str) -> Result[Callable[[str], Any]]:
+    """The installed ONNX classifier, else (source checkout) a transformers pipeline."""
+    from core.models.onnx_backend import open_model
+
+    opened = open_model(model, "classifier")
+    if opened.value is not None:
+        return Result.success(opened.value)
+    if any(diag.code in ("MODEL_WRONG_KIND", "MODEL_CORRUPT") for diag in opened.diagnostics):
+        return Result.failure(*opened.diagnostics)
+    try:
+        from transformers import pipeline as hf_pipeline
+    except ImportError:
+        reason = opened.diagnostics[0].message if opened.diagnostics else f"{model} is not installed"
+        return Result.failure(Diagnostic.error("SENTIMENT_NN_UNAVAILABLE", reason, model=model, fix=_FIX_TRANSFORMERS))
+    from core.models.registry import get_model
+
+    spec = get_model(model)
+    source = spec.source if spec is not None else model
+    try:
+        return Result.success(
+            hf_pipeline(  # type: ignore[call-overload,unused-ignore]
+                "sentiment-analysis", model=source, revision=spec.revision if spec is not None else None
+            )
+        )
+    except Exception as exc:
+        return Result.failure(
+            Diagnostic.error(
+                "SENTIMENT_NN_UNAVAILABLE", f"could not load model {model!r}: {exc}", fix=_FIX_TRANSFORMERS
+            )
+        )
+
+
 def bert_sentences(
     frame: pd.DataFrame,
     *,
-    model: str = "distilbert-base-uncased-finetuned-sst-2-english",
+    model: str = "distilbert-sst2",
     pipeline: Callable[[str], list[dict[str, Any]]] | None = None,
 ) -> Result[pd.DataFrame]:
-    """Per-sentence sentiment from a Hugging Face sequence classifier.
+    """Per-sentence sentiment from a BERT-family sequence classifier.
 
-    ``pipeline`` is the seam: the real ``transformers.pipeline(...)``
-    ``sentiment-analysis`` callable, or a fake in tests. A two-class head
-    (POSITIVE/NEGATIVE) is signed by its winning label; any head with a
-    neutral-ish label collapses to 0.
+    The default is DistilBERT fine-tuned on SST-2, which ships with the app
+    and runs through ONNX Runtime. SST-2 has two classes, positive and
+    negative, and no neutral: a sentence the model is unsure about gets a
+    probability near 0.5, and its Compound (signed confidence) lands near 0.
+
+    ``pipeline`` is the seam: a ``transformers``-style ``sentiment-analysis``
+    callable, or a fake in tests. A two-class head (POSITIVE/NEGATIVE) is
+    signed by its winning label; any head with a neutral-ish label
+    collapses to 0.
     """
     rows = sentence_rows(frame)
     if rows.value is None:
         return Result.failure(*rows.diagnostics)
-    scorer = pipeline
-    if scorer is None:
-        try:
-            from transformers import pipeline as hf_pipeline
-        except ImportError as exc:
-            return Result.failure(
-                Diagnostic.error(
-                    "SENTIMENT_NN_UNAVAILABLE",
-                    f"transformers is not installed; neural BERT sentiment needs it ({exc})",
-                    fix=_FIX_TRANSFORMERS,
-                )
-            )
-        try:
-            scorer = hf_pipeline("sentiment-analysis", model=model)  # type: ignore[call-overload,unused-ignore]
-        except Exception as exc:
-            return Result.failure(
-                Diagnostic.error(
-                    "SENTIMENT_NN_UNAVAILABLE", f"could not load model {model!r}: {exc}", fix=_FIX_TRANSFORMERS
-                )
-            )
+    scorer: Callable[[str], Any]
+    if pipeline is not None:
+        scorer = pipeline
+    else:
+        resolved = _bert_scorer(model)
+        if resolved.value is None:
+            return Result.failure(*resolved.diagnostics)
+        scorer = resolved.value
+        classify = getattr(scorer, "classify", None)
+        if callable(classify):
+            # Score every sentence in length-sorted batches up front: one
+            # model call per batch, not per sentence.
+            texts = [_truncated(text)[0] for _, _, _, text in rows.unwrap()]
+            verdicts = dict(zip(texts, classify(texts), strict=True))
+
+            def batched(text: str) -> Any:
+                label, value = verdicts[text]
+                return [{"label": label, "score": value}]
+
+            scorer = batched
 
     def score(text: str) -> tuple[str, float, float]:
         verdict = scorer(text)

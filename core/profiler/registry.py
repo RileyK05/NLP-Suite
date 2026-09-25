@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from core.models.registry import ModelKind, models_of_kind
 from core.result import Diagnostic
 from core.viz.chartspec import CHART_KINDS
 from core.viz.panels import panel_names
@@ -122,6 +123,21 @@ class ToolSpec:
     profiler_eligible: bool = True  # can the batch profiler select it?
     execution_phase: int = 2  # 0=env 1=intake 2=analysis 3=post/aggregate
     parse_when: str = ""  # conditional parse requirement, e.g. mode == 'conll'
+
+
+def _model_param(default: str, *kinds: ModelKind) -> ParamSpec:
+    """The ``model`` choice: every registered model of the kinds this tool reads.
+
+    A model added to :mod:`core.models.registry` appears here on its own; one
+    that is not installed yet fails its run with "Open Models to add it".
+    """
+    return _flag(
+        "model",
+        "str",
+        default,
+        "model (add more on the Models page)",
+        choices=tuple(spec.id for spec in models_of_kind(*kinds)),
+    )
 
 
 def _flag(  # noqa: PLR0913
@@ -516,7 +532,9 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
             _flag("top-n", "int", 5, "neighbours returned", minimum=1),
         ),
         outputs=("vectors.csv", "neighbours.csv", "tsne.csv", "tsne.html"),
-        version="1",
+        # 2: vectors.csv names each word's class and tsne.csv its meaning
+        # group, for the meaning figures (axes, groups, networks).
+        version="2",
     ),
     ToolSpec(
         name="sentiment_vader_anew",
@@ -954,7 +972,8 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         family="embeddings",
         capability_ids=("CAP-EMBED-02", "CAP-EMBED-03"),
         packet="FR-5.6",
-        description="Transformer token embeddings + median-split WSI baseline (needs a parse; model downloads on first use)",
+        description="BERT token embeddings and word senses: which words split into two uses, with the sentences "
+        "behind each (needs a parse)",
         requires_parse=True,
         parser_backend="config",
         input_kind="corpus",
@@ -968,10 +987,14 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
                 help="column for vectors",
                 choices=("form", "lemma"),
             ),
-            _flag("model", "str", "bert-base-uncased", "Hugging Face model (downloaded on first use)"),
+            _model_param("bert-base-uncased", "token_embeddings"),
         ),
-        outputs=("contextual_vectors.csv", "wsi.csv"),
-        version="1",
+        outputs=("contextual_vectors.csv", "wsi.csv", "senses.csv"),
+        # 2: each word is read at its own surface form in the sentence (a
+        # lemma was read as the whole sentence), through ONNX Runtime.
+        # 3: wsi.csv says how clearly each split separates, and senses.csv
+        # carries the sentences behind each sense.
+        version="3",
     ),
     ToolSpec(
         name="clause_svo",
@@ -1011,10 +1034,11 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         optional_package="embeddings",
         params=(
             _flag("sentences", "int", 3, "summary sentences per document", minimum=1),
-            _flag("model", "str", "bert-base-uncased", "Hugging Face model (downloaded on first use)"),
+            _model_param("bert-base-uncased", "token_embeddings", "sentence_embeddings"),
         ),
         outputs=("bert_extract.csv",),
-        version="1",
+        # 2: sentence vectors through ONNX Runtime; sentence models accepted.
+        version="2",
     ),
     ToolSpec(
         name="ngrams",
@@ -1354,7 +1378,7 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         family="topics",
         capability_ids=("CAP-TOPIC-04",),
         packet="FR-5.9",
-        description="KMeans topics over transformer document embeddings (needs a parse; model downloads on first use)",
+        description="KMeans topics over BERT document embeddings (needs a parse)",
         requires_parse=True,
         parser_backend="config",
         input_kind="corpus",
@@ -1363,10 +1387,11 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
             _flag("topics", "int", 3, "number of topics", minimum=2),
             _flag("top-n", "int", 5, "top terms per topic", minimum=1),
             _flag("seed", "int", 42, "KMeans seed"),
-            _flag("model", "str", "bert-base-uncased", "Hugging Face model (downloaded on first use)"),
+            _model_param("bert-base-uncased", "token_embeddings", "sentence_embeddings"),
         ),
         outputs=("bert_topics.csv", "bert_topic_docs.csv"),
-        version="1",
+        # 2: sentence vectors through ONNX Runtime; sentence models accepted.
+        version="2",
     ),
     ToolSpec(
         name="gender_annotator",
@@ -1491,21 +1516,15 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         family="sentiment",
         capability_ids=("CAP-SENT-10",),
         packet="FR-4.9",
-        description="neural sentiment per sentence via a Hugging Face BERT classifier (needs a parse)",
+        description="neural sentiment per sentence via a BERT classifier: positive or negative, no neutral (needs a parse)",
         requires_parse=True,
         parser_backend="config",
         input_kind="corpus",
         optional_package="embeddings",
-        params=(
-            _flag(
-                "model",
-                "str",
-                "distilbert-base-uncased-finetuned-sst-2-english",
-                "Hugging Face sentiment model (downloads on first use)",
-            ),
-        ),
+        params=(_model_param("distilbert-sst2", "classifier"),),
         outputs=("sentiment_sentences.csv", "sentiment_documents.csv"),
-        version="1",
+        # 2: the model runs through ONNX Runtime, batched.
+        version="2",
     ),
     ToolSpec(
         name="sentiment_neural_spacy",
@@ -1692,7 +1711,8 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         family="embeddings",
         capability_ids=("CAP-EMBED-10",),
         packet="FR-5.11",
-        description="Word2Vec via BERT: mean-pooled contextual type vectors, neighbours, t-SNE (needs a parse)",
+        description="Word2Vec via BERT: mean-pooled contextual type vectors, neighbours, t-SNE, and each word's "
+        "company per decade in a dated corpus (needs a parse)",
         requires_parse=True,
         parser_backend="config",
         input_kind="corpus",
@@ -1706,13 +1726,47 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
                 help="column for vectors",
                 choices=("form", "lemma"),
             ),
-            _flag("model", "str", "bert-base-uncased", "Hugging Face model (downloaded on first use)"),
+            _model_param("bert-base-uncased", "token_embeddings"),
             _flag("min-count", "int", 2, "minimum word count", minimum=1),
             _flag("query", "str", None, "word to find neighbours for"),
             _flag("top-n", "int", 5, "neighbours returned", minimum=1),
             _flag("seed", "int", 42, "t-SNE seed"),
         ),
-        outputs=("vectors.csv", "neighbours.csv", "tsne.csv", "tsne.html"),
+        outputs=(
+            "vectors.csv",
+            "neighbours.csv",
+            "tsne.csv",
+            "tsne.html",
+            "meaning_over_time.csv",
+            "meaning_change.csv",
+        ),
+        # 2: lemmas are read at their surface forms; neighbours reuse the
+        # vectors instead of embedding the corpus a second time.
+        # 3: word classes, meaning groups, and each word's company per
+        # decade (meaning_over_time.csv, meaning_change.csv) when dated.
+        version="3",
+    ),
+    ToolSpec(
+        name="doc_embeddings",
+        family="embeddings",
+        capability_ids=("CAP-EMBED-11",),
+        packet="FR-5.12",
+        description="Sentence-model document or sentence embeddings: pairwise similarity by meaning, "
+        "neighbours, a clustered map and semantic search (needs a parse)",
+        requires_parse=True,
+        parser_backend="config",
+        input_kind="corpus",
+        optional_package="embeddings",
+        params=(
+            _model_param("granite-embedding-english-r2", "sentence_embeddings", "token_embeddings"),
+            _flag(
+                "unit", "str", "document", "embed whole documents or single sentences", choices=("document", "sentence")
+            ),
+            _flag("top-n", "int", 5, "neighbours per document", minimum=1),
+            _flag("query", "str", None, "semantic search: find the sentences closest in meaning"),
+            _flag("seed", "int", 42, "map and clustering seed"),
+        ),
+        outputs=("doc_vectors.csv", "doc_pairs.csv", "doc_neighbours.csv", "doc_map.csv", "search_results.csv"),
         version="1",
     ),
 )

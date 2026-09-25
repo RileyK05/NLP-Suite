@@ -383,6 +383,9 @@ class Bench:
         plan = planned.unwrap()
         if plan.needs_parse and warm.table is None:
             raise ValueError(f"{tool} needs parsed documents, and this corpus has not been parsed.")
+        too_large = model_budget(tool, warm.table)
+        if too_large is not None:
+            return LiveResult(tool=tool, ok=False, diagnostics=(too_large,))
 
         started = time.perf_counter()
         batch = execute(
@@ -401,6 +404,40 @@ class Bench:
             diagnostics=tuple(outcome.diagnostics),
             elapsed_ms=elapsed,
         )
+
+
+#: Sentences a model-based tool reads live. BERT-family models read tens of
+#: sentences a second on a laptop CPU, so this is about a minute of work --
+#: five State of the Union addresses -- inside the bench's 180-second window.
+LIVE_MODEL_SENTENCES = 1500
+
+
+def model_budget(tool: str, table: pd.DataFrame | None) -> Diagnostic | None:
+    """Refuse, with the way forward, a live model run that could not finish.
+
+    A BERT tool over a whole corpus is minutes to hours of CPU; on the bench
+    that reads as a request that hangs and is then declared lost. Said up
+    front instead, with the two things that work: fewer documents here, or
+    the same analysis as a background run.
+    """
+    from core.profiler.registry import get_tool
+    from core.result import Diagnostic
+
+    spec = get_tool(tool)
+    if spec is None or spec.optional_package != "embeddings" or table is None or table.empty:
+        return None
+    sentences = int(table.groupby(["Document ID", "Sentence ID"], sort=False).ngroups)
+    if sentences <= LIVE_MODEL_SENTENCES:
+        return None
+    minutes = max(1, round(sentences / 30 / 60))
+    return Diagnostic.error(
+        "LIVE_MODEL_TOO_LARGE",
+        f"This selection has {sentences:,} sentences; a language model reads them in about {minutes} minute(s) "
+        f"here, longer than the Interactive page waits. Choose {LIVE_MODEL_SENTENCES:,} sentences or fewer "
+        "(a few documents), or run it from Analyze & visualize, which works in the background.",
+        sentences=sentences,
+        limit=LIVE_MODEL_SENTENCES,
+    )
 
 
 # How many rows of a live result travel to the browser. The same bound the

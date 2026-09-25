@@ -27,6 +27,7 @@ ALLOWLIST: dict[str, tuple[str, str]] = {
         "version-selected local build artifacts and fixed argv, no shell; silent installation restricted to explicit CI mode",
     ),
     "desktop_preview": ("S603-subprocess", "fixed local server argv, no shell"),
+    "publish_snapshot": ("S603-subprocess", "fixed git ls-files argv on a local checkout, no shell"),
     "smoke_desktop": ("S603-subprocess S310-urlopen", "explicit test executable, local engine handshake, no shell"),
     "runner": ("S603-subprocess", "fixed local worker entrypoint and job UUID, no shell"),
     "server": ("socket", "binds only 127.0.0.1; bearer token, Origin and Host checks"),
@@ -56,6 +57,16 @@ ALLOWLIST: dict[str, tuple[str, str]] = {
     # for the interactive frontend tests; argv lists, no shell, no network
     # beyond the engine's own loopback handshake.
     "interactive_stack": ("S603-subprocess", "fixed local server argv, taskkill on timeout, no shell"),
+    # Model downloads from the project's own GitHub release; https only
+    # (loopback http for tests), every file checked against its SHA-256.
+    "download": ("S310-urlopen", "_checked refuses non-https URLs; files verified by SHA-256 before use"),
+    # Maintainer tools, never shipped: fetch the Apache-2.0 text and upload
+    # the models release to the project's own repository.
+    "export_models": ("S310-urlopen", "fixed Hugging Face and apache.org license URLs"),
+    "publish_models": (
+        "S310-urlopen S603-subprocess",
+        "fixed api.github.com / uploads.github.com URLs; git credential fill with a fixed argv, no shell",
+    ),
     "run_interactive_frontend_test": (
         "S603-subprocess",
         "fixed local stack script + vitest argv, no shell; taskkill on timeout",
@@ -70,8 +81,8 @@ ALLOWLIST: dict[str, tuple[str, str]] = {
 }
 
 
-# Gitignored personal scripts: allowlisted so they stay clean on the owner's
-# machine, but absent from every clone, so their existence is not asserted.
+# Personal scripts: tracked on dev but kept out of public by .publicignore,
+# so public clones lack them and their existence is not asserted.
 OWNER_LOCAL = frozenset({"hw1_duration_sources", "run_gender_guesser", "generate_hw1_inaugural_outputs"})
 
 

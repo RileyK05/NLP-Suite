@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 
-from core.analysis.contextual import EmbeddingBackend, TransformerBackend, default_backend
+from core.analysis.contextual import EmbeddingBackend, embed_sentences, text_backend, truncation_note
 from core.analysis.lda import STOPWORDS
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
@@ -87,7 +87,7 @@ def bert_topics(
     resolved = backend
     diags: list[Diagnostic] = []
     if resolved is None:
-        decided = default_backend(model or "bert-base-uncased")
+        decided = text_backend(model or "bert-base-uncased")
         if decided.value is None:
             return Result.failure(*decided.diagnostics)
         resolved = decided.unwrap()
@@ -107,8 +107,8 @@ def bert_topics(
             doc_vectors.append(np.zeros(resolved.dimension(), dtype=float))
             continue
         try:
-            vectors = np.array(resolved.embed(sentences, sentences), dtype=np.float64)
-        except RuntimeError as exc:
+            vectors = np.array(embed_sentences(resolved, sentences), dtype=np.float64)
+        except (RuntimeError, ValueError) as exc:
             return Result.failure(Diagnostic.error("BERTOPIC_MODEL_MISSING", str(exc)))
         doc_vectors.append(vectors.mean(axis=0))
     matrix = np.array(doc_vectors, dtype=np.float64)
@@ -161,4 +161,5 @@ def bert_topics(
             }
         )
     documents = pd.DataFrame(doc_rows, columns=_DOCUMENT_COLUMNS)
+    diags.extend(truncation_note(resolved))
     return Result.success((topics, documents), *diags)

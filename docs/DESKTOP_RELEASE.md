@@ -78,43 +78,40 @@ installer option. Mac mounts the DMG read-only, copies and audits the APP, then
 tests the copied payload. Linux checks the extracted DEB; launching the
 AppImage and interactive Finder/desktop acceptance remain manual checks.
 
-## Publish packages where users can find them
+## Two tracks: dev and public
 
-The README's Downloads link points to **GitHub Releases → latest**, not the
-source tree or Actions logs. `out/` and `desktop/src-tauri/target/` are
-gitignored, so a plain push publishes nothing. The simplest release needs no
-command line: after bumping the version, open **Actions → Desktop platform
-builds → Run workflow**, tick **Draft a GitHub release**, and run it. The tag
-`v<version>` is created when you publish the draft. Or cut it by tag:
+- **Dev** is `RileyK05/New_NLP_Suite` (private), branch `main`. All work
+  happens here, including personal files that never ship.
+- **Public** is `RileyK05/NLP-Suite`. Nobody edits it directly. It changes
+  only through the **Publish dev to public** workflow, which mirrors dev
+  minus the paths in `.publicignore` and refuses anything named like
+  coursework (`scripts/publish_snapshot.py`).
 
-```text
-python scripts/bump_version.py 0.3.1
-git commit -am "Release 0.3.1"
-git tag v0.3.1
-git push origin main v0.3.1
-```
+Both buttons live in the public repository's **Actions** tab (public builds
+are free; the private repository has no Actions minutes):
 
-`bump_version.py` rewrites every file that carries the version (pyproject,
-package.json/lock, tauri.conf.json and its resource path, Cargo.toml/lock, the
-app footer and the health endpoint). Pushing the tag runs **Desktop platform
-builds** on all four platforms and then its `release` job, which:
+| I want to… | Actions → workflow | Options |
+| --- | --- | --- |
+| Try dev in a real installer | Desktop platform builds | tick **from_dev**; download the `nlp-suite-<platform>` artifact |
+| Run the full test gate on dev | CI | tick **from_dev** |
+| Ship a release | Publish dev to public | **release** ticked (default) |
 
-1. refuses to continue if the tag does not equal the pyproject version;
-2. collects every platform that built and validated, plus a Python wheel;
-3. renames assets without spaces (GitHub would turn them into dots) and writes
-   one `SHA256SUMS.txt` for them;
-4. creates a **draft** release whose notes list the attached files and mark any
-   platform whose build failed as "not in this release".
+To ship: bump the version in dev (`python scripts/bump_version.py 0.4.0`),
+commit and push dev, then run **Publish dev to public**. It commits the
+snapshot to public `main`, CI runs on it, and the desktop build drafts the
+release. Open the draft on the
+[Releases page](https://github.com/RileyK05/NLP-Suite/releases), write the
+**Changes** section, check the Assets, and **Publish**. Installed apps then
+offer the update.
 
-Nothing is public yet. Open the draft on the
-[Releases page](https://github.com/RileyK05/NLP-Suite/releases), fill in
-**Changes** (the [template](RELEASE_NOTES_TEMPLATE.md) lists what evidence to
-state), check the Assets list against the notes, then **Publish**. A failed
-platform can be fixed and the tag's workflow re-run: the job uploads into the
-existing release with `--clobber` instead of creating a second one.
+**One-time setup:** a fine-grained personal access token (GitHub → Settings
+→ Developer settings → Fine-grained tokens) with repository access to both
+repositories: *Contents: read* on `New_NLP_Suite`, *Contents: read and write*
+and *Workflows: read and write* on `NLP-Suite`. Save it in the public
+repository as the secret `PUBLISH_TOKEN`.
 
-Do not mark Mac or Linux verified because Windows passed, and do not link users
-to an expiring Actions artifact as the permanent download location.
+Do not mark Mac or Linux verified because Windows passed, and do not link
+users to an expiring Actions artifact as the permanent download location.
 
 ## In-app updates
 

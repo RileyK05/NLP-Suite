@@ -49,9 +49,11 @@ def test_live_embedding_result_exposes_saved_vector_query_without_retraining() -
 
     offered = live_panels_offered(result)
     assert "word2vec_gensim_saved_vectors" in [panel["name"] for panel in offered]
+    # Three words are too few for meaning groups (the first figure) or a
+    # bad-good axis; the first figure that can read them is drawn instead.
     default = live_panel(result, settings)
     assert default is not None and default["ok"]
-    assert default["title"] == "Words nearest to government"
+    assert default["title"] == "The neighbourhood of government"
     queried = draw_live_panel(result, settings, "word2vec_gensim_saved_vectors", {"query": "state"})
     assert queried["ok"]
     assert next(mark["label"] for mark in queried["marks"]) == "government"

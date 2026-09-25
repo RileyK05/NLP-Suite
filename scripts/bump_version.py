@@ -29,7 +29,12 @@ SITES: tuple[tuple[str, str, str, int], ...] = (
     ("desktop/package.json", rf'(?m)^  "version": "{V}",', '  "version": "{v}",', 1),
     ("desktop/package-lock.json", rf'("name": "nlp-suite-desktop",\r?\n\s+"version": "){V}"', r'\g<1>{v}"', 2),
     ("desktop/src-tauri/tauri.conf.json", rf'(?m)^  "version": "{V}",', '  "version": "{v}",', 1),
-    ("desktop/src-tauri/tauri.conf.json", rf"binaries/releases/{V}/nlp-runtime/", "binaries/releases/{v}/nlp-runtime/", 1),
+    (
+        "desktop/src-tauri/tauri.conf.json",
+        rf"binaries/releases/{V}/nlp-runtime/",
+        "binaries/releases/{v}/nlp-runtime/",
+        1,
+    ),
     ("desktop/src-tauri/Cargo.toml", rf'(?m)^version = "{V}"', 'version = "{v}"', 1),
     ("desktop/src-tauri/Cargo.lock", rf'(name = "nlp-suite-desktop"\r?\nversion = "){V}"', r'\g<1>{v}"', 1),
     ("desktop/src/App.tsx", rf"Desktop beta · {V}", "Desktop beta · {v}", 1),
@@ -75,7 +80,9 @@ def main() -> None:
     print(f"Version {args.version}: updated {len(changed)} file(s)")
     for name in changed:
         print(f"  {name}")
-    print(f'Next: git commit -am "Release {args.version}" && git tag v{args.version} && git push origin main v{args.version}')
+    print(
+        f'Next: git commit -am "Release {args.version}" && git tag v{args.version} && git push origin main v{args.version}'
+    )
 
 
 if __name__ == "__main__":

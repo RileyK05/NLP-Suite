@@ -175,7 +175,10 @@ export function liveTools(tools: Tool[]): Tool[] {
       tool.category !== "visualization" &&
       !tool.name.startsWith("table_") &&
       !JOB_ONLY.has(tool.name) &&
-      tool.availability?.state !== "needs_setup",
+      tool.availability?.state !== "needs_setup" &&
+      // Its model is not installed yet: the Models page, not the bench, is
+      // where that is fixed.
+      tool.availability?.state !== "needs_model",
   );
 }
 

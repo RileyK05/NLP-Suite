@@ -59,8 +59,11 @@ def test_gensim_adapter_matches_cli_controls_and_emits_explorable_outputs(monkey
     assert seen["field"] is Col.FORM
     assert seen["remove_stopwords"] is True
     assert set(frames) == {"vectors.csv", "tsne.csv", "tsne.html", "neighbours.csv"}
-    assert frames["vectors.csv"].columns.tolist() == ["Word", "Count", "Vector"]
-    # Count is additive: the map needs it to show frequent words, not outliers.
-    assert frames["tsne.csv"].columns.tolist() == ["Word", "X", "Y", "Count"]
+    # Word class is additive: the meaning figures keep to nouns or adjectives with it.
+    assert frames["vectors.csv"].columns.tolist() == ["Word", "Count", "Vector", "Word class"]
+    # Count is additive: the map needs it to show frequent words, not outliers;
+    # Group (a meaning group, when the vocabulary has enough words) names its regions.
+    assert frames["tsne.csv"].columns.tolist()[:4] == ["Word", "X", "Y", "Count"]
+    assert set(frames["tsne.csv"].columns) <= {"Word", "X", "Y", "Count", "Group"}
     assert frames["neighbours.csv"].columns.tolist() == ["Word", "Neighbor", "Cosine"]
     assert frames["neighbours.csv"].iloc[0]["Neighbor"] == "state"

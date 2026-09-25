@@ -44,7 +44,8 @@ nlp-doctor en
 | `sentiment` | VADER scoring |
 | `topics` | Gensim LDA/Word2Vec |
 | `wordnet` | NLTK WordNet/VerbNet/FrameNet data access |
-| `embeddings` | transformer vectors + BERT extractive |
+| `models` | the model runtime (ONNX Runtime + tokenizers): BERT, neural sentiment, document embeddings. Models themselves come from `python scripts/fetch_models.py --bundled` (or the app's Models page) |
+| `embeddings` | development fallback only: reads the same models through PyTorch `transformers` |
 | `plotly`, `app` | charts + Streamlit gallery |
 | `plotly-image` | static PNG/SVG chart export (kaleido) |
 | `excel` | native Excel chart export (openpyxl; bar/line/pie/scatter/radar/bubble) |

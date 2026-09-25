@@ -9,7 +9,7 @@ name = "nlp-suite-ng"
 # tauri.conf.json and src-tauri/Cargo.toml. test_desktop_release_versions_stay_in_sync
 # enforces it -- this file drifted to 0.1.0 while the desktop moved to 0.3.0
 # because the test did not cover it.
-version = "0.3.1"
+version = "0.4.0"
 description = "Ground-up rebuild of the NLP Suite: headless corpus NLP toolkit"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -52,6 +52,9 @@ sentiment = ["vaderSentiment>=3.3"]
 topics = ["gensim>=4.0"]
 wordnet = ["nltk>=3.8"]
 embeddings = ["transformers>=4.0"]
+# The model runtime: BERT, neural sentiment and document embeddings run
+# through ONNX Runtime (core/models); transformers is only a dev fallback.
+models = ["onnxruntime>=1.20", "tokenizers>=0.20"]
 wordcloud = ["wordcloud>=1.9"]
 figures = ["matplotlib>=3.8", "seaborn>=0.13"]
 all = [
@@ -67,6 +70,7 @@ all = [
     "nlp-suite-ng[topics]",
     "nlp-suite-ng[wordnet]",
     "nlp-suite-ng[embeddings]",
+    "nlp-suite-ng[models]",
     "nlp-suite-ng[wordcloud]",
     "nlp-suite-ng[figures]",
 ]
@@ -143,6 +147,9 @@ ignore = [
 # chartspec._prepare_by_kind / plotters.build_figure dispatch on chart kind —
 # one branch per kind is the flat, readable shape; a dispatch table of
 # Result-returning closures would hide the per-kind contract.
+# The model runtime (onnxruntime, tokenizers) loads on first use, so reading the
+# registry or a tool list never pays for it.
+"core/models/*.py" = ["PLC0415"]
 "core/viz/*.py" = ["PLC0415", "PLR0912", "PLR0911", "PLR0915", "F401", "PLR2004"]
 "core/data/*.py" = ["I001", "RUF022", "RUF046", "SIM108", "PLR0912"]
 "core/pcace/*.py" = ["I001"]
@@ -202,7 +209,7 @@ exclude = ["out/", "legacy/"]
 
 # pandas ships no inline types and pandas-stubs is not a dependency here.
 [[tool.mypy.overrides]]
-module = ["pandas.*", "gensim.*", "vaderSentiment.*", "stanza.*", "spacy.*", "streamlit.*", "plotly.*", "numpy.*", "scipy.*", "sklearn.*", "nltk.*", "pdfminer.*", "docx.*", "striprtf.*", "wordcloud.*", "openpyxl.*", "PIL.*", "matplotlib.*", "seaborn.*", "networkx.*", "torch.*", "transformers.*"]
+module = ["pandas.*", "gensim.*", "vaderSentiment.*", "stanza.*", "spacy.*", "streamlit.*", "plotly.*", "numpy.*", "scipy.*", "sklearn.*", "nltk.*", "pdfminer.*", "docx.*", "striprtf.*", "wordcloud.*", "openpyxl.*", "PIL.*", "matplotlib.*", "seaborn.*", "networkx.*", "torch.*", "transformers.*", "onnxruntime.*", "tokenizers.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
@@ -221,4 +228,5 @@ filterwarnings = ["error"]
 markers = [
     "offline: pure offline unit test (default assumption; never needs models or network)",
     "model_integration: needs a locally installed parser model; excluded from ordinary CI",
+    "real_models: needs real exported ONNX models (NLP_SUITE_REAL_MODELS); skipped otherwise",
 ]

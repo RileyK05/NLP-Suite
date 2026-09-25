@@ -351,8 +351,10 @@ class Runner:
     ) -> dict[str, Any]:
         from core.profiler.plan import Plan, PlannedTool, build_plan, validate_parameters
         from core.result import Result
+        from desktop_backend.glance import GLANCE_TOOL, current_key, glance_plan
 
-        if tool not in DESKTOP_TOOLS and tool not in QUESTION_PUBLISHERS:
+        glance = tool == GLANCE_TOOL
+        if tool not in DESKTOP_TOOLS and tool not in QUESTION_PUBLISHERS and not glance:
             raise ValueError("This analysis is not available in the desktop app.")
         if self._stopping:
             raise ValueError("The app is closing. Reopen it before starting an analysis.")
@@ -373,6 +375,10 @@ class Runner:
             plan = Result.success(Plan((PlannedTool(tool, validated.unwrap(), False, 2),), {tool: validated.unwrap()}))
         elif tool in QUESTION_PUBLISHERS:
             plan = _question_plan(tool, params)
+        elif glance:
+            if selection is not None:
+                raise ValueError("Corpus at a glance reads the whole corpus.")
+            plan = glance_plan()
         else:
             plan = build_plan([tool], {tool: params})
         if not plan.ok:
@@ -404,7 +410,7 @@ class Runner:
         frozen_params = plan.unwrap().params
         spec = TABLE_TOOLS.get(tool) or QUESTION_PUBLISHER_SPECS.get(tool) or get_tool(tool)
         resources = []
-        if spec is not None:
+        if spec is not None and not glance:
             for parameter in spec.params:
                 value = frozen_params[tool].get(parameter.name)
                 if parameter.type != "path" or value is None:
@@ -430,6 +436,9 @@ class Runner:
             "resources": resources,
             "selection": selection.model_dump() if selection is not None else None,
         }
+        if glance:
+            # The cache key: the documents' contents and the recipe version.
+            request["glance_key"] = current_key(self.workspace, project_id)
         with self.workspace.connect() as db:
             db.execute(
                 "INSERT INTO jobs (id, project_id, tool, state, stage, created, request) "
@@ -605,8 +614,13 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
         corpus = Corpus(docs, corpus_fingerprint(docs))
         if job["tool"] == "lda_mallet":
             return run_mallet(workspace, job, request["params"][job["tool"]], documents, project_dir)
+        from desktop_backend.glance import GLANCE_TOOL
+
+        glance = job["tool"] == GLANCE_TOOL
         if job["tool"] in QUESTION_PUBLISHERS:
             plan = _question_plan(job["tool"], request["params"][job["tool"]]).unwrap()
+        elif glance:
+            plan = build_plan(list(request["params"]), request["params"]).unwrap()
         else:
             plan = build_plan([job["tool"]], request["params"]).unwrap()
         table = None
@@ -673,12 +687,24 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
         # A finished run carries its publication figures (figures/*.png,
         # *.svg). NLP_SUITE_RUN_FIGURES=0 turns that off.
         figures = os.environ.get("NLP_SUITE_RUN_FIGURES", "1") != "0"
+        selection_names = tuple(tool.name for tool in plan.tools) if glance else (job["tool"],)
         report = write_batch(
-            project_dir / "runs", BatchRequest((job["tool"],), plan.params, batch, corpus, figures=figures)
+            project_dir / "runs", BatchRequest(selection_names, plan.params, batch, corpus, figures=figures)
         )
         outcome = batch.outcomes[0]
         if report.value is None:
             raise ValueError("; ".join(d.message for d in report.diagnostics))
+        if glance:
+            # One job, one parse, seven child runs: the parent batch is the result.
+            every = all(item.ok for item in batch.outcomes)
+            workspace.update_job(
+                job_id,
+                state="DONE" if every else "PARTIAL",
+                stage="Results ready" if every else "Some analyses need review",
+                run_dir=report.unwrap().run_dir.relative_to(project_dir).as_posix(),
+                diagnostics=[d.to_dict() for item in batch.outcomes for d in item.diagnostics],
+            )
+            return 0 if every else 1
         child = report.unwrap().child_dirs.get(job["tool"])
         state = "DONE" if outcome.ok else "PARTIAL" if child is not None else "FAILED"
         workspace.update_job(

@@ -51,14 +51,20 @@ export type Param = {
   required: boolean;
   help: string;
   choices: (string | number)[];
+  /** Words for each choice where its value is an id (models), from the engine. */
+  choice_labels?: Record<string, string>;
   minimum: number | null;
   maximum: number | null;
 };
 export type Tool = {
   availability?: {
-    state: "available" | "needs_setup" | "needs_input";
+    state: "available" | "needs_setup" | "needs_input" | "needs_model";
     message: string;
     missing: string[];
+    /** needs_model: the registered model to download from the Models page. */
+    model_id?: string;
+    model_name?: string;
+    size_mb?: number;
   };
   name: string;
   /** The tool's name in words, from core/profiler/labels.py. */
@@ -608,3 +614,62 @@ export function humanize(name: string): string {
 
 export const title = (name: string): string =>
   labels.get(name) ?? humanize(name);
+
+/** One pretrained model, as the Models page shows it (desktop_backend/models.py). */
+export type ModelInfo = {
+  id: string;
+  name: string;
+  kind: "token_embeddings" | "sentence_embeddings" | "classifier";
+  kindLabel: string;
+  description: string;
+  sizeMb: number;
+  status: "ready" | "not_downloaded" | "corrupt" | "unpublished" | "downloading";
+  /** Ships inside the app (and so cannot be removed). */
+  bundled: boolean;
+  /** A downloaded copy the reader can delete to free space. */
+  removable: boolean;
+  license: string;
+  source: string;
+  precision: string;
+  /** Tool names that can run this model. */
+  usedBy: string[];
+  download: {
+    state: "downloading" | "failed" | "cancelled";
+    done: number;
+    total: number;
+    message: string;
+  } | null;
+  freedMb?: number;
+  error?: string;
+};
+
+export type ModelListing = { models: ModelInfo[]; folder: string };
+
+export const listModels = (): Promise<ModelListing> => api("/models");
+
+export const downloadModel = (id: string): Promise<ModelInfo> =>
+  api(`/models/${encodeURIComponent(id)}/download`, { method: "POST" });
+
+export const cancelModelDownload = (id: string): Promise<ModelInfo> =>
+  api(`/models/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+
+export const deleteModel = (id: string): Promise<ModelInfo> =>
+  del(`/models/${encodeURIComponent(id)}`);
+
+/** Corpus at a glance (desktop_backend/glance.py): the newest result and what it found. */
+export type GlanceFigure = { tool: string; label: string; panel: string; path: string };
+export type Glance = {
+  state: "none" | "queued" | "running" | "ready" | "stale" | "failed" | "partial" | "cancelled" | "interrupted";
+  key: string;
+  job?: Job;
+  summary?: string[];
+  figures?: GlanceFigure[];
+};
+
+export const glanceStatus = (projectId: string): Promise<Glance> => api(`/projects/${projectId}/glance`);
+
+export const startGlance = (projectId: string, parser: string): Promise<Job> =>
+  post(`/projects/${projectId}/glance`, { parser });
+
+export const glanceFigureUrl = (projectId: string, path: string): Promise<string> =>
+  artifactBlobUrl(`/projects/${projectId}/glance/figure?path=${encodeURIComponent(path)}`);

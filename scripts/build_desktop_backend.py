@@ -14,6 +14,31 @@ import subprocess
 import sys
 
 
+def bundled_model_dirs(root: Path) -> list[Path]:
+    """``models/<id>`` of every model the installer ships, where present."""
+    sys.path.insert(0, str(root))
+    from core.models.registry import MODELS
+
+    return [root / "models" / spec.id for spec in MODELS if spec.bundled and (root / "models" / spec.id).is_dir()]
+
+
+def missing_bundled_models(root: Path) -> list[str]:
+    """Bundled models absent or incomplete in models/ (fetch_models.py puts them there)."""
+    sys.path.insert(0, str(root))
+    from core.models.registry import MODELS
+
+    missing = []
+    for spec in MODELS:
+        if not spec.bundled:
+            continue
+        folder = root / "models" / spec.id
+        if not all(
+            (folder / item.name).is_file() and (folder / item.name).stat().st_size == item.size for item in spec.files
+        ):
+            missing.append(f"model {spec.id} (run: python scripts/fetch_models.py --bundled)")
+    return missing
+
+
 def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, version: str) -> list[str]:
     if system not in ("win32", "darwin", "linux"):
         raise ValueError(f"Unsupported runtime platform: {system}")
@@ -47,6 +72,15 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
     # cannot see it; the live bench's parse cache (desktop_backend/live.py)
     # needs it. pyarrow is a core dependency in pyproject.toml.
     args.extend(["--hidden-import", "pyarrow.parquet"])
+    # The model runtime (core.models.onnx_backend) imports both when the first
+    # model opens; onnxruntime's provider DLLs are not import-visible.
+    for module in ("onnxruntime", "tokenizers"):
+        args.extend(["--hidden-import", module])
+    args.extend(["--collect-binaries", "onnxruntime"])
+    # Bundled models (core.models.registry, bundled=True) ship inside the
+    # engine at models/<id>/, where core.models.locate looks first.
+    for model in bundled_model_dirs(root):
+        args.extend(["--add-data", f"{model}{separator}models/{model.name}"])
     if with_parser:
         args.extend(["--add-data", f"{root / 'desktop/.toolchain/nltk_data'}{separator}nltk_data"])
         for module in (
@@ -75,6 +109,10 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
         "IPython",
         "pytest",
         "tkinter",
+        # tokenizers declares huggingface_hub (for from_pretrained) but the app
+        # loads tokenizer.json from disk; neither is imported at run time.
+        "huggingface_hub",
+        "hf_xet",
         "spacy.tests",
         "thinc.tests",
         "gensim.test",
@@ -167,8 +205,11 @@ def main() -> None:
             "seaborn",
             "openpyxl",
             "PIL",
+            "onnxruntime",
+            "tokenizers",
         )
         missing = [name for name in required if importlib.util.find_spec(name) is None]
+        missing.extend(missing_bundled_models(root))
         wordnet = root / "desktop/.toolchain/nltk_data/corpora/wordnet.zip"
         if not wordnet.is_file():
             missing.append("WordNet data (run the documented nltk downloader command)")

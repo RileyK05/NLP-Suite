@@ -10,6 +10,8 @@ import threading
 import time
 from typing import Any
 
+from core.models.locate import status as model_status
+from core.models.registry import ModelSpec, get_model
 from core.profiler.registry import ToolSpec
 
 # Scanning packages (nltk import, model find_spec) costs seconds on a cold
@@ -72,6 +74,9 @@ def _scan() -> dict[str, bool]:
         "vaderSentiment",
         "torch",
         "transformers",
+        # The model runtime: BERT, sentiment and embeddings run through these.
+        "onnxruntime",
+        "tokenizers",
         "pdfminer",
         "docx",
         "striprtf",
@@ -133,8 +138,10 @@ COMPONENT_LABELS: dict[str, tuple[str, str]] = {
     "sentiwordnet": ("SentiWordNet", "Sentiment scores attached to word senses."),
     "vaderSentiment": ("VADER", "Sentence-level sentiment scoring."),
     "nrclex": ("NRC emotion lexicon", "The ten-emotion vocabulary."),
-    "torch": ("PyTorch", "Runs the transformer models."),
-    "transformers": ("Transformers", "Contextual embeddings and transformer topics."),
+    "torch": ("PyTorch", "Development only: the app runs its models without it."),
+    "transformers": ("Transformers", "Development only: reads models from Hugging Face in a source checkout."),
+    "onnxruntime": ("ONNX Runtime", "Runs BERT, neural sentiment and document embeddings."),
+    "tokenizers": ("Tokenizers", "Splits text into the pieces BERT-family models read."),
     "pdfminer": ("PDF reader", "Imports PDF documents as text."),
     "docx": ("Word reader", "Imports .docx documents as text."),
     "striprtf": ("RTF reader", "Imports .rtf documents as text."),
@@ -176,7 +183,53 @@ def _parser_missing(found: dict[str, bool]) -> list[str]:
     return ["spacy", "en_core_web_sm"]
 
 
-def availability(spec: ToolSpec, found: dict[str, bool]) -> dict[str, Any]:
+def tool_model(spec: ToolSpec) -> ModelSpec | None:
+    """The registered model a tool runs by default (its ``model`` choice)."""
+    for param in spec.params:
+        if param.name == "model" and param.choices and isinstance(param.default, str):
+            return get_model(param.default)
+    return None
+
+
+def _model_needs(
+    spec: ToolSpec, found: dict[str, bool], model_state: str | None
+) -> tuple[list[str], dict[str, Any] | None]:
+    """What a model-based tool lacks: runtime pieces, or the model itself.
+
+    The installed app runs models through ONNX Runtime; a source checkout
+    with ``transformers`` can read them from Hugging Face instead, so either
+    route makes the tool available. A missing *model* is not a missing
+    component: it is one click on the Models page, so it gets its own state.
+    """
+    model = tool_model(spec)
+    if found.get("torch", False) and found.get("transformers", False):
+        return [], None
+    runtime = [name for name in ("onnxruntime", "tokenizers") if not found.get(name, False)]
+    if runtime:
+        return runtime, None
+    if model is None:
+        return [], None
+    state = model_state if model_state is not None else model_status(model)
+    if state == "ready":
+        return [], None
+    size = f" ({model.size_mb:,} MB)" if model.published else ""
+    return [], {
+        "state": "needs_model",
+        "message": f"This needs {model.display_name}{size}. Download it from Models.",
+        "missing": [],
+        "model_id": model.id,
+        "model_name": model.display_name,
+        "size_mb": model.size_mb,
+        "model_state": state,
+    }
+
+
+def availability(spec: ToolSpec, found: dict[str, bool], models: dict[str, str] | None = None) -> dict[str, Any]:
+    """Whether a tool can run here, and if not, the one thing to do.
+
+    *models* maps a model id to its status (``core.models.locate.status``);
+    omitted, the status is read from disk (a few ``stat`` calls).
+    """
     required = []
     if spec.requires_parse:
         required.extend(_parser_missing(found))
@@ -184,9 +237,14 @@ def availability(spec: ToolSpec, found: dict[str, bool]) -> dict[str, Any]:
         "topics": ["gensim"],
         "sentiment": ["vaderSentiment"],
         "wordnet": ["nltk", "wordnet"],
-        "embeddings": ["torch", "transformers"],
     }
     required.extend(optional.get(spec.optional_package, []))
+    needs_model: dict[str, Any] | None = None
+    if spec.optional_package == "embeddings":
+        model = tool_model(spec)
+        state = models.get(model.id) if models is not None and model is not None else None
+        runtime, needs_model = _model_needs(spec, found, state)
+        required.extend(runtime)
     if spec.name == "sentiment_swn_hedono":
         required.append("sentiwordnet")
     if spec.name == "nrc":
@@ -202,6 +260,8 @@ def availability(spec: ToolSpec, found: dict[str, bool]) -> dict[str, Any]:
             "message": "This analysis needs a component that is unavailable in this installation. Check Settings & backups.",
             "missing": missing,
         }
+    if needs_model is not None:
+        return needs_model
     if spec.assets or any(param.required and param.type == "path" for param in spec.params):
         return {"state": "needs_input", "message": "Choose the required resource/table file in settings", "missing": []}
     return {"state": "available", "message": "Local prerequisites found; execution validates them", "missing": []}

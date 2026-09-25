@@ -116,15 +116,16 @@ export function ToolCard({
 }) {
   const family = toolFamily(tool);
   const unavailable = tool.availability?.state === "needs_setup";
+  const needsModel = tool.availability?.state === "needs_model";
   return (
     <button className="analysis-card" onClick={onOpen} disabled={disabled}>
       <div className="analysis-card-top">
         <span className={`analysis-symbol family-${family.key}`}>
           <family.Icon size={21} aria-hidden="true" />
         </span>
-        {unavailable ? (
+        {unavailable || needsModel ? (
           <span className="card-flag" title={tool.availability?.message}>
-            <TriangleAlert size={13} aria-hidden="true" /> Needs setup
+            <TriangleAlert size={13} aria-hidden="true" /> {needsModel ? "Needs a model" : "Needs setup"}
           </span>
         ) : (
           <ArrowUpRight size={19} />

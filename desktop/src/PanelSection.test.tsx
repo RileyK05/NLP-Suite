@@ -214,6 +214,69 @@ describe("the section on a run's record", () => {
     expect(container.querySelector("svg[role=img]")).not.toBeNull();
   });
 
+  it("opens the next figure when the first refuses this run", async () => {
+    const groups = {
+      ...volcano,
+      name: "word2vec_gensim_meaning_groups",
+      title: "Groups of words that mean alike",
+    };
+    const network = {
+      ...volcano,
+      name: "word2vec_gensim_word_network",
+      title: "A word's neighbourhood",
+    };
+    vi.mocked(api).mockResolvedValue([groups, network]);
+    vi.mocked(post).mockImplementation(async (_path, body) =>
+      (body as { panel: string }).panel === groups.name
+        ? {
+            ok: false,
+            diagnostics: [
+              {
+                severity: "ERROR",
+                code: "PANEL_NO_DATA",
+                message: "3 word(s); grouping needs at least 4",
+              },
+            ],
+          }
+        : preparedAnswer,
+    );
+    const { container } = render(<PanelSection projectId="p1" jobId="j1" />);
+    await act(async () => {});
+    await act(async () => {});
+    expect(
+      vi
+        .mocked(post)
+        .mock.calls.map((call) => (call[1] as { panel: string }).panel),
+    ).toEqual([groups.name, network.name]);
+    expect(
+      container.querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent,
+    ).toBe("A word's neighbourhood");
+    expect(container.querySelector("svg[role=img]")).not.toBeNull();
+  });
+
+  it("shows the first figure's reasons when every figure refuses", async () => {
+    const other = { ...volcano, name: "other_panel", title: "Another figure" };
+    vi.mocked(api).mockResolvedValue([volcano, other]);
+    vi.mocked(post).mockResolvedValue({
+      ok: false,
+      diagnostics: [
+        {
+          severity: "ERROR",
+          code: "PANEL_NO_DATA",
+          message: "nothing to draw",
+        },
+      ],
+    });
+    const { container } = render(<PanelSection projectId="p1" jobId="j1" />);
+    for (let i = 0; i < 4; i += 1) await act(async () => {});
+    expect(
+      container.querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent,
+    ).toBe("Keyness volcano");
+    expect(container.textContent).toContain("PANEL_NO_DATA");
+  });
+
   it("opens the figure for the selected artifact when a run has several tables", async () => {
     const neighbour = {
       ...volcano,

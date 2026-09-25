@@ -43,94 +43,95 @@ __all__ = [
 # visualization catalog all name them.
 TOOL_LABELS: dict[str, str] = {
     # --- corpus analyses -------------------------------------------------
-    "readability": "Readability scores",
-    "lexical_diversity": "Lexical diversity (TTR, MTLD)",
-    "doc_similarity": "Document similarity",
-    "doc_duplicates": "Duplicate detection",
-    "spellcheck": "Spelling suggestions",
-    "search": "Text search",
-    "sentence_complexity": "Sentence complexity",
-    "lda_gensim": "Topic discovery (Gensim LDA)",
-    "lda_stability": "Topic stability across seeds",
-    "lda_mallet": "Topic discovery (MALLET LDA)",
-    "gender_annotator": "Gender of names mentioned",
-    "date_annotator": "Dates mentioned in the text",
-    "quote_annotator": "Quotes and their speakers",
-    "gender_guess": "Author gender from writing style",
-    "verb_analysis": "Verb tense, modality and voice",
-    "ngram_viewer": "N-grams over time (culturomics)",
-    "sentiment_neural_bert": "Neural sentiment (BERT)",
-    "sentiment_neural_spacy": "Neural sentiment (spaCy)",
-    "sentiment_neural_stanza": "Neural sentiment (Stanza)",
-    "sentiment_neural_corenlp": "Neural sentiment (CoreNLP)",
-    "shape_hc": "Story shapes: clustering tree",
-    "shape_svd": "Story shapes: SVD components",
-    "shape_nmf": "Story shapes: NMF parts",
-    "geocode": "Geocode places to coordinates",
-    "gis_map": "Pin maps and heatmaps",
-    "svo_map": "Map of who does what where",
-    "word2vec_bert": "Word relationships (BERT)",
-    "word2vec_gensim": "Word relationships (Gensim Word2Vec)",
-    "sentiment_vader_anew": "Sentiment (VADER / ANEW)",
-    "sentiment_swn_hedono": "Sentiment (SentiWordNet / happiness)",
-    "nrc": "Emotion vocabulary (NRC)",
-    "nominalization": "Nouns derived from verbs",
-    "style": "Concreteness and iconicity",
-    "narrative": "Character sentiment over time",
-    "clause_svo": "Subjects, verbs and objects",
-    "ner": "Named entities",
-    "ngrams": "Repeated word sequences",
-    "ngram_cooccurrence": "Words occurring together",
-    "collocations": "Collocation strength (PMI, t-score, G²)",
-    "conll_wordlist": "Word frequencies by part of speech",
-    "corpus_statistics": "Vocabulary richness per document",
-    "k_sentences": "Opening and closing sentences",
-    "svo_compare": "Compare subject–verb–object patterns",
-    "text_statistics": "Document statistics",
-    "table_search": "Search annotated words",
-    "kwic": "Keyword in context",
-    "keyness": "Distinctive words between groups (keyness)",
-    "tfidf": "Distinctive terms (TF–IDF)",
-    "dispersion": "Where words fall across the corpus",
-    "lexicon_series": "Track your own word groups over time",
-    "coreference": "Mention grouping (lemma baseline)",
-    "semantic": "Semantic tags",
-    "wordnet": "WordNet senses and hierarchy",
-    "verbnet": "VerbNet verb classes",
-    "framenet": "FrameNet frames",
-    "symbolic": "Symbolic space and social actors",
-    "knowledge_graph": "Knowledge graph",
-    "word_sense_induction": "Word senses from context (BERT)",
-    "bert_extract": "Extractive summary (transformer)",
-    "bert_topics": "Topic clusters (transformer)",
+    "readability": "Readability: scores per document (Flesch, Fog, SMOG)",
+    "lexical_diversity": "Vocabulary: diversity per document (TTR, MTLD)",
+    "doc_similarity": "Similarity: documents by shared words (TF–IDF)",
+    "doc_duplicates": "Cleaning: duplicate and near-duplicate documents",
+    "spellcheck": "Cleaning: spelling suggestions",
+    "search": "Search: words and phrases in the text",
+    "sentence_complexity": "Grammar: sentence complexity from the parse",
+    "lda_gensim": "Topics: LDA topic model (Gensim)",
+    "lda_stability": "Topics: stability of LDA topics across seeds",
+    "lda_mallet": "Topics: LDA topic model (MALLET)",
+    "gender_annotator": "Gender: of person names, by name dictionary",
+    "date_annotator": "Dates: every date mentioned, normalized",
+    "quote_annotator": "Quotes: quoted speech and its speakers",
+    "gender_guess": "Gender: of the author, from writing style",
+    "verb_analysis": "Grammar: verb tense, modality and voice",
+    "ngram_viewer": "N-grams: frequency by year (culturomics)",
+    "sentiment_neural_bert": "Sentiment: per sentence, BERT classifier (DistilBERT SST-2)",
+    "sentiment_neural_spacy": "Sentiment: per sentence, spaCy classifier",
+    "sentiment_neural_stanza": "Sentiment: per sentence, Stanza classifier",
+    "sentiment_neural_corenlp": "Sentiment: per sentence, CoreNLP classifier",
+    "shape_hc": "Story shape: clustering tree of shapes",
+    "shape_svd": "Story shape: main components (SVD)",
+    "shape_nmf": "Story shape: additive parts (NMF)",
+    "geocode": "Geography: place names to map coordinates (geocoding)",
+    "gis_map": "Geography: pin maps and heatmaps from coordinates",
+    "svo_map": "Geography: map of who does what where (SVO)",
+    "word2vec_bert": "Embeddings: word vectors read by BERT",
+    "doc_embeddings": "Embeddings: documents and sentences by meaning (Granite, Qwen)",
+    "word2vec_gensim": "Embeddings: word vectors trained on your corpus (Word2Vec)",
+    "sentiment_vader_anew": "Sentiment: word lexicons (VADER, ANEW)",
+    "sentiment_swn_hedono": "Sentiment: word lexicons (SentiWordNet, Hedonometer)",
+    "nrc": "Emotion: eight emotions from a word lexicon (NRC)",
+    "nominalization": "Grammar: nouns derived from verbs",
+    "style": "Word norms: concreteness and iconicity per sentence",
+    "narrative": "Sentiment: arc through each document",
+    "clause_svo": "Grammar: subjects, verbs and objects (SVO)",
+    "ner": "Entities: people, places and organisations (NER)",
+    "ngrams": "N-grams: repeated word sequences",
+    "ngram_cooccurrence": "Collocations: words occurring near each other",
+    "collocations": "Collocations: word pairs that attract (PMI, t-score, G²)",
+    "conll_wordlist": "Frequencies: words by part of speech",
+    "corpus_statistics": "Vocabulary: richness per document, length-corrected",
+    "k_sentences": "Search: opening and closing sentences of each document",
+    "svo_compare": "Grammar: compare subject–verb–object patterns",
+    "text_statistics": "Counts: sentences, words and syllables per document",
+    "table_search": "Search: annotated words (lemma, part of speech, entity)",
+    "kwic": "Search: keyword in context (concordance)",
+    "keyness": "Keywords: distinctive words between groups (keyness)",
+    "tfidf": "Keywords: distinctive terms per document (TF–IDF)",
+    "dispersion": "Frequencies: where words fall across the corpus",
+    "lexicon_series": "Frequencies: your own word groups over time",
+    "coreference": "Entities: mentions of the same person or thing (baseline)",
+    "semantic": "Lexicons: semantic class of each word",
+    "wordnet": "Lexicons: WordNet categories and hierarchy",
+    "verbnet": "Lexicons: VerbNet verb classes",
+    "framenet": "Lexicons: FrameNet frames",
+    "symbolic": "Lexicons: symbolic spaces and social actors",
+    "knowledge_graph": "Entities: who-is-who triples (knowledge graph)",
+    "word_sense_induction": "Embeddings: word senses from context (BERT)",
+    "bert_extract": "Summary: key sentences of each document (BERT)",
+    "bert_topics": "Topics: documents clustered by meaning (BERT)",
     # --- visualization ---------------------------------------------------
-    "shapes": "Sentence structure over time",
-    "charts": "Charts from a table",
-    "panels": "Purpose-built figures for one analysis",
-    "wordcloud_gephi": "Wordclouds and networks",
+    "shapes": "Story shape: sentence structure through each document",
+    "charts": "Charts: from a table",
+    "panels": "Charts: figures for one analysis",
+    "wordcloud_gephi": "Charts: wordclouds and networks",
     # --- statistics over an analyst's CSV --------------------------------
-    "stats_categorical": "Categorical association (chi-square)",
-    "stats_groups": "Group comparisons (Mann-Whitney, Kruskal-Wallis)",
-    "stats_trends": "Trends over time (Mann-Kendall, rank correlation)",
-    "csv_stats": "Table summary and correlations",
+    "stats_categorical": "Statistics: association between categories (chi-square)",
+    "stats_groups": "Statistics: group comparisons (Mann-Whitney, Kruskal-Wallis)",
+    "stats_trends": "Statistics: trends over time (Mann-Kendall, rank correlation)",
+    "csv_stats": "Statistics: table summary and correlations",
     # --- intake and batch ------------------------------------------------
-    "convert": "Convert documents to text",
-    "filenames": "Standardize filenames",
-    "profiler": "Batch profiler",
+    "convert": "Intake: convert files to plain text",
+    "filenames": "Intake: standardize filenames",
+    "profiler": "Batch: run many analyses at once",
 }
 
 # The desktop's CSV workflows are separate specs (desktop_backend/tables.py).
 TOOL_LABELS.update(
     {
-        "table_chi2": "Column association (chi-square)",
-        "table_crosstab": "Cross-tabulation with percentages",
-        "table_keyness": "Distinctive words between columns (keyness)",
-        "table_mw": "Two-group comparison (Mann–Whitney U)",
-        "table_kw": "Three-plus-group comparison (Kruskal–Wallis)",
-        "table_trend": "Trend over time (Mann–Kendall)",
-        "table_rankcorr": "Rank correlation (Spearman, Kendall)",
-        "table_charts": "Charts from a table",
-        "table_wordcloud_gephi": "Wordclouds and networks",
+        "table_chi2": "Statistics: column association (chi-square)",
+        "table_crosstab": "Statistics: cross-tabulation with percentages",
+        "table_keyness": "Keywords: distinctive words between two columns (keyness)",
+        "table_mw": "Statistics: two-group comparison (Mann–Whitney U)",
+        "table_kw": "Statistics: three-plus-group comparison (Kruskal–Wallis)",
+        "table_trend": "Statistics: trend over time (Mann–Kendall)",
+        "table_rankcorr": "Statistics: rank correlation (Spearman, Kendall)",
+        "table_charts": "Charts: from a table",
+        "table_wordcloud_gephi": "Charts: wordclouds and networks",
     }
 )
 
@@ -237,6 +238,8 @@ PARAM_LABELS: dict[str, str] = {
     "by": "Count along",
     "within": "Only inside sentences about",
     "topics": "Number of topics",
+    "sentences": "Sentences per summary",
+    "unit": "Embed each",
     "vader-lexicon": "VADER lexicon file",
     "value": "Value to match",
     "value-col": "Value column",
@@ -281,7 +284,15 @@ PARAM_LABEL_OVERRIDES: dict[tuple[str, str], str] = {
     ("word2vec_bert", "query"): "Word to find neighbours for",
     ("word2vec_bert", "top-n"): "Neighbours to return",
     ("sentiment_neural_spacy", "model"): "Neural textcat pipeline (spaCy)",
-    ("sentiment_neural_bert", "model"): "Hugging Face sentiment model",
+    ("sentiment_neural_bert", "model"): "Sentiment model",
+    ("word2vec_bert", "model"): "Language model",
+    ("doc_embeddings", "model"): "Model that reads each text",
+    ("doc_embeddings", "top-n"): "Neighbours per document",
+    ("doc_embeddings", "query"): "Search for (a question or phrase)",
+    ("word_sense_induction", "model"): "Language model",
+    ("bert_extract", "model"): "Model that reads each sentence",
+    ("bert_topics", "model"): "Model that reads each sentence",
+    ("bert_topics", "top-n"): "Words that name each topic",
 }
 
 
@@ -301,6 +312,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "lda_mallet": "The same question, answered by MALLET's LDA so the two can be compared.",
     "word2vec_gensim": "Words used in similar contexts, with a neighbour list and a map of the vocabulary.",
     "word2vec_bert": "The same neighbour question, answered with BERT's reading of your words so the two Word2Vec approaches can be compared.",
+    "doc_embeddings": (
+        "Which documents mean alike, read by a sentence model rather than by shared words, "
+        "with a map of the corpus and a search that finds sentences by meaning."
+    ),
     "gender_annotator": (
         "Which person names in your documents a name dictionary reads as male or female, "
         "and how much of the corpus that dictionary simply does not know."
@@ -313,7 +328,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "gender_guess": "Which writing-style gender each document leans towards, from the function words it uses.",
     "verb_analysis": ("How each verb is used: past, present or future, active or passive, and which modal governs it."),
     "ngram_viewer": "How often your words and phrases are used year by year, charted across the corpus.",
-    "sentiment_neural_bert": "Sentence-by-sentence sentiment from a trained BERT classifier, so tone can be compared across documents.",
+    "sentiment_neural_bert": (
+        "Sentence-by-sentence sentiment from a trained BERT classifier, positive or negative, "
+        "so tone can be compared across documents."
+    ),
     "sentiment_neural_spacy": "Sentence-by-sentence sentiment from a spaCy textcat head, one of four annotators you can compare.",
     "sentiment_neural_stanza": "Sentence-by-sentence sentiment from Stanza's own sentiment model, one of four annotators you can compare.",
     "sentiment_neural_corenlp": (
@@ -400,9 +418,16 @@ def humanize(name: str) -> str:
     return words[:1].upper() + words[1:] if words else name
 
 
+#: Desktop jobs that are not registry tools, named the same way.
+WORKFLOW_LABELS: dict[str, str] = {
+    # The one-button recipe (core/insight/glance.py, desktop_backend/glance.py).
+    "corpus_glance": "Corpus at a glance",
+}
+
+
 def tool_label(name: str) -> str:
     """The name to show a reader for ``name``."""
-    return TOOL_LABELS.get(name) or humanize(name)
+    return TOOL_LABELS.get(name) or WORKFLOW_LABELS.get(name) or humanize(name)
 
 
 def param_label(tool: str, param: str) -> str:

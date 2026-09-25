@@ -103,7 +103,7 @@ export function ParamFields({
             >
               {param.choices.map((choice) => (
                 <option key={choice} value={choice}>
-                  {choice}
+                  {param.choice_labels?.[String(choice)] ?? choice}
                 </option>
               ))}
             </select>

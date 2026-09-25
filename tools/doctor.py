@@ -194,6 +194,7 @@ def _check_extras() -> list[Check]:
         ("gensim", 'pip install "nlp-suite-ng[topics]"  (or: pip install gensim)'),
         ("nltk", 'pip install "nlp-suite-ng[wordnet]"  (or: pip install nltk)'),
         ("transformers", 'pip install "nlp-suite-ng[embeddings]"  (or: pip install transformers)'),
+        ("onnxruntime", 'pip install "nlp-suite-ng[models]"  (or: pip install onnxruntime tokenizers)'),
         ("wordcloud", 'pip install "nlp-suite-ng[wordcloud]"  (or: pip install wordcloud)'),
     ):
         ok = _has_module(module)

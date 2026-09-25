@@ -55,16 +55,25 @@ def _draw(
 
 
 def live_panel(result: LiveResult, settings: dict[str, Any]) -> dict[str, Any] | None:
-    """The first eligible figure, drawn with its defaults; None when none fits.
+    """The first eligible figure that draws with its defaults; None when none fits.
 
     A partial or older result whose columns do not satisfy a panel simply
     returns no panel; the ordinary table remains available to the reader.
+    The first figure can refuse a small live selection that a later one
+    reads well (eight meaning groups need sixteen words; a three-document
+    selection may have fewer), so the next is tried, and the first refusal
+    is returned only when every figure refuses.
     """
     eligible = _eligible(result)
     if not eligible:
         return None
-    definition, name, frame = eligible[0]
-    return _draw(definition, name, frame, settings, None)
+    first: dict[str, Any] | None = None
+    for definition, name, frame in eligible:
+        drawn = _draw(definition, name, frame, settings, None)
+        if drawn.get("ok"):
+            return drawn
+        first = first or drawn
+    return first
 
 
 def prepare_live_panel(

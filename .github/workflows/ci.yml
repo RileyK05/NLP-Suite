@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      from_dev:
+        description: Test the private dev repository instead of this one
+        type: boolean
+        default: false
 
 jobs:
   offline:
@@ -23,6 +29,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/checkout@v4
+        if: ${{ inputs.from_dev }}
+        with:
+          repository: RileyK05/New_NLP_Suite
+          ref: main
+          token: ${{ secrets.PUBLISH_TOKEN }}
+          path: _dev
+      - name: Use the dev snapshot
+        if: ${{ inputs.from_dev }}
+        shell: bash
+        run: |
+          mv _dev "$RUNNER_TEMP/dev"
+          python "$RUNNER_TEMP/dev/scripts/publish_snapshot.py" --dev "$RUNNER_TEMP/dev" --out .
       - name: Install dependencies
         # The same pinned environment the installers are built from, so the
         # gate tests what ships. Unpinned installs drifted (starlette, anyio)
@@ -54,6 +73,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        if: ${{ inputs.from_dev }}
+        with:
+          repository: RileyK05/New_NLP_Suite
+          ref: main
+          token: ${{ secrets.PUBLISH_TOKEN }}
+          path: _dev
+      - name: Use the dev snapshot
+        if: ${{ inputs.from_dev }}
+        shell: bash
+        run: |
+          mv _dev "$RUNNER_TEMP/dev"
+          python3 "$RUNNER_TEMP/dev/scripts/publish_snapshot.py" --dev "$RUNNER_TEMP/dev" --out .
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -78,6 +110,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/checkout@v4
+        if: ${{ inputs.from_dev }}
+        with:
+          repository: RileyK05/New_NLP_Suite
+          ref: main
+          token: ${{ secrets.PUBLISH_TOKEN }}
+          path: _dev
+      - name: Use the dev snapshot
+        if: ${{ inputs.from_dev }}
+        shell: bash
+        run: |
+          mv _dev "$RUNNER_TEMP/dev"
+          python "$RUNNER_TEMP/dev/scripts/publish_snapshot.py" --dev "$RUNNER_TEMP/dev" --out .
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

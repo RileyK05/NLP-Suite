@@ -73,7 +73,11 @@ export function PanelSection({
   showing.current = run;
   const drawSequence = useRef(0);
 
-  const draw = async (panel: PanelInfo, values: Record<string, unknown>) => {
+  /** Draws one figure; true when it drew (false when refused, failed or superseded). */
+  const draw = async (
+    panel: PanelInfo,
+    values: Record<string, unknown>,
+  ): Promise<boolean> => {
     const mine = run;
     const sequence = ++drawSequence.current;
     setBusy(true);
@@ -85,10 +89,13 @@ export function PanelSection({
         `/projects/${projectId}/jobs/${jobId}/panels`,
         { panel: panel.name, params: values },
       );
-      if (showing.current !== mine || drawSequence.current !== sequence) return;
+      if (showing.current !== mine || drawSequence.current !== sequence)
+        return false;
       setAnswer(result);
+      return result.ok;
     } catch (error) {
-      if (showing.current !== mine || drawSequence.current !== sequence) return;
+      if (showing.current !== mine || drawSequence.current !== sequence)
+        return false;
       setAnswer({
         ok: false,
         diagnostics: [
@@ -99,6 +106,7 @@ export function PanelSection({
           },
         ],
       });
+      return false;
     } finally {
       if (showing.current === mine && drawSequence.current === sequence)
         setBusy(false);
@@ -131,9 +139,21 @@ export function PanelSection({
           ? [...matching, ...list.filter((panel) => !matching.includes(panel))]
           : list;
         setPanels(ordered);
-        setActive(ordered[0]);
-        setParams(panelDefaults(ordered[0]));
-        void draw(ordered[0], panelDefaults(ordered[0]));
+        // The first figure can refuse a run another reads well (eight
+        // meaning groups need sixteen words): open the first that draws, and
+        // show the first one's reasons only when every figure refuses.
+        void (async () => {
+          for (const panel of ordered) {
+            if (!alive) return;
+            setActive(panel);
+            setParams(panelDefaults(panel));
+            if (await draw(panel, panelDefaults(panel))) return;
+          }
+          if (!alive || ordered.length < 2) return;
+          setActive(ordered[0]);
+          setParams(panelDefaults(ordered[0]));
+          void draw(ordered[0], panelDefaults(ordered[0]));
+        })();
       })
       .catch(() => {
         // Panels are an offer on top of a finished run; if they cannot be

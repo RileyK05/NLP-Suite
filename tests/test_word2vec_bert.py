@@ -122,7 +122,7 @@ class TestTrain:
         assert not trained.ok
         assert trained.diagnostics[0].code == "W2V_BERT_EMPTY_VOCAB"
 
-    def test_a_missing_transformers_install_fails_with_the_install_command(self) -> None:
+    def test_a_missing_model_fails_naming_the_models_page(self) -> None:
         # The real backend is out of reach in tests; force its failure path.
         import core.analysis.word2vec_bert as subject
 
@@ -138,7 +138,7 @@ class TestTrain:
         assert not trained.ok
         code = trained.diagnostics[0]
         assert code.code == "W2V_BERT_UNAVAILABLE"
-        assert "transformers" in str(code.context.get("fix", ""))
+        assert "Open Models" in str(code.context.get("fix", ""))
 
 
 class TestDistances:

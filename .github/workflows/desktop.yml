@@ -15,6 +15,10 @@ on:
         description: Draft a GitHub release (v<pyproject version>) from this commit
         type: boolean
         default: false
+      from_dev:
+        description: Test build of the private dev repository instead (never releases)
+        type: boolean
+        default: false
       mac_only:
         description: Build only Apple Silicon and Intel Mac candidates
         type: boolean
@@ -41,6 +45,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/checkout@v4
+        if: ${{ inputs.from_dev }}
+        with:
+          repository: RileyK05/New_NLP_Suite
+          ref: main
+          token: ${{ secrets.PUBLISH_TOKEN }}
+          path: _dev
+      - name: Use the dev snapshot
+        if: ${{ inputs.from_dev }}
+        run: |
+          mv _dev "$RUNNER_TEMP/dev"
+          python "$RUNNER_TEMP/dev/scripts/publish_snapshot.py" --dev "$RUNNER_TEMP/dev" --out .
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -63,7 +79,7 @@ jobs:
         # pytest does not create --basetemp's parent; on a fresh checkout out/ does not exist.
         run: |
           mkdir -p out/ci-pytest
-          python -m pytest tests/test_desktop.py tests/test_desktop_guides.py tests/test_desktop_portability.py tests/test_desktop_packaging.py tests/test_macos_payload.py -p no:cacheprovider --basetemp=out/ci-pytest
+          python -m pytest tests/test_desktop.py tests/test_desktop_guides.py tests/test_desktop_portability.py tests/test_desktop_packaging.py tests/test_macos_payload.py tests/test_models.py tests/test_model_downloads.py -p no:cacheprovider --basetemp=out/ci-pytest
       - name: Frontend verification
         working-directory: desktop
         run: |
@@ -72,6 +88,14 @@ jobs:
           npm run build
       - name: Download redistributable offline WordNet data
         run: python -m nltk.downloader -d desktop/.toolchain/nltk_data wordnet
+      - name: Fetch the bundled models
+        # BERT base, DistilBERT SST-2 and Granite R2 ship inside the engine.
+        # They come from the models release (core/models/_files.py records
+        # it), checked file by file against their SHA-256, then read through
+        # this platform's ONNX Runtime by the real-model tests.
+        run: |
+          python scripts/fetch_models.py --bundled
+          NLP_SUITE_REAL_MODELS=models python -m pytest tests/test_models_real.py -m real_models -p no:cacheprovider --basetemp=out/ci-pytest-models
       - name: Build native frozen engine
         run: python scripts/build_desktop_backend.py --with-parser
       - name: Exercise frozen engine
@@ -187,7 +211,7 @@ jobs:
     # A failed platform does not hold back the others: the draft lists what
     # was attached and what was not, and nothing is public until a maintainer
     # presses Publish.
-    if: ${{ !cancelled() && (startsWith(github.ref, 'refs/tags/v') || inputs.release) }}
+    if: ${{ !cancelled() && !inputs.from_dev && (startsWith(github.ref, 'refs/tags/v') || inputs.release) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

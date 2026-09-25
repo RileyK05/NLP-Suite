@@ -93,7 +93,8 @@ class TestWSI:
         res = ctx_mod.wsi_senses(_frame(), field=Col.LEMMA, min_count=2, backend=HashEmbeddingBackend())
         assert res.ok, res.diagnostics
         frame = res.unwrap()
-        assert set(frame.columns) == {"Lemma", "Sense", "Sentence ID", "Document ID"}
+        # Separation says how clearly the split holds; the senses figures rank by it.
+        assert set(frame.columns) == {"Lemma", "Sense", "Separation", "Sentence ID", "Document ID"}
         assert set(frame["Sense"].unique()) <= {1, 2}
 
     def test_min_count_filters_rare_lemmas(self) -> None:
@@ -113,11 +114,14 @@ class TestBackendFailures:
     def test_blocked_package_fails_loudly(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import sys
 
+        # No installed model and no development fallback: the reader is told
+        # where to add the model, not which pip command to run.
         monkeypatch.setitem(sys.modules, "transformers", None)
         res = ctx_mod.default_backend()
         assert not res.ok
-        assert res.diagnostics[0].code == "CTX_BACKEND_MISSING"
-        assert "embeddings" in res.diagnostics[0].context.get("fix", "")
+        assert res.diagnostics[0].code == "MODEL_NOT_INSTALLED"
+        assert "Open Models" in res.diagnostics[0].message
+        assert "Models" in res.diagnostics[0].context.get("fix", "")
 
     def test_bogus_model_fails_with_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.importorskip("transformers")

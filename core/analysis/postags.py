@@ -17,7 +17,7 @@ the callers that must not drop a token on an unknown tag check
 
 from __future__ import annotations
 
-__all__ = ["NOUN_TAGS", "is_noun_tag"]
+__all__ = ["NOUN_TAGS", "WORD_CLASSES", "is_noun_tag", "word_class"]
 
 
 #: The tag names of a noun under either tagset. One tuple, one place.
@@ -36,3 +36,26 @@ def is_noun_tag(pos: object) -> bool:
     """
     text = str(pos).strip().upper()
     return text.startswith("NN") or text in NOUN_TAGS
+
+
+#: The word classes a figure can be restricted to, named for a reader.
+WORD_CLASSES: tuple[str, ...] = ("noun", "verb", "adjective", "adverb")
+_UNIVERSAL = {"NOUN": "noun", "PROPN": "noun", "VERB": "verb", "ADJ": "adjective", "ADV": "adverb"}
+_PENN = (("NN", "noun"), ("VB", "verb"), ("JJ", "adjective"), ("RB", "adverb"))
+
+
+def word_class(pos: object) -> str:
+    """``noun``, ``verb``, ``adjective``, ``adverb`` or ``""``, under either tagset.
+
+    The same rule as :func:`is_noun_tag`, widened to the four open classes:
+    Penn ``NN*``/``VB*``/``JJ*``/``RB*`` or Universal ``NOUN``/``PROPN``,
+    ``VERB``, ``ADJ``, ``ADV``. Auxiliaries (``AUX``, and Penn's modal
+    ``MD``) are not verbs of meaning and answer ``""`` with everything else.
+    """
+    text = str(pos).strip().upper()
+    if text in _UNIVERSAL:
+        return _UNIVERSAL[text]
+    for prefix, name in _PENN:
+        if text.startswith(prefix):
+            return name
+    return ""

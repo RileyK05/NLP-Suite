@@ -133,7 +133,8 @@ class TestTheComparisonToolsStaySeparate:
         # embedding question (word sense induction) is a third tool.
         assert get_tool("word2vec_bert") is not None
         embeddings = sorted(spec.name for spec in ALL_SPECS if spec.family == "embeddings")
-        assert embeddings == ["word2vec_bert", "word2vec_gensim", "word_sense_induction"], embeddings
+        # doc_embeddings (0.4.0) is a fourth: documents, not words, by meaning.
+        assert embeddings == ["doc_embeddings", "word2vec_bert", "word2vec_gensim", "word_sense_induction"], embeddings
 
 
 @pytest.mark.parametrize("family", sorted(FAMILY_LABELS))

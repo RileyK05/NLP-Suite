@@ -3367,3 +3367,179 @@ button.research-bar.brushed .research-bar-tracks > span {
   padding: 0 2px;
   border-radius: 2px;
 }
+
+/* ---- Models page (Models.tsx) ---------------------------------------- */
+.model-group {
+  padding: 18px 20px 20px;
+}
+.model-group h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+}
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--surface-muted);
+}
+.model-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.model-card h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--ink);
+}
+.model-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.model-size {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.model-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f0f2eb;
+  color: var(--muted);
+}
+.model-status.status-not_downloaded,
+.model-status.status-unpublished {
+  color: var(--muted);
+}
+.model-status.status-ready {
+  background: #e4efe8;
+  color: var(--green);
+}
+.model-status.status-downloading {
+  background: #eaf0f6;
+  color: #2f5875;
+}
+.model-status.status-corrupt {
+  background: #fdf3e3;
+  color: var(--warning);
+}
+.model-used-by {
+  font-size: 12px;
+}
+.model-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.model-progress progress {
+  flex: 1;
+  height: 8px;
+  accent-color: var(--green);
+}
+.model-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--warning);
+}
+.model-card footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: auto;
+  padding-top: 6px;
+}
+.model-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.model-actions {
+  display: flex;
+  gap: 8px;
+}
+.model-folder code {
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* ---- Corpus at a glance (Glance.tsx) --------------------------------- */
+.glance {
+  padding: 16px 20px 18px;
+}
+.glance .section-title h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.glance-summary {
+  margin: 10px 0 14px;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.glance-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 14px;
+}
+.glance-figure {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  padding: 8px;
+}
+.glance-figure img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.glance-figure figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.glance-figure-wait {
+  aspect-ratio: 16 / 10;
+  background: var(--surface-muted);
+  border-radius: 6px;
+}
+.glance-working,
+.glance-error,
+.glance-stale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.glance-error {
+  color: var(--warning);
+}
+.glance-stale {
+  color: var(--warning);
+  background: #fdf3e3;
+  padding: 6px 10px;
+  border-radius: 6px;
+}

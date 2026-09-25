@@ -231,3 +231,63 @@ class TestEveryInstalledComponentIsNamed:
         assert not sorted(required - set(COMPONENT_LABELS)), (
             f"tools can require {sorted(required - set(COMPONENT_LABELS))}, which Settings cannot name"
         )
+
+
+class TestTheNamingStandard:
+    """Every tool is named "Task: what it does exactly (method)".
+
+    Written after the gallery offered four tools ending "(BERT)" with no way
+    to tell sentiment from embeddings, and collocations and the map tools
+    hid behind friendly names. The task comes first and is one of a fixed
+    vocabulary, so every sentiment tool reads "Sentiment: ..." and a search
+    for "collocations" or "geography" finds every tool that does it.
+    """
+
+    TASKS = frozenset(
+        {
+            "Batch",
+            "Charts",
+            "Cleaning",
+            "Collocations",
+            "Counts",
+            "Dates",
+            "Embeddings",
+            "Emotion",
+            "Entities",
+            "Frequencies",
+            "Gender",
+            "Geography",
+            "Grammar",
+            "Intake",
+            "Keywords",
+            "Lexicons",
+            "N-grams",
+            "Quotes",
+            "Readability",
+            "Search",
+            "Sentiment",
+            "Similarity",
+            "Statistics",
+            "Story shape",
+            "Summary",
+            "Topics",
+            "Vocabulary",
+            "Word norms",
+        }
+    )
+
+    @pytest.mark.parametrize("name", sorted(TOOL_LABELS))
+    def test_a_label_starts_with_its_task(self, name: str) -> None:
+        label = TOOL_LABELS[name]
+        task, _, rest = label.partition(": ")
+        assert rest, f"{name} -> {label!r}: name it 'Task: what it does'"
+        assert task in self.TASKS, f"{name} -> {label!r}: {task!r} is not one of the tasks {sorted(self.TASKS)}"
+
+    def test_tools_that_do_one_thing_share_its_task(self) -> None:
+        by_task: dict[str, set[str]] = {}
+        for name, label in TOOL_LABELS.items():
+            by_task.setdefault(label.partition(": ")[0], set()).add(name)
+        assert {"sentiment_neural_bert", "sentiment_vader_anew", "sentiment_neural_spacy"} <= by_task["Sentiment"]
+        assert {"word2vec_bert", "word2vec_gensim", "word_sense_induction", "doc_embeddings"} <= by_task["Embeddings"]
+        assert {"collocations", "ngram_cooccurrence"} <= by_task["Collocations"]
+        assert {"geocode", "gis_map", "svo_map"} <= by_task["Geography"]

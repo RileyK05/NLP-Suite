@@ -1,6 +1,8 @@
 import { Notices } from "./Notices";
 import { UpdateBanner } from "./UpdateBanner";
 import { Learn } from "./Learn";
+import { Models } from "./Models";
+import { Glance } from "./Glance";
 import { ProjectManager } from "./ProjectManager";
 import { useChartSettings, Workbench } from "./Workbench";
 import { CorpusScope } from "./CorpusScope";
@@ -67,6 +69,7 @@ import {
   FolderOpen,
   Layers3,
   LayoutDashboard,
+  Package,
   LoaderCircle,
   Plus,
   Search,
@@ -105,7 +108,14 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "corpus" | "interactive" | "studio" | "runs" | "learn" | "setup";
+  | "overview"
+  | "corpus"
+  | "interactive"
+  | "studio"
+  | "runs"
+  | "models"
+  | "learn"
+  | "setup";
 
 /**
  * The sidebar, in three groups.
@@ -148,6 +158,13 @@ const navigation = [
     icon: Layers3,
     section: "RESEARCH",
     hint: "Everything you have already produced",
+  },
+  {
+    key: "models",
+    label: "Models",
+    icon: Package,
+    section: "RESEARCH",
+    hint: "Language models to add or remove",
   },
   { key: "learn", label: "Learn", icon: BookOpen, section: "REFERENCE" },
 ] as const;
@@ -1516,7 +1533,7 @@ export default function App() {
               <span />
               Local workspace <ShieldCheck size={14} />
             </div>
-            <small>Desktop beta · 0.3.1</small>
+            <small>Desktop beta · 0.4.0</small>
           </div>
         </aside>
         <div className="main-shell">
@@ -1809,6 +1826,9 @@ export default function App() {
                         Add documents
                       </button>
                     </div>
+                    {projectId && (
+                      <Glance projectId={projectId} parser={parser} hasDocuments={documents.length > 0} />
+                    )}
                     <section className="dropzone">
                       <span className="upload-icon">
                         <Upload size={26} />
@@ -2028,9 +2048,17 @@ export default function App() {
                       const shown = tools.filter(
                         (tool) =>
                           (tool.family ?? "") === family &&
-                          `${tool.label} ${tool.description}`
+                          // Every word, in any order: "bert sentiment" finds
+                          // "Sentiment: per sentence, BERT classifier".
+                          toolQuery
                             .toLowerCase()
-                            .includes(toolQuery.toLowerCase()),
+                            .split(/\s+/)
+                            .filter(Boolean)
+                            .every((word) =>
+                              `${tool.label} ${tool.description}`
+                                .toLowerCase()
+                                .includes(word),
+                            ),
                       );
                       if (!shown.length) return null;
                       return (
@@ -2085,6 +2113,16 @@ export default function App() {
                   </>
                 )}
                 {page === "interactive" && exploreView("live")}
+                {page === "models" && (
+                  <Models
+                    onChanged={() =>
+                      void api<Tool[]>("/tools").then((catalog) => {
+                        rememberLabels(catalog);
+                        setTools(catalog);
+                      })
+                    }
+                  />
+                )}
                 {page === "learn" && (
                   <Learn tools={tools} onChoose={openAnalysis} canRun={!busy} />
                 )}
@@ -2722,6 +2760,20 @@ export default function App() {
             {analysis.availability && (
               <p role="status" className="muted">
                 {analysis.availability.message}
+                {analysis.availability.state === "needs_model" && (
+                  <>
+                    {" "}
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        setAnalysis(null);
+                        setPage("models");
+                      }}
+                    >
+                      Open Models
+                    </button>
+                  </>
+                )}
               </p>
             )}
             <div className="analysis-scope">
@@ -2850,6 +2902,7 @@ export default function App() {
                     resourceUploads > 0 ||
                     !projectId ||
                     analysis.availability?.state === "needs_setup" ||
+                    analysis.availability?.state === "needs_model" ||
                     desktopParams(analysis).some(
                       (param) =>
                         param.required &&

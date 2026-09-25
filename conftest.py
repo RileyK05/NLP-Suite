@@ -41,6 +41,18 @@ WORKSPACE_TMP = _SYSTEM_TEMP / "nlp-tmp"
 WORKSPACE_TMP.mkdir(exist_ok=True)
 tempfile.tempdir = str(WORKSPACE_TMP)
 
+# Pretrained models: the suite sees only what a test installs (the tiny
+# random-weight models in tests/fixtures/models, via ``tiny_models``), never a
+# developer's real exports in models/ or their downloads -- those would change
+# results by machine. ``NLP_SUITE_REAL_MODELS=<dir>`` opts the ``real_models``
+# tests into a directory of real exported models instead.
+REAL_MODELS = os.environ.get("NLP_SUITE_REAL_MODELS", "").strip()
+_NO_MODELS = WORKSPACE_TMP / "no-models"
+_NO_MODELS.mkdir(exist_ok=True)
+os.environ["NLP_SUITE_MODELS"] = REAL_MODELS or str(_NO_MODELS)
+os.environ["NLP_SUITE_MODELS_DIR"] = str(_NO_MODELS)
+TINY_MODELS = ROOT / "tests" / "fixtures" / "models"
+
 
 def pytest_configure(config: pytest.Config) -> None:
     # Apple's Accelerate BLAS (numpy's default on macOS arm64) raises the
@@ -276,3 +288,49 @@ def without_wordnet(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in [m for m in list(sys.modules) if m == "nltk.corpus" or m.startswith("nltk.corpus.")]:
         monkeypatch.delitem(sys.modules, name)
     monkeypatch.setattr(nltk.data, "path", [])
+
+
+_TINY_FOR_KIND = {
+    "token_embeddings": "tiny-bert",
+    "sentence_embeddings": "tiny-sentence",
+    "classifier": "tiny-classifier",
+}
+
+
+@pytest.fixture
+def tiny_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
+    """Install the tiny fixture models under real registry ids.
+
+    Returns ``install(model_id)``: it copies the fixture of that model's kind
+    into a fresh models directory, records its files as the published ones,
+    and shrinks the spec to the fixture's shape (32 wide, 3 hidden states, a
+    64-token window). Availability, the backends and the tools then all see
+    an installed model, running real ONNX code on meaningless weights.
+    """
+    from dataclasses import replace
+
+    from core.models import _files, onnx_backend, registry
+
+    root = tmp_path / "models"
+    root.mkdir()
+    monkeypatch.setenv("NLP_SUITE_MODELS", str(root))
+
+    def install(model_id: str) -> Any:
+        spec = registry.get_model(model_id)
+        if spec is None:
+            raise KeyError(model_id)
+        target = root / spec.id
+        shutil.copytree(TINY_MODELS / _TINY_FOR_KIND[spec.kind], target)
+        files = {
+            path.name: (path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest()) for path in target.iterdir()
+        }
+        monkeypatch.setitem(_files.FILES, spec.id, files)
+        tiny = replace(spec, dims=32, max_tokens=64, hidden_states=3 if spec.kind == "token_embeddings" else 0)
+        for name in (spec.id, *spec.aliases):
+            monkeypatch.setitem(registry._BY_NAME, name.lower(), tiny)
+        monkeypatch.setattr(registry, "MODELS", tuple(tiny if item.id == spec.id else item for item in registry.MODELS))
+        return tiny
+
+    yield install
+    onnx_backend._sessions.clear()
+    onnx_backend._tokenizers.clear()

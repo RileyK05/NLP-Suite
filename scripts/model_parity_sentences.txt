@@ -1,0 +1,64 @@
+# Parity sentences for scripts/export_models.py: an exported model must read
+# these the way the original does. Written for this purpose (no third-party
+# text); varied on purpose: short and long, plain and punctuated, positive,
+# negative and flat, names, numbers, questions, and repeated words.
+The bank raised interest rates for the third time this year.
+We sat on the river bank and watched the boats go by.
+I love this movie, and I would happily watch it again.
+This was the worst meal I have ever eaten in a restaurant.
+The committee will meet on Tuesday to review the budget.
+She played the bass in a jazz band before she became a teacher.
+He caught a bass in the lake behind his grandfather's house.
+The results were neither surprising nor especially disappointing.
+Prices rose by 4.5 percent in 2023, the fastest increase in a decade.
+Can anyone explain why the train was two hours late again?
+The nation faces hard choices, but we have faced hard choices before.
+Our economy is strong, our workers are productive, and our future is bright.
+Nothing about this plan makes sense to me, and I will vote against it.
+The old library smelled of dust, paper, and rain.
+After the storm, the village rebuilt every bridge within a single summer.
+Mr. Alvarez signed the contract in Chicago on March 3rd.
+The patient reported mild pain but no fever or swelling.
+Volunteers handed out water, blankets, and hot soup to the families.
+It is not the critic who counts, but the person who does the work.
+The software update fixed one bug and quietly introduced three more.
+Freedom of speech is not a gift of government; it belongs to the people.
+The treaty was signed, broken, renegotiated, and finally forgotten.
+I can't believe how rude the staff were to my elderly mother.
+What a wonderful surprise to see all of you here tonight!
+The experiment failed because the samples had been contaminated.
+Farmers in the valley depend on the river for water in the dry months.
+The speech lasted forty minutes and drew applause eleven times.
+Unemployment fell, wages rose, and yet many families still struggled.
+Please return the completed form to the front desk by Friday.
+The cat knocked the glass off the table and looked at me without shame.
+We will not tire, we will not falter, and we will not fail.
+Her argument was clever, but it rested on a single weak assumption.
+The bridge over the bay carries more than a hundred thousand cars a day.
+A light rain fell on the empty streets of the capital.
+The court ruled that the law violated the constitution.
+This is fine.
+Terrible.
+Absolutely brilliant work from everyone involved in the project.
+The data suggest a modest effect that may not survive replication.
+Taxes, trade, and immigration dominated the debate that evening.
+If the bill passes, millions of people will lose their health coverage.
+The children laughed as the puppy chased its own tail around the yard.
+He promised to lower costs, cut waste, and balance the budget within four years.
+The painting was stolen in 1990 and has never been recovered.
+Energy prices spiked after the pipeline was shut down for repairs.
+The river bank flooded, so the bank moved its branch uphill.
+I think the second half of the book is much better than the first.
+They waited in silence for news that never came.
+Our schools must teach every child to read, to reason, and to question.
+The factory closed, the town emptied, and the station fell silent.
+Scientists measured the glacier and found it had retreated two kilometers.
+Honestly, the ending ruined an otherwise decent film.
+The general ordered the troops to hold the line until dawn.
+A strong currency makes imports cheaper and exports harder to sell.
+The museum opens at nine and closes at five, except on holidays.
+We choose to do these things not because they are easy, but because they are hard.
+The quarterly report showed revenue flat and costs slightly higher.
+My neighbor fixed my fence without being asked, which was incredibly kind.
+The virus spread quickly through the crowded camps along the border.
+Let us move forward together, with charity for all and malice toward none.

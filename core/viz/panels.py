@@ -63,6 +63,7 @@ from core.viz.panels_lda_prevalence import LDA_PREVALENCE
 from core.viz.panels_lda_relevance import LDA_RELEVANCE
 from core.viz.panels_lda_stability import LDA_STABILITY
 from core.viz.panels_mallet import MALLET_DOCUMENT_TOPICS, MALLET_TOPIC_TERMS
+from core.viz.panels_meaning import MEANING_PANELS
 from core.viz.panels_models import MODELS_PANELS
 from core.viz.panels_ngram_viewer import NGRAM_FREQUENCY_OVER_TIME
 from core.viz.panels_pairs import PAIRS_PANELS
@@ -73,6 +74,7 @@ from core.viz.panels_svo_agency import SVO_AGENCY
 from core.viz.panels_terms import TERMS_PANELS
 from core.viz.panels_time_positions import TIME_POSITIONS_PANELS
 from core.viz.panels_verb_profiles import VERB_PROFILE_PANELS
+from core.viz.panels_word_meaning import WORD_MEANING_PANELS
 from core.viz.panelspec import PanelDefinition, PanelParam, PreparedPanel, Provenance, Source
 
 __all__ = [
@@ -101,6 +103,8 @@ PANELS: tuple[PanelDefinition, ...] = (
     MALLET_DOCUMENT_TOPICS,
     MALLET_TOPIC_TERMS,
     SVO_AGENCY,
+    # What the vectors mean first; the neighbour list and t-SNE map after.
+    *WORD_MEANING_PANELS,
     WORD2VEC_GENSIM_NEIGHBOURS,
     WORD2VEC_GENSIM_VECTOR_QUERY,
     WORD2VEC_GENSIM_TSNE,
@@ -122,6 +126,8 @@ PANELS: tuple[PanelDefinition, ...] = (
     *STATS_PANELS,
     *SENTIMENT_VIEWS_PANELS,
     *EXTRAS_PANELS,
+    # doc_embeddings: documents by meaning (sentence models, core/models).
+    *MEANING_PANELS,
 )
 
 

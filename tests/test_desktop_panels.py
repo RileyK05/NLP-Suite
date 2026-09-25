@@ -405,7 +405,12 @@ class TestBundles:
         pytest.importorskip("seaborn")
         project_id, job_id = self.run(workspace)
         names = [b["name"] for b in client.get(f"/api/projects/{project_id}/jobs/{job_id}/bundles").json()]
-        assert names == ["readability_measure_correlations", "readability_against_length"]
+        assert names == [
+            "readability_measure_correlations",
+            "readability_pair_grid",
+            "readability_by_decade",
+            "readability_against_length",
+        ]
 
     def test_a_bundle_comes_back_as_an_image(self, client: TestClient, workspace: Workspace) -> None:
         pytest.importorskip("seaborn")

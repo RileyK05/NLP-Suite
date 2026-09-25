@@ -40,6 +40,8 @@ def test_names_are_unique_and_each_says_what_it_answers() -> None:
 def test_the_document_measure_tools_get_a_correlation_matrix() -> None:
     assert [b.name for b in bundles_for("readability")] == [
         "readability_measure_correlations",
+        "readability_pair_grid",
+        "readability_by_decade",
         "readability_against_length",
     ]
 

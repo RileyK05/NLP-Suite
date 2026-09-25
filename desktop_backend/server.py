@@ -34,6 +34,7 @@ from desktop_backend.catalog import desktop_spec
 from desktop_backend.environment import availability, components, inventory
 from desktop_backend.live import Bench, Session, StaleSnapshot, as_parser, as_table
 from desktop_backend.live_panels import draw_live_panel, live_panel, live_panels_offered, prepare_live_panel
+from desktop_backend.models import ModelDownloads
 from desktop_backend.panels import BundleBody, PanelBody, StaticPanelBody, panel_failure
 from desktop_backend.previews import MAX_PREVIEW_BYTES, PREVIEW_CSP, PreviewTickets
 from desktop_backend.questions import QuestionBody
@@ -84,6 +85,10 @@ class RunBody(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     parser: str = "spacy"
     selection: CorpusSelection | None = None
+
+
+class GlanceBody(BaseModel):
+    parser: str = "spacy"
 
 
 class CompareBody(BaseModel):
@@ -301,19 +306,23 @@ def public_document(document: dict[str, Any]) -> dict[str, Any]:
 def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -> FastAPI:
     runner = Runner(workspace)
 
+    downloads = ModelDownloads()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         yield
         runner.close()
+        downloads.close()
 
     app = FastAPI(title="NLP Suite Desktop", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.runner = runner
+    app.state.downloads = downloads
     previews = PreviewTickets()
     origins = ["http://tauri.localhost", "tauri://localhost", "http://127.0.0.1:1420", "http://localhost:1420"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
         # A publication figure says how many drawn problems it has in a
         # header; the app reads it across the origin boundary.
@@ -373,7 +382,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.get("/api/health", dependencies=secured)
     def health() -> dict[str, Any]:
-        return {"ok": True, "version": "0.3.1", "workspace": str(workspace.root)}
+        return {"ok": True, "version": "0.4.0", "workspace": str(workspace.root)}
 
     @app.get("/api/setup", dependencies=secured)
     def setup() -> dict[str, Any]:
@@ -398,6 +407,47 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             if path.is_file()
             else "Dependency notices are generated during packaging. See docs/LICENSE_REVIEW.md for the current source and research-asset licensing policy."
         }
+
+    @app.get("/api/models", dependencies=secured)
+    def models() -> dict[str, Any]:
+        """Every registered model: what it is, whether it is here, and progress."""
+        return downloads.listing()
+
+    @app.post("/api/models/{model_id}/download", dependencies=secured)
+    def model_download(model_id: str) -> dict[str, Any]:
+        """Start (or resume) a download; poll GET /api/models for progress."""
+        return downloads.start(model_id)
+
+    @app.post("/api/models/{model_id}/cancel", dependencies=secured)
+    def model_cancel(model_id: str) -> dict[str, Any]:
+        return downloads.cancel(model_id)
+
+    @app.delete("/api/models/{model_id}", dependencies=secured)
+    def model_delete(model_id: str) -> dict[str, Any]:
+        return downloads.delete(model_id)
+
+    def choice_labels(param: Any) -> dict[str, Any]:
+        """Model choices by what they are, not their ids ("BERT base (uncased): word vectors").
+
+        The ids (``granite-embedding-english-r2``) say nothing about which
+        model does sentiment and which reads meaning; the form shows these.
+        """
+        if param.name != "model" or not param.choices:
+            return {}
+        from core.models.locate import status as model_status
+        from core.models.registry import get_model
+        from desktop_backend.models import KIND_LABELS
+
+        labels: dict[str, str] = {}
+        for choice in param.choices:
+            spec = get_model(str(choice))
+            if spec is None:
+                continue
+            text = f"{spec.display_name}: {KIND_LABELS[spec.kind].lower()}"
+            if model_status(spec) != "ready":
+                text += " (not installed; see Models)"
+            labels[str(choice)] = text
+        return {"choice_labels": labels}
 
     @app.get("/api/tools", dependencies=secured)
     def tools() -> list[dict[str, Any]]:
@@ -424,7 +474,10 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
                 **fields,
                 "label": tool_label(name),
                 "family_label": FAMILY_LABELS.get(published.family, published.family),
-                "params": [{**asdict(param), "label": param_label(name, param.name)} for param in published.params],
+                "params": [
+                    {**asdict(param), "label": param_label(name, param.name), **choice_labels(param)}
+                    for param in published.params
+                ],
                 "category": "visualization" if name in VISUALIZATION_TOOLS else "analysis",
                 "availability": availability(published, found),
             }
@@ -1047,6 +1100,31 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             workspace.delete_view(project_id, view_id)
         return {"ok": True}
 
+    @app.get("/api/projects/{project_id}/glance", dependencies=secured)
+    def glance_status(project_id: str) -> dict[str, Any]:
+        """Corpus at a glance: the newest result, whether it is current, what it found."""
+        from desktop_backend.glance import status
+
+        answer = status(workspace, project_id)
+        if "job" in answer:
+            answer["job"] = public_job(answer["job"])
+        return answer
+
+    @app.post("/api/projects/{project_id}/glance", dependencies=secured)
+    def glance_start(project_id: str, body: GlanceBody) -> dict[str, Any]:
+        """Run the glance recipe over the whole corpus (one parse, one job)."""
+        from desktop_backend.glance import GLANCE_TOOL
+
+        with runner.lock:
+            job = runner.submit(project_id, GLANCE_TOOL, {}, body.parser)
+        return public_job(job)
+
+    @app.get("/api/projects/{project_id}/glance/figure", dependencies=secured)
+    def glance_figure(project_id: str, path: str = Query(...)) -> FileResponse:
+        from desktop_backend.glance import figure_file
+
+        return FileResponse(figure_file(workspace, project_id, path), media_type="image/png")
+
     @app.post("/api/projects/{project_id}/jobs", dependencies=secured)
     def submit(project_id: str, body: RunBody) -> dict[str, Any]:
         with runner.lock:
@@ -1376,6 +1454,9 @@ _ANALYSIS_WRAPPERS = (
     "core.analysis.svo_map",
     "core.analysis.verb_analysis",
     "core.analysis.word2vec_bert",
+    "core.analysis.doc_embeddings",
+    # The model runtime every BERT-family tool reaches through default_backend.
+    "core.models.onnx_backend",
 )
 
 #: The third-party backends those modules import *inside* their functions.
@@ -1406,6 +1487,9 @@ LAZY_BACKENDS = (
     "sklearn.decomposition",
     "sklearn.feature_extraction.text",
     "sklearn.manifold",
+    # Word senses and document embeddings cluster inside the analysis.
+    "sklearn.cluster",
+    "sklearn.metrics",
     "scipy.cluster.hierarchy",
     # WordNet, FrameNet, VerbNet and the SentiWordNet adapters. Importing the
     # package loads no corpus data; a missing corpus is reported by the tool.
@@ -1424,6 +1508,10 @@ LAZY_BACKENDS = (
     "openpyxl",
     "openpyxl.chart",
     "kaleido",
+    # The model runtime: native extensions both, imported inside
+    # core.models.onnx_backend when the first model opens.
+    "onnxruntime",
+    "tokenizers",
 )
 
 
@@ -1474,6 +1562,14 @@ def main() -> None:
     parser.add_argument("--worker", nargs="?", const="", default=None)
     parser.add_argument("--desktop", action="store_true", help="shut down gracefully when the native shell disconnects")
     args = parser.parse_args()
+    # Downloaded models live beside the workspace, in the app's own data
+    # folder: they survive app updates, and every worker process this one
+    # starts inherits where to find them. The app's data dir is always
+    # <app data>/workspace; any other folder keeps its models inside itself
+    # (a workspace at a drive root must not scatter C:\models).
+    data_dir = args.data_dir.resolve()
+    models_dir = data_dir.parent / "models" if data_dir.name == "workspace" else data_dir / "models"
+    os.environ.setdefault("NLP_SUITE_MODELS_DIR", str(models_dir))
     # Both paths import the analysis engine before they take work (R-C5): a
     # job worker's first import is as fatal in its own way -- the job dies
     # silently at the point of the cold import -- as the request-thread wedge.

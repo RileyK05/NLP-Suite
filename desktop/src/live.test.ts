@@ -60,6 +60,24 @@ describe("what the live bench will run", () => {
     });
     expect(liveTools([tool(), broken]).map((t) => t.name)).toEqual(["ngrams"]);
   });
+
+  it("offers the BERT tools once their model is here, and not before", () => {
+    // The models ship with the app now, so the engine reports them available.
+    const ready = ["word_sense_induction", "bert_extract", "bert_topics", "sentiment_neural_bert", "word2vec_bert"].map(
+      (name) => tool({ name, availability: { state: "available", message: "", missing: [] } }),
+    );
+    expect(liveTools(ready).map((t) => t.name)).toEqual(ready.map((t) => t.name));
+    const waiting = tool({
+      name: "bert_topics",
+      availability: {
+        state: "needs_model",
+        message: "This needs BERT base (uncased) (105 MB). Download it from Models.",
+        missing: [],
+        model_id: "bert-base-uncased",
+      },
+    });
+    expect(liveTools([tool(), waiting]).map((t) => t.name)).toEqual(["ngrams"]);
+  });
 });
 
 describe("knowing which answer belongs to which question", () => {

@@ -70,7 +70,9 @@ class TestNoVendoring:
             if "__pycache__" in path.parts or ".git" in path.parts:
                 continue
             rel = path.relative_to(ROOT).as_posix()
-            if rel.startswith(("tests/fixtures/", "out/")) or "package" in rel:
+            # models/ and .model-work/ hold exported model files (a
+            # tokenizer.json each): git-ignored, published as release assets.
+            if rel.startswith(("tests/fixtures/", "out/", "models/", ".model-work/")) or "package" in rel:
                 continue
             if path.stat().st_size > MAX_INLINE_BYTES:
                 offenders.append(rel)

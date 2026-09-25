@@ -33,6 +33,8 @@ __all__ = ["BUNDLES", "Bundle", "bundles_for", "render_bundle"]
 
 #: The Greek letter for Spearman's correlation, spelled out for the linter.
 RHO = chr(0x3C1)
+#: The en dash of a range ("1930s-1940s" with the right dash), likewise.
+DASH = chr(0x2013)
 
 #: Drawn figure, its subtitle, and the caption lines it owes the reader.
 Drawing = tuple[Any, str, list[str]]
@@ -210,6 +212,245 @@ def _against_length(measure: str, length: str, label: str, prepare: Prepare) -> 
     return draw
 
 
+def _decades(frame: pd.DataFrame) -> tuple[pd.Series, dict[str, str]]:
+    """Each row's decade ("1930s") from its document name, and the short names."""
+    from core.viz.panel_helpers import document_labels
+    from core.viz.static.stats import decade_of
+
+    if "Document" not in frame.columns:
+        raise ValueError("the table has no Document column to date")
+    names = document_labels(frame["Document"].astype(str))
+    decades = frame["Document"].astype(str).map(lambda d: decade_of(names.get(d) or d) or "")
+    return decades, names
+
+
+#: A ridge needs this many documents per group to be a shape and not a guess.
+_RIDGE_MIN = 4
+
+
+def _eras(decades: pd.Series) -> pd.Series:
+    """Decades, merged into longer eras until a typical group has a few documents.
+
+    Twelve speeches over nine decades is one or two a decade: nothing to draw
+    a distribution from. The span grows (10, 20, 30, 50 years) until the
+    median group holds ``_RIDGE_MIN`` documents or more.
+    """
+    years = decades.str.slice(0, 4).astype(int)
+    for span in (10, 20, 30, 50):
+        start = years // span * span
+        if start.value_counts().median() >= _RIDGE_MIN or span == 50:
+            if span == 10:
+                return decades
+            # Named by the decades actually present ("1930s to 1940s", with an en dash), never a
+            # span that runs past the last document.
+            present = decades.groupby(start).agg(lambda d: (min(d), max(d)))
+            names = {key: first if first == last else f"{first}{DASH}{last}" for key, (first, last) in present.items()}
+            return start.map(names)
+    return decades
+
+
+def _ridgeline(measure: str, prepare: Prepare) -> Callable[[pd.DataFrame], Drawing]:
+    """One distribution of *measure* per decade, stacked like a mountain range."""
+
+    def draw(raw: pd.DataFrame) -> Drawing:
+        import matplotlib as mpl
+        from scipy.stats import gaussian_kde
+
+        from core.viz.static.labels import freeze_layout
+        from core.viz.static.shapes import _figure
+        from core.viz.static.text import AxisFormatter
+
+        frame = _prepared(raw, prepare)
+        decades, _ = _decades(frame)
+        working = frame.assign(_v=pd.to_numeric(frame[measure], errors="coerce"), _d=decades)
+        working = working[(working["_d"] != "") & working["_v"].notna()]
+        working = working.assign(_d=_eras(working["_d"]))
+        groups = sorted(working["_d"].unique())
+        if len(groups) < 2:
+            raise ValueError("the documents span fewer than two decades")
+        low, high = float(working["_v"].min()), float(working["_v"].max())
+        pad = (high - low) * 0.08 or 1.0
+        grid = np.linspace(low - pad, high + pad, 300)
+        ramp = mpl.colormaps["viridis"]
+        fig = _figure(8.5, max(3.8, 1.2 + 0.52 * len(groups)))
+        ax = fig.add_subplot()
+        step = 1.0
+        overall = float(working["_v"].median())
+        ticks: list[str] = []
+        for row, decade in enumerate(reversed(groups)):
+            values = working.loc[working["_d"] == decade, "_v"].to_numpy(dtype=float)
+            base = row * step
+            colour = ramp(1 - row / max(1, len(groups) - 1))
+            if len(values) >= 3 and np.ptp(values) > 0:
+                # Each ridge stays inside its own row: overlapping ridges hide
+                # the one behind, which with few periods is most of the figure.
+                density = gaussian_kde(values)(grid)
+                height = density / density.max() * step * 0.85
+                ax.fill_between(grid, base, base + height, color=colour, alpha=0.7, linewidth=0)
+                ax.plot(grid, base + height, color=colour, linewidth=1.0)
+            # Every document as a tick: a decade of three is three speeches.
+            ax.scatter(values, np.full(len(values), base), marker="|", s=40, color="#2b3329", zorder=4)
+            median = float(np.median(values))
+            ax.plot([median, median], [base, base + step * 0.85], color="#2b3329", linewidth=1.3, zorder=5)
+            ticks.append(f"{decade}\n(n={len(values)})")
+        ax.axvline(overall, color="#9aa39a", linewidth=0.9, linestyle="--", zorder=0)
+        ax.set_yticks([row * step for row in range(len(groups))], ticks)
+        ax.set_ylim(-0.25, (len(groups) - 1) * step + 1.05)
+        ax.set_xlabel(measure)
+        ax.xaxis.set_major_formatter(AxisFormatter())
+        ax.grid(axis="y", visible=False)
+        ax.tick_params(axis="y", length=0)
+        freeze_layout(fig)
+        by = working.groupby("_d")["_v"].median()
+        lines = [
+            f"Each ridge is the distribution of {measure} over one period's documents (a smoothed density), with every "
+            "document as a tick beneath it and its median as the dark stroke. The dashed line is the median of all "
+            "documents.",
+            f"Highest median: {by.idxmax()} ({by.max():.3g}); lowest: {by.idxmin()} ({by.min():.3g}). A period with few "
+            "documents has a ridge drawn from few points -- read its ticks, not its shape. Decades are merged into "
+            "longer periods when most would hold fewer than four documents.",
+        ]
+        span = "periods" if any(DASH in g for g in groups) else "decades"
+        return fig, f"{len(working)} documents across {len(groups)} {span}", lines
+
+    return draw
+
+
+def _pair_grid(columns: Sequence[str], prepare: Prepare) -> Callable[[pd.DataFrame], Drawing]:
+    """Every measure against every other, documents coloured by decade."""
+
+    def draw(raw: pd.DataFrame) -> Drawing:
+        import matplotlib as mpl
+
+        from core.viz.static.labels import freeze_layout
+        from core.viz.static.shapes import _figure
+        from core.viz.static.text import AxisFormatter
+
+        frame = _prepared(raw, prepare)
+        values = _measure_frame(frame, columns)
+        if values.shape[1] < 3:
+            raise ValueError("fewer than three measures vary across these documents")
+        # Five at most: past that the cells are too small to read a pattern.
+        chosen = list(values.columns[:5])
+        values = values[chosen].dropna()
+        decades, _ = _decades(frame.loc[values.index])
+        known = sorted({d for d in decades if d})
+        ramp = mpl.colormaps["viridis"]
+        tone = {d: ramp(i / max(1, len(known) - 1)) for i, d in enumerate(known)}
+        colours = [tone.get(d, "#9aa39a") for d in decades]
+        size = len(chosen)
+        fig = _figure(1.9 * size + 1.6, 1.9 * size)
+        axes = [[fig.add_subplot(size, size, r * size + c + 1) for c in range(size)] for r in range(size)]
+        for r, row_name in enumerate(chosen):
+            for c, col_name in enumerate(chosen):
+                ax = axes[r][c]
+                if r == c:
+                    # The histogram's counts go on a hidden twin, so this cell's
+                    # own y axis keeps the row's scale like every other cell.
+                    ax.set_xlim(values[col_name].min(), values[col_name].max())
+                    ax.set_ylim(values[row_name].min(), values[row_name].max())
+                    twin = ax.twinx()
+                    twin.hist(values[col_name], bins=15, color="#9aa39a", alpha=0.8)
+                    twin.set_yticks([])
+                    twin.grid(False)
+                    for spine in twin.spines.values():
+                        spine.set_visible(False)
+                else:
+                    ax.scatter(values[col_name], values[row_name], s=9, c=colours, linewidths=0, alpha=0.85)
+                ax.tick_params(labelsize=6.5, length=2)
+                ax.xaxis.set_major_formatter(AxisFormatter())
+                ax.yaxis.set_major_formatter(AxisFormatter())
+                ax.locator_params(nbins=3)
+                if r < size - 1:
+                    ax.tick_params(labelbottom=False)
+                else:
+                    ax.set_xlabel(col_name, fontsize=7.5)
+                if c > 0:
+                    ax.tick_params(labelleft=False)
+                else:
+                    ax.set_ylabel(row_name, fontsize=7.5)
+        if known:
+            handles = [
+                mpl.lines.Line2D([], [], marker="o", linestyle="", color=tone[d], markersize=5, label=d) for d in known
+            ]
+            fig.legend(handles=handles, loc="center left", bbox_to_anchor=(1.0, 0.5), title="Decade", fontsize=7)
+        freeze_layout(fig)
+        rho = values.corr(method="spearman")
+        pairs = rho.where(~np.tril(np.ones_like(rho, dtype=bool))).abs().stack().sort_values()
+        lines = [
+            "Every measure against every other, one point per document, coloured by decade; the diagonal is each "
+            "measure's own distribution.",
+            f"Least alike: {pairs.index[0][0]} and {pairs.index[0][1]} ({RHO} = {rho.loc[pairs.index[0]]:+.2f}); most "
+            f"alike: {pairs.index[-1][0]} and {pairs.index[-1][1]} ({RHO} = {rho.loc[pairs.index[-1]]:+.2f}). A "
+            "diagonal band means two measures rank the documents the same way.",
+        ]
+        if values.shape[1] < len(_measure_frame(frame, columns).columns):
+            lines.append("The first five measures are shown; the correlation figure has them all.")
+        return fig, f"{len(values)} documents · {size} measures", lines
+
+    return draw
+
+
+def _meaning_map(frame: pd.DataFrame) -> Drawing:
+    """The doc_embeddings map, clusters outlined, every point named where it fits."""
+    from scipy.spatial import ConvexHull
+
+    from core.viz.panel_helpers import document_labels
+    from core.viz.static.labels import LabelRequest, freeze_layout, place_labels
+    from core.viz.static.shapes import _figure
+    from core.viz.static.style import OKABE_ITO
+
+    working = frame.assign(_x=pd.to_numeric(frame["X"], errors="coerce"), _y=pd.to_numeric(frame["Y"], errors="coerce"))
+    working = working.dropna(subset=["_x", "_y"])
+    if len(working) < 4:
+        raise ValueError("fewer than four mapped points")
+    clusters = sorted(working["Cluster"].astype(str).unique(), key=lambda c: (len(c), c))
+    names = document_labels(working["Document"].astype(str))
+    fig = _figure(9.5, 7.2)
+    ax = fig.add_subplot()
+    for index, cluster in enumerate(clusters):
+        members = working[working["Cluster"].astype(str) == cluster]
+        colour = OKABE_ITO[index % len(OKABE_ITO)]
+        points = members[["_x", "_y"]].to_numpy(dtype=float)
+        if len(points) >= 3 and np.linalg.matrix_rank(points - points.mean(axis=0)) == 2:
+            hull = ConvexHull(points)
+            ring = points[hull.vertices]
+            ax.fill(ring[:, 0], ring[:, 1], color=colour, alpha=0.12, linewidth=0, zorder=1)
+            ax.plot(*np.vstack([ring, ring[:1]]).T, color=colour, alpha=0.5, linewidth=0.8, zorder=2)
+        ax.scatter(
+            points[:, 0],
+            points[:, 1],
+            s=36,
+            color=colour,
+            label=f"{cluster} ({len(points)})",
+            zorder=3,
+            linewidths=0.5,
+            edgecolors="white",
+        )
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.grid(False)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize=7.5)
+    renderer = freeze_layout(fig)
+    place_labels(
+        ax,
+        [
+            LabelRequest(float(row["_x"]), float(row["_y"]), names.get(str(row["Document"]), str(row["Document"])), 3.0)
+            for _, row in working.iterrows()
+        ],
+        renderer,
+        fontsize=6.5,
+    )
+    lines = [
+        "Each point is a document placed by t-SNE from its sentence-model vector (the first two principal components "
+        "when there are fewer than eight). Near points mean alike; distances across the map carry little meaning.",
+        "Colour and outline are k-means clusters found in the full vector space, with k chosen by silhouette; a point "
+        "far from its cluster's others sits between neighbourhoods.",
+    ]
+    return fig, f"{len(working)} points in {len(clusters)} clusters", lines
+
+
 # ---------------------------------------------------------------- topics --
 
 
@@ -369,6 +610,28 @@ def _measure_bundles() -> list[Bundle]:
                     draw=_correlations(columns, tool.prepare),
                 )
             )
+        if len(tool.measures) >= 3:
+            out.append(
+                Bundle(
+                    name=f"{name}_pair_grid",
+                    tool=name,
+                    title=f"Every {name.replace('_', ' ')} measure against every other",
+                    question="What does each pair of measures look like document by document, and does an era stand out?",
+                    requires=tool.requires,
+                    draw=_pair_grid(columns, tool.prepare),
+                )
+            )
+        if tool.default_measure:
+            out.append(
+                Bundle(
+                    name=f"{name}_by_decade",
+                    tool=name,
+                    title=f"{tool.default_measure} over the decades",
+                    question=f"How does the spread of {tool.default_measure} change from decade to decade?",
+                    requires=tool.requires,
+                    draw=_ridgeline(tool.default_measure, tool.prepare),
+                )
+            )
         if tool.length_column:
             out.append(
                 Bundle(
@@ -403,6 +666,22 @@ def _all_bundles() -> tuple[Bundle, ...]:
             question="Which documents read alike, and do eras form neighbourhoods?",
             requires=("Document A", "Document B", "Similarity"),
             draw=_similarity_map,
+        ),
+        Bundle(
+            name="doc_embeddings_decades_map",
+            tool="doc_embeddings",
+            title="A map of the documents by meaning, by decade",
+            question="Do eras form neighbourhoods of meaning?",
+            requires=("Document A", "Document B", "Similarity"),
+            draw=_similarity_map,
+        ),
+        Bundle(
+            name="doc_embeddings_clusters",
+            tool="doc_embeddings",
+            title="Neighbourhoods of meaning",
+            question="Which documents form clusters by meaning, and which sit between them?",
+            requires=("Document", "X", "Y", "Cluster"),
+            draw=_meaning_map,
         ),
     )
 

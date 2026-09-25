@@ -28,6 +28,9 @@ CORE = ROOT / "core"
 #   utilities and are tested as such
 # - pcace/core.py: creates the sqlite file at an explicit path (tools pass
 #   writer.run_dir / "pcace.db" and the DB is created there)
+# - models/download.py: writes downloaded model files into the user's models
+#   directory (never a run directory), each through <file>.partial and an
+#   atomic rename after its SHA-256 checks out
 # - profiler/batch.py: publishes batch children through OutputWriter only
 #   (the ".write_text(" match is the writer.write_text METHOD call, not a
 #   direct filesystem write — it contains no open/mkdir/Path.write call)
@@ -39,6 +42,7 @@ ALLOWED_WRITERS: frozenset[str] = frozenset(
         "core/file_ops/converter.py",
         "core/file_ops/merger.py",
         "core/pcace/core.py",
+        "core/models/download.py",
         "core/profiler/batch.py",
     }
 )

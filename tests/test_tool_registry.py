@@ -21,6 +21,7 @@ class TestRegistryShape:
     def test_expected_tools_registered(self) -> None:
         # Scope gate: adding a tool registers here AND updates this set together.
         assert set(tool_names()) == {
+            "doc_embeddings",
             "readability",
             "lexical_diversity",
             "doc_similarity",

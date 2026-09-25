@@ -23,6 +23,12 @@ node_modules/
 # --- Project outputs ---
 out/
 
+# --- Model weights (published as release assets, never committed; the tiny
+# test model lives under tests/fixtures/models/) ---
+/models/
+/.model-work/
+/.export-env/
+
 # --- Legacy oracle (never committed; referenced read-only) ---
 legacy/
 
@@ -45,33 +51,7 @@ desktop/src-tauri/gen/
 # Local NLTK corpora (downloaded per-machine, never committed)
 .nltk_data/
 
-# --- Owner's personal research + local tooling (untracked 2026-09-16) ---
-# These stay on disk and keep working; they are simply not part of the
-# published product. tests/test_distribution.py asserts the product packages
-# never reference them. See docs/LICENSE_REVIEW.md for what does ship.
-# Coursework builders (Homework 1 / Homework 2 / SOC 446W):
-scripts/*hw1*
-scripts/*hw2*
-scripts/build_immigration_evidence.py
-scripts/generate_issue_priority_heatmap.py
-scripts/run_gender_guesser.py
-scripts/run_legacy_chart_exports.py
-scripts/run_legacy_html_visuals.py
-scripts/run_legacy_visual_reference.py
-scripts/run_legacy_wordclouds.py
-scripts/focus_hw1.py
-scripts/enhance_hw1_ta.py
-scripts/review_hw1_voice.py
-scripts/revise_hw1_duration.py
-scripts/summarize_hw1.py
-scripts/explore_hw2_economic.py
-scripts/render_hw1_word.ps1
-review_first.md
-docs/HOMEWORK2_WORKING_PLAN.md
-# Local autonomous-refactor harness:
-scripts/autonomous-refactor-prompt.md
-scripts/autonomous-refactor.sh
-scripts/register-autonomous-task.ps1
+# Local agent tooling (never committed on any branch)
 .opencode/
 # Course material: copyrighted, never published with the product
 *Syllabus*.docx

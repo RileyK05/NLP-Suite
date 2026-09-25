@@ -319,7 +319,7 @@
     "how": "Splits the corpus into sentences and scores each with the transformer classifier, writing one row per sentence with document provenance and the signed Compound score. No lexicon is involved; the model weights do the work.",
     "question": "Where does the emotional tone of this document rise and fall, sentence by sentence?",
     "interpretation": "Compound is a signed score: read its direction and relative height across a document rather than treating one value as an absolute feeling. The arc is only as good as the sentence scores under it, so spot-check the sentences at the peaks.",
-    "limits": "Long sentences are truncated at 256 words (and said so in the output), so a score at the cap reads only the opening stretch. The model downloads on first use and needs network access that once; later runs use the cached copy."
+    "limits": "The model is DistilBERT fine-tuned on SST-2 (film reviews), and it has two classes only: positive and negative, with no neutral. A flat or mixed sentence gets a probability near 0.5, so its Compound lands near 0 - read near-zero scores as 'the model is unsure', not as 'neutral'. Long sentences are truncated at 256 words (and said so in the output). The model ships with the app and runs offline."
   },
   "sentiment_neural_spacy": {
     "what": "Sentence-by-sentence sentiment from a spaCy pipeline's textcat head, one of four neural annotators to compare side by side on the same corpus.",
@@ -378,14 +378,14 @@
     "limits": "A triple with no geography in its document cannot be placed and is reported unplaced, not guessed onto the map. When a document names several places every (triple, place) pair is emitted, so counts are event-place pairs, not events - a speech naming five cities contributes five pins per triple."
   },
   "word2vec_bert": {
-    "what": "Word2Vec via BERT: which words come together in BERT's reading of your corpus, with a neighbour list and a vocabulary map - the same tables as the Gensim Word2Vec tool so the two Word2Vec approaches, BERT and Gensim, can be compared fairly: which gives better results?",
-    "how": "Runs the pretrained BERT model over your corpus, splits words into subword pieces, averages the contextual embeddings per word, and returns the neighbour and vocabulary tables in the Gensim tool's format. The model downloads on first use.",
+    "what": "Word2Vec via BERT: what your corpus's words mean in BERT's reading. Figures show the vocabulary in themes, where words fall between two ideas you name (war ... peace), a word's neighbourhood and, for a dated corpus, the company a word kept in each decade. Its tables match the Gensim tool's, so the two can be compared fairly.",
+    "how": "Runs the pretrained BERT model over your corpus, splits words into subword pieces, averages the contextual embeddings of each word's own pieces in every sentence it appears in, and returns the neighbour and vocabulary tables in the Gensim tool's format. With the lemma field, each use is read at its surface form ('was' for 'be'). BERT ships with the app and runs offline.",
     "question": "Of the two Word2Vec approaches - BERT, Gensim - which gives better results on this corpus, and what does better mean here?",
-    "interpretation": "Compare like for like: the same query words, the same tables, and sentences from your corpus beside every neighbour list. Better can mean cleaner neighbours, better coverage of your vocabulary, or better agreement with your reading - say which one you used.",
-    "limits": "BERT is a PRETRAINED model reading your corpus (it splits words into subword pieces and averages contextual embeddings), NOT a model trained on your corpus the way the Gensim tool trains - so it never learns your corpus-specific senses. The model downloads on first use, and long contexts are truncated."
+    "interpretation": "Read each figure back to the sentences: click a word to see it used. On the State of the Union, war ... peace puts soldier toward war and trade toward peace, and energy moves from strength and spirit (1940s) to fuel and oil (1970s on). A lean or a change says the company differs, not why; the sentences say why.",
+    "limits": "BERT is a PRETRAINED model reading your corpus (it splits words into subword pieces and averages contextual embeddings), NOT a model trained on your corpus the way the Gensim tool trains - so it never learns your corpus-specific senses. Sentences longer than BERT's 512-piece window are cut, and the run says how many."
   },
   "word2vec_gensim": {
-    "what": "Trains Gensim Word2Vec on your corpus, placing words in a numerical space based on surrounding vocabulary. Neighbours are words with similar learned contexts, not necessarily synonyms.",
+    "what": "Trains Gensim Word2Vec on your corpus, placing words in a numerical space based on surrounding vocabulary. Figures show themes, where words fall between two ideas you name, and a word's neighbourhood; neighbours share learned contexts and need not be synonyms.",
     "how": "Uses parsed tokens and Gensim. Set minimum count, vector dimensions, context window, epochs and seed; optionally choose a query word for neighbours. Outputs include vectors, neighbours and a t-SNE projection.",
     "question": "Which words occur in contexts similar to freedom or security in this collection?",
     "interpretation": "Inspect neighbours in original sentences. Minimum count can exclude rare query words. A two-dimensional t-SNE plot is an exploratory view of higher-dimensional vectors.",
@@ -397,5 +397,33 @@
     "question": "Which of these topics would I still find if I ran the model again, and which should I not build an argument on?",
     "interpretation": "A topic that matches closely under every seed is one the corpus supports. A topic that falls apart under a different seed is an artefact of that run; treat its words as noise rather than as a theme.",
     "limits": "Stability is not correctness: a topic can come back every time and still be a stopword cluster or a formula of the genre. The check covers only the seeds tried, and top-word overlap ignores how the topic spreads over documents."
+  },
+  "word_sense_induction": {
+    "what": "Asks, for every content word used in at least two sentences, whether its uses fall into two readings - 'bank' of a river against 'bank' that lends money - by how BERT reads each use. Figures list the clearest splits, each labelled by its two senses' context words, with the sentences behind each.",
+    "how": "Each use of a word is embedded in its sentence with BERT. The uses of each word are clustered in two, and the split is kept only when the two groups separate clearly and neither is just one or two odd sentences; otherwise every use is sense 1. Sense 1 is the more frequent reading. The vectors table holds every use.",
+    "question": "Which words in this corpus are used in more than one sense, and does the second sense belong to particular documents or years?",
+    "interpretation": "A split is a hypothesis to check, not a dictionary entry: read sentences from each sense before naming it. On the State of the Union, World splits into World War and World Bank; some splits are only grammatical, which the sentences show at once. A one-sense word may still have second uses too rare to separate.",
+    "limits": "Two senses at most, by design. Function words are left out (they split by position in the sentence, not by meaning). Needs a word used in at least four sentences to test for two senses, and BERT's reading is general English: a specialised sense your corpus uses may not separate."
+  },
+  "bert_extract": {
+    "what": "An extractive summary of each document: the sentences closest in meaning to the document as a whole, kept in their original order. Nothing is rewritten; every summary sentence is a sentence of the document.",
+    "how": "Every sentence is turned into a vector by the chosen model (BERT, or a sentence model such as Granite from the Models page), the document's centre is the mean of those vectors, and the sentences nearest to it are kept. Choose how many sentences each summary has.",
+    "question": "What does each document say most centrally, and do the summaries of different documents differ in what they keep?",
+    "interpretation": "The picked sentences are the most typical of the document, not necessarily the most important or the most quoted: a speech's memorable line can be unlike the rest and so left out.",
+    "limits": "Centrality favours sentences that repeat the document's main vocabulary, so long, general sentences win over short vivid ones. Summaries are extractive only. A sentence model reads meaning better than BERT's averaged word pieces; try both."
+  },
+  "bert_topics": {
+    "what": "Groups the documents that read alike into topics, by meaning rather than by shared word counts, and names each group by the words that set it apart from the others.",
+    "how": "Each document becomes the mean of its sentence vectors (BERT, or a sentence model such as Granite from the Models page); seeded k-means groups the documents into the number of topics you choose. A topic's words are frequent in its documents and rarer in the rest.",
+    "question": "Do these meaning-based groups match the themes the word-count topic model (LDA) finds on the same corpus? Where they disagree, which reading is closer to yours?",
+    "interpretation": "Each document belongs to one topic here (unlike LDA, where a document mixes topics). Read the documents in a group before accepting its label; the distance column shows which ones sit at its edge.",
+    "limits": "k-means always makes the number of groups you ask for, whether or not the corpus has them. Documents are averaged sentence by sentence, so a document that changes subject lands near the middle. Results depend on the seed and the model."
+  },
+  "doc_embeddings": {
+    "what": "Reads every document with a sentence model - Granite by default, or Qwen3 Embedding from the Models page - and asks which documents mean alike. The similarity table has the same shape as Document similarity's, so shared meaning and shared words can be compared on the same heatmap.",
+    "how": "Each document is read in passages of whole sentences (about 200 words, inside the model's window) and its vector is the word-weighted mean of its passages. Pairs, nearest neighbours and a 2-D map with clusters (k chosen by silhouette) follow from those vectors. Choose the sentence unit to map sentences instead, and give a query to rank the corpus's sentences by how close they are in meaning to it.",
+    "question": "Do the documents that share vocabulary (Document similarity) also share meaning here? Which documents move together only by meaning, and what do they have in common?",
+    "interpretation": "Cosines between documents from a sentence model sit high (most pairs are 70-95%): read the order and the gaps, not the raw number. A cluster is a neighbourhood on the map; name it by reading its members. Search results are ranked by meaning, so the best match may share no word with the query.",
+    "limits": "The model is general English; a corpus's own technical senses may not separate. Long documents are averaged passage by passage, so a document that changes subject lands between its subjects. The map's distances come from t-SNE and only neighbourhoods are meaningful, not distances across the map."
   }
 }

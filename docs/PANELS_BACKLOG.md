@@ -293,6 +293,62 @@ and new ideas that came out of the work:
   flat map is faithful; it would be worth showing the same number beside the
   interactive network of neighbours.
 
+### 4d-7. Models and embeddings (2026-09-24, release 0.4.0)
+
+- **A last-layer-only graph for token models.** BERT's ONNX graph returns all
+  13 hidden states so Word2Vec via BERT can read any layer; every other caller
+  reads only the last, and pays for stacking the rest. Export a second graph
+  (or a second output) and pick it when `layer == -1`. Measure first: a clean,
+  interleaved benchmark per precision on an idle machine is owed
+  (`docs/PLAN_0.4.0.md`, Progress).
+- **Word senses beyond two.** `wsi_senses` asks "one meaning or two?". A
+  silhouette search over k = 2..4 would find "bank" (money, river, and the
+  verb "to bank on"). Needs the same guard against small groups.
+- **A word-senses figure.** Done (Words used in two senses; The two senses of
+  a word). Still open: per lemma, its uses as points (PCA of the vectors)
+  coloured by sense, and each sense's share by decade ("does the second sense
+  belong to particular years?", the question the guide asks).
+- **Embeddings over time.** `doc_embeddings` knows each document's vector;
+  "which way did the corpus move" is the drift of the decade centroids, drawn
+  as arrows on the map.
+- **Search on the Interactive page.** Semantic search is a tool parameter;
+  on the bench it could be a text box that re-ranks without re-embedding (the
+  sentence vectors are the expensive part and do not change with the query).
+- **Cache sentence vectors.** Like the parse cache: keyed by corpus
+  fingerprint + model id, so a second embeddings run, a search, and bert_topics
+  on the same corpus reuse them.
+- **3-class sentiment.** SST-2 has no neutral. A 3-class model (a RoBERTa
+  sentiment model) needs a licence check before it can ship.
+- **Glance on the Overview page.** The glance lives on Corpus; its first two
+  sentences would make a good Overview card once a glance exists.
+
+### 4d-8. What the embeddings mean (2026-09-24)
+
+Built: meaning axes, a two-axis map, meaning groups, a word's neighbourhood
+(both Word2Vec tools); meaning over time and the most-changed words (BERT,
+dated corpora); the two word-senses figures. Next:
+
+- **Two models side by side.** The same anchor words' neighbours from Gensim
+  and BERT (or Granite) in two columns, with the overlap marked. Needs a figure
+  over two runs; today every panel reads one run. Never overlay coordinates of
+  two independently trained spaces: their axes do not line up.
+- **Axis presets.** A short list of tested pole sets (war/peace,
+  poor/rich, past/future, public/private, men/women) offered as choices, so
+  the first axis a reader sees is a good one. Each needs checking on more than
+  one corpus before it ships.
+- **Axes with more pole words.** SemAxis expands a one-word pole with its
+  nearest neighbours; an "expand ends" switch would make single-word axes less
+  noisy.
+- **Change for Gensim.** Per-period Gensim spaces need aligning first
+  (orthogonal Procrustes over shared frequent words, Hamilton et al. 2016).
+  Until then change is BERT-only, which reads every period in one space.
+- **A noise floor for change.** A word with few uses per period looks changed
+  by chance. Split each period's uses in half and report the change between
+  halves as the floor under which a change is not shown as one.
+- **Groups on the run page, not only live.** The run page draws the first
+  figure only; when it refuses (too few words for eight groups) it should fall
+  back to the next, as the live bench now does.
+
 ### 4e. Observed, not investigated
 
 Each desktop job showed "Parsing English documents" for minutes even with the

@@ -105,6 +105,9 @@ def main() -> None:
                 selected.extend(
                     ["sentence_complexity", "ner", "clause_svo", "nominalization", "narrative", "sentiment_vader_anew"]
                 )
+                # The bundled models, read by the frozen engine's ONNX Runtime:
+                # DistilBERT (sentiment) and BERT base (topics).
+                selected.extend(["sentiment_neural_bert", "bert_topics"])
             if args.corpus:
                 selected = ["readability", "doc_similarity"] + (["ner"] if args.with_parser else [])
             table_project = request("/projects", {"name": "Packaged CSV smoke (no corpus)"})
@@ -117,7 +120,10 @@ def main() -> None:
                 b"A,yes,five,5,9,2020-01-05\nB,no,six,6,11,2020-01-06\n"
                 b"A,yes,seven,7,13,2020-01-07\nB,no,eight,8,15,2020-01-08\n",
             )
-            cases = [(tool, base, {}, expected_documents) for tool in selected]
+            # The smoke corpus has two documents; bert_topics defaults to three
+            # topics and rightly refuses more topics than documents.
+            corpus_params: dict[str, dict[str, object]] = {"bert_topics": {"topics": 2}}
+            cases = [(tool, base, corpus_params.get(tool, {}), expected_documents) for tool in selected]
             for tool, params in (
                 ("table_chi2", {"col1": "group", "col2": "vote"}),
                 ("table_crosstab", {"col1": "group", "col2": "vote"}),
