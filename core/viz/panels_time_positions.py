@@ -1159,7 +1159,7 @@ def narrative_character_positions(
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no dated character mentions to plot"), *diagnostics)
 
-    totals = working.groupby(CHARACTER)[MENTIONS].sum().sort_values(ascending=False)
+    totals = working.groupby(CHARACTER)[MENTIONS].sum().sort_values(ascending=False, kind="stable")
     top_characters = list(totals.head(top_n).index)
     if not top_characters:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no character rows to rank"), *diagnostics)
@@ -1270,7 +1270,7 @@ def narrative_characters_by_order(
         )
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no placed character mentions to plot"), *diagnostics)
-    totals = working.groupby(CHARACTER)[MENTIONS].sum().sort_values(ascending=False)
+    totals = working.groupby(CHARACTER)[MENTIONS].sum().sort_values(ascending=False, kind="stable")
     top_characters = [str(name) for name in totals.head(top_n).index]
     if not top_characters:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no character rows to rank"), *diagnostics)
@@ -1667,7 +1667,9 @@ def ner_entity_timeline(
             )
         entities = [e for e in entities if e not in missing]
     else:
-        coverage = matched.groupby(ENTITY, sort=False)[DOCUMENT_ID].nunique().sort_values(ascending=False)
+        coverage = (
+            matched.groupby(ENTITY, sort=False)[DOCUMENT_ID].nunique().sort_values(ascending=False, kind="stable")
+        )
         # An entity in nearly every document ("Speaker", from "Mr. Speaker")
         # is a form of address; its line is flat and says nothing about
         # change. Default to entities that come and go.
@@ -1952,7 +1954,7 @@ def coreference_chain_positions(
             )
     else:
         # The broadest chain: the lemma whose mentions span the most documents.
-        coverage = working.groupby(LEMMA)[DOCUMENT_ID].nunique().sort_values(ascending=False)
+        coverage = working.groupby(LEMMA)[DOCUMENT_ID].nunique().sort_values(ascending=False, kind="stable")
         lemma = str(coverage.index[0])
         diagnostics.append(
             Diagnostic.info("PANEL_LEMMA_AUTOSELECTED", f"no lemma given; showing the widest chain, {lemma!r}.")
