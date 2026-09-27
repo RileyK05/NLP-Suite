@@ -130,6 +130,7 @@ def test_the_server_preloads_everything_a_live_analysis_imports() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=300,
     )
     assert done.returncode == 0, done.stderr
     report = ast.literal_eval(done.stdout.strip().splitlines()[-1])
@@ -646,3 +647,19 @@ def test_a_live_answer_matches_the_run_that_publishes_it(client: Any, tmp_path: 
     assert live["table"]["total"] == published["total"]
     assert live["table"]["rows"] == published["rows"], "the live answer is not the published one"
     Runner(client.workspace).close()
+
+
+def test_caches_report_their_size_and_clear_on_request(client: Any) -> None:
+    """The Settings page's "clear" must drop only recomputable work."""
+    import pandas as pd
+
+    from desktop_backend.live import Annotations
+
+    Annotations(client.workspace.root).store("some-parse", pd.DataFrame({"Form": ["word"] * 10}))
+    sizes = client.get("/api/caches").json()
+    assert sizes["parse_bytes"] > 0
+    assert sizes["vector_bytes"] == 0
+
+    cleared = client.post("/api/caches/clear").json()
+    assert cleared == {"parses_removed": 1, "vectors_removed": 0}
+    assert client.get("/api/caches").json() == {"parse_bytes": 0, "vector_bytes": 0}

@@ -37,6 +37,9 @@ _MAX_READABLE_CATEGORIES = 50
 _TEXT_MEAN_LENGTH = 40
 # Column names that are identifiers whatever their distribution looks like.
 _IDENTIFIER_NAMES = ("id", "rank", "index", "key", "row")
+# The columns every run adds to place a document on the corpus's axis
+# (core/profiler/executor.py): numbers that order rows, not measure them.
+_AXIS_NAMES = frozenset({"position", "order"})
 # A CSV carries no dtypes, so a date read back from a published table is the
 # string "2024-03-07". Without this every date column was an IDENTIFIER (one
 # per row) or a CATEGORICAL, and the timeline recommendation -- which asks for
@@ -101,6 +104,11 @@ def _numeric_role(values: pd.Series, name: str, rows: int, distinct: int) -> Col
     drawn backwards.
     """
     low, high = float(values.min()), float(values.max())
+    # Where a document sits on the corpus's axis (a decimal year, a chapter
+    # number): like a year, a place to put rows in order, never a quantity.
+    # Averaged, "mean Position by Speaker" is a number about nothing.
+    if name.strip().casefold() in _AXIS_NAMES:
+        return ColumnRole.DATE
     # A near-unique integer column named like a key is an identifier, not a
     # measurement: ranking rows by "Record ID" charts nothing.
     if _looks_like_identifier_name(name) and (
@@ -129,6 +137,10 @@ def _other_role(values: pd.Series, name: str, rows: int, distinct: int) -> Colum
     """
     if pd.api.types.is_datetime64_any_dtype(values):
         return ColumnRole.DATE
+    # "Chapter 3" / "1934-01-03" beside Position: what a place is called, not a
+    # second axis or a category to count by.
+    if name.strip().casefold() == "position label":
+        return ColumnRole.IDENTIFIER
     text = values.astype(str)
     if bool(text.str.match(_ISO_DAY).all()):
         return ColumnRole.DATE

@@ -1,11 +1,11 @@
 # Full Replacement Ledger
 
 Live status for the work packets in `FULL_REPLACEMENT_PLAN.md`. This ledger is
-about remaining replacement work; `CHUNK_LEDGER.md` records the completed
-52-chunk scaffold.
-
-Latest targeted correctness review: [2026-09-05 follow-up](FOLLOWUP_REVIEW_2026-09-05.md).
-This records fixes and verification limits, not full-replacement sign-off.
+about remaining replacement work. The original 52-chunk scaffold is complete;
+its detailed build history remains in Git history. The September 2026
+correctness follow-up fixed background job supervision, resume-before-execution,
+cache evidence validation, and profiler parameter handling. It was a targeted
+review, not full-replacement sign-off.
 
 ## Rules
 
@@ -45,8 +45,8 @@ Update the counts only when a row becomes `verified`.
 |---|---|---|---|---|---|
 | FR-0.1 | Review and commit current working tree | review | `4ef1001` (via `c1f5d9e`+`a1d98b0`) | — | 3 commits: source hardening, tests, docs; `corpus/` gitignored; working tree clean |
 | FR-0.2 | Restore complete quality gate | review | `06d7a39` | — | Current gate: 717 collected (713 passed + 4 skipped: model-integration/environment state); ruff, format, mypy, compileall green. Historical commit evidence retained; rerun command is in README. |
-| FR-0.3 | License and attribution | implementing | — | — | Decision packet done locally (uncommitted): NEW `docs/LICENSE_REVIEW.md` (what ships vs user-supplied/download-on-demand per asset + 3 explicit owner decisions: Brysbaert/iconicity bundling, suite license file, app credits surface) + `tests/test_licenses.py` no-vendoring guards (assets/ holds no lexicon bytes; no data-sized CSV/JSON outside fixtures/corpus); judgment itself still owed — this row cannot go to review without the owner |
-| FR-0.4 | Reconcile documentation | review | `aa8b34f` | — | ARCHITECTURE header + CHUNK_LEDGER C5/C17 stale claims fixed; scaffold vs parity distinguished |
+| FR-0.3 | License and attribution | review | — | — | Owner chose MIT on 2026-09-16; `LICENSE`, package metadata and the desktop Credits & licenses surface exist. Restricted research lexicons remain user-supplied and the no-vendoring guard runs in tests. Review the generated notices for each bundled model and package before distribution. |
+| FR-0.4 | Reconcile documentation | review | `aa8b34f` | — | Architecture header and scaffold C5/C17 stale claims fixed; scaffold vs parity distinguished |
 | FR-0.5 | Enforce write custody | review | `8e5b82f` | — | R3 revised to allowlisted boundary; gate `test_write_custody.py` (3 tests) green |
 | FR-0.6 | CI and platform matrix | review | `007ab7a` | — | gate on 3.12 / ubuntu+windows; no model downloads in unit tests |
 | FR-1.1 | Atomic capability inventory | review | `554281e` | — | 115 rows (64 review / 50 todo / 1 dropped); backends split, no verified claims |
@@ -132,7 +132,7 @@ old chunk contract; FR-gate parity evidence still owed, so no row is marked
 owed to FR-1.7 (tier-2 glue questions only — owner decision 2026-09-03;
 package-backed analyses carry definitional evidence instead of a legacy
 capture); `S` = SPEC_ONLY owed to FR-1.6. Implementation cites the scaffold
-commit from `CHUNK_LEDGER.md` where applicable.
+commit from the completed scaffold's Git history where applicable.
 
 ### Intake and file operations
 
@@ -269,7 +269,7 @@ commit from `CHUNK_LEDGER.md` where applicable.
 | CAP-VIZ-01 | Plotly bar charts (`charts_Plotly_util`) | `core/viz/charts.py` | T, G | review | `656845c` | — | |
 | CAP-VIZ-02 | Knowable no-plotly fallback rendering | same module (fallback path) | T (fail-big) | review | `656845c`, `c1f5d9e` | — | `CHART_PLOTLY_UNAVAILABLE` warning |
 | CAP-VIZ-03 | Static chart export (kaleido) | `core/viz/plotters.py::chart_image_bytes` via `tools/charts.py` | T, G | review | — | — | needs `[plotly-image]`; on export failure the run FAILS but HTML+CSV survive in a `-failed` run dir (documented in docs/viz-charts.md) |
-| CAP-VIZ-04 | Excel chart export (`charts_Excel_util`) | `core/viz/charts_excel.py` via `tools/charts.py` (`--format xlsx`) | T, G | review | — | — | **Un-dropped 2026-09-17.** The row previously read `dropped — superseded by Plotly (BUILD_PLAN §4)`, which was stale: the exporter exists and reproduces the legacy workbook layout (Data + first-positioned Chart sheet, native openpyxl chart, axis titles, `tickLblPos="low"`, legend dropped for a single series) across the six kinds the legacy GUI offered (bar/line/pie/scatter/radar/bubble). Excel output is a deliverable users are required to produce, so Plotly does not supersede it. The macro-enabled `.xlsm` hover path remains deliberately not carried (binary templates with embedded VBA). See `core/viz/catalog.py` |
+| CAP-VIZ-04 | Excel chart export (`charts_Excel_util`) | `core/viz/charts_excel.py` via `tools/charts.py` (`--format xlsx`) | T, G | review | — | — | **Un-dropped 2026-09-17.** The earlier scaffold plan's claim that Plotly superseded Excel export was stale: the exporter exists and reproduces the legacy workbook layout (Data + first-positioned Chart sheet, native openpyxl chart, axis titles, `tickLblPos="low"`, legend dropped for a single series) across the six kinds the legacy GUI offered (bar/line/pie/scatter/radar/bubble). Excel output is a deliverable users are required to produce, so Plotly does not supersede it. The macro-enabled `.xlsm` hover path remains deliberately not carried (binary templates with embedded VBA). See `core/viz/catalog.py` |
 | CAP-VIZ-05 | Wordcloud (`wordclouds_util`) | `core/viz/wordcloud_gephi.py` | T, G | review | `43430cc` | — | |
 | CAP-VIZ-06 | Validated GEXF network output (`Gephi_util`) | same module `::gephi_gexf` | T, G | review | `43430cc` | — | schema/weight validation → FR-6.6 |
 | CAP-VIZ-07 | **New.** No legacy equivalent: the original suite drew one generic chart family over any table. | `core/viz/panelspec.py` + `core/viz/panels.py` via `tools/panels.py` | T | review | — | — | Tool-specific panels: a figure that belongs to one analysis and knows its result shape, for results a generic x/y/group chart cannot express (a keyness table's effect-size-against-evidence volcano; a topic model's two matrices). Every mark carries resolvable evidence; every figure carries its provenance caption inside the image. |

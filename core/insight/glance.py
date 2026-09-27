@@ -21,6 +21,8 @@ import hashlib
 import pandas as pd
 
 from core.analysis.lda import STOPWORDS
+from core.corpus_axis import along, plural
+from core.io.document_fields import DETAIL_PREFIX
 from core.viz.panel_helpers import FUNCTION_WORDS, document_labels
 
 __all__ = ["GLANCE_FIGURES", "RECIPE", "RECIPE_VERSION", "glance_key", "summarize"]
@@ -61,9 +63,14 @@ GLANCE_FIGURES: dict[str, tuple[str, ...]] = {
 }
 
 
-def glance_key(document_hashes: list[str]) -> str:
-    """The cache key: the documents' contents (order-free) and the recipe version."""
-    joined = "|".join(sorted(document_hashes)) + f"|recipe-{RECIPE_VERSION}"
+def glance_key(document_hashes: list[str], details_hash: str = "") -> str:
+    """The cache key: the documents' contents (order-free), their details, and the recipe version.
+
+    The details hash (:func:`core.io.reader.details_fingerprint`) is here
+    because the sentences and figures read the details and the axis: renaming
+    a detail or switching to "across the chapters" must re-summarise.
+    """
+    joined = "|".join(sorted(document_hashes)) + f"|{details_hash}|recipe-{RECIPE_VERSION}"
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
@@ -89,13 +96,47 @@ def _extremes(frame: pd.DataFrame, column: str) -> tuple[str, float, str, float]
     )
 
 
-def _size(frame: pd.DataFrame) -> str | None:
+def _span(frame: pd.DataFrame, kind: str, noun: str) -> str:
+    """Where the corpus sits on its axis: "from 1934 to 2024", "across 61 chapters", or nothing."""
+    if kind == "time":
+        years = _numeric(frame, "Year").dropna()
+        if years.empty and "Date" in frame.columns:
+            years = pd.to_numeric(frame["Date"].astype(str).str.slice(0, 4), errors="coerce").dropna()
+        return f"from {int(years.min())} to {int(years.max())}" if not years.empty and years.nunique() > 1 else ""
+    if kind == "order":
+        placed = _numeric(frame, "Position").dropna()
+        return f"across {len(placed) or len(frame)} {plural(noun or 'Document').lower()}"
+    return ""
+
+
+def _single_work(frame: pd.DataFrame) -> str:
+    """The one book this corpus is, when every document is a chapter of it (plan 2.7)."""
+    for column in ("Work", DETAIL_PREFIX + "Work"):
+        if column in frame.columns:
+            values = {str(value) for value in frame[column].dropna() if str(value).strip() and str(value) != "nan"}
+            return values.pop() if len(values) == 1 else ""
+    return ""
+
+
+def _size(frame: pd.DataFrame, kind: str = "", noun: str = "") -> str | None:
     tokens, sentences = _numeric(frame, "Tokens"), _numeric(frame, "Sentences")
     if tokens.empty:
         return None
-    line = f"{len(frame):,} documents, {int(tokens.sum()):,} words and {int(sentences.sum()):,} sentences"
+    steps = (plural(noun or "Document")).lower()
+    work = _single_work(frame)
+    if work and (kind == "order" or (not kind and "Position" in frame.columns and "Year" not in frame.columns)):
+        # A book in chapters: the reader wants the book's name first --
+        # "Pride and Prejudice, 61 chapters, 122,000 words".
+        placed = _numeric(frame, "Position").dropna()
+        line = f"{work}, {len(placed) or len(frame)} {steps}, {int(tokens.sum()):,} words"
+    else:
+        line = f"{len(frame):,} documents, {int(tokens.sum()):,} words and {int(sentences.sum()):,} sentences"
+        span = _span(frame, kind, noun)
+        if span:
+            line += f"; {span}"
     if len(frame) > 1:
-        line += f"; the median document is {int(tokens.median()):,} words"
+        who = steps.rstrip("s") if work else "document"
+        line += f"; the median {who} is {int(tokens.median()):,} words"
         longest = _extremes(frame, "Tokens")
         if longest:
             line += (
@@ -122,7 +163,7 @@ def _diversity(frame: pd.DataFrame) -> str | None:
     return f"Most varied vocabulary: {found[0]} (MTLD {found[1]:.0f}); least: {found[2]} ({found[3]:.0f})."
 
 
-def _sentiment(frame: pd.DataFrame) -> str | None:
+def _sentiment(frame: pd.DataFrame, kind: str = "", noun: str = "") -> str | None:
     found = _extremes(frame, "Compound")
     if not found:
         return None
@@ -130,14 +171,23 @@ def _sentiment(frame: pd.DataFrame) -> str | None:
     # on the positive side; then it is the least positive.
     low_word = "most negative" if found[3] < 0 else "least positive"
     line = f"Most positive in tone: {found[0]} (VADER {found[1]:+.2f}); {low_word}: {found[2]} ({found[3]:+.2f})"
-    years = _numeric(frame, "Year")
+    # The trend runs along the corpus's axis, not only along years: a book's
+    # tone across its chapters reads the same way a dated corpus's does.
+    positions = _numeric(frame, "Position") if "Position" in frame.columns else _numeric(frame, "Year")
     tone = _numeric(frame, "Compound")
-    both = pd.concat([years, tone], axis=1).dropna()
+    both = pd.concat([positions, tone], axis=1).dropna()
     if len(both) >= _MIN_TREND and both.iloc[:, 0].nunique() > 1:
         rho = float(both.iloc[:, 0].corr(both.iloc[:, 1], method="spearman"))
         trend = "rises" if rho >= _TREND_RHO else "falls" if rho <= -_TREND_RHO else "shows no clear trend"
-        line += f"; over time it {trend} (Spearman {chr(0x3C1)} = {rho:+.2f})"
+        line += f"; {_trend_along(kind, noun, frame)} it {trend} (Spearman {chr(0x3C1)} = {rho:+.2f})"
     return line + "."
+
+
+def _trend_along(kind: str, noun: str, frame: pd.DataFrame) -> str:
+    """How the trend sentence names the axis, guessing the kind only when the caller gave none."""
+    if kind:
+        return along(kind, noun) or "along the corpus"
+    return "over time" if "Year" in frame.columns else "across the documents"
 
 
 def _similarity(pairs: pd.DataFrame) -> str | None:
@@ -186,17 +236,22 @@ def _terms(frame: pd.DataFrame) -> str | None:
     return f"Most distinctive words (summed TF-IDF): {', '.join(top)}." if top else None
 
 
-def summarize(tables: Mapping[str, Mapping[str, pd.DataFrame]]) -> list[str]:
-    """The glance's sentences, from each recipe tool's tables (tool -> name -> frame)."""
+def summarize(tables: Mapping[str, Mapping[str, pd.DataFrame]], kind: str = "", noun: str = "") -> list[str]:
+    """The glance's sentences, from each recipe tool's tables (tool -> name -> frame).
+
+    *kind* and *noun* are the corpus's axis (see :mod:`core.corpus_axis`); the
+    sentences then say "across 61 chapters" where they would say "over time".
+    Left empty, the wording is guessed from the tables' columns.
+    """
 
     def table(tool: str, name: str) -> pd.DataFrame:
         return tables.get(tool, {}).get(name, pd.DataFrame())
 
     lines = [
-        _size(table("text_statistics", "text_statistics.csv")),
+        _size(table("text_statistics", "text_statistics.csv"), kind, noun),
         _readability(table("readability", "readability.csv")),
         _diversity(table("lexical_diversity", "lexical_diversity.csv")),
-        _sentiment(table("sentiment_vader_anew", "vader.csv")),
+        _sentiment(table("sentiment_vader_anew", "vader.csv"), kind, noun),
         _similarity(table("doc_similarity", "doc_pairs.csv")),
         _entities(table("ner", "entity_timeline.csv")),
         _terms(table("tfidf", "tfidf.csv")),

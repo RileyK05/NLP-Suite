@@ -33,7 +33,7 @@ from core.artifacts.envelope import Envelope
 from core.io.reader import hash_file
 from core.result import Diagnostic, Result
 from core.viz.panels import PANELS, best_table, get_panel, panels_for_tool, prepare_panel
-from core.viz.panelspec import PanelDefinition, PreparedPanel, Source
+from core.viz.panelspec import PanelDefinition, PreparedPanel, Source, requirement_words
 
 __all__ = [
     "MAX_PANEL_ROWS",
@@ -151,6 +151,8 @@ def public_panel(prepared: PreparedPanel, diagnostics: list[Any]) -> dict[str, A
         "subtitle": prepared.subtitle,
         "xLabel": prepared.x_label,
         "yLabel": prepared.y_label,
+        "xAxis": prepared.x_axis,
+        "xNoun": prepared.x_noun,
         "groups": list(prepared.groups),
         "caption": prepared.caption,
         "notes": list(prepared.notes),
@@ -235,7 +237,7 @@ def prepare_run_panel(directory: Path, envelope: Envelope, body: PanelBody) -> R
         )
     relative = table_for_panel(directory, envelope, definition)
     if relative is None:
-        needed = ", ".join(definition.requires)
+        needed = requirement_words(definition.requires)
         return Result.failure(
             Diagnostic.error(
                 "PANEL_NO_TABLE",

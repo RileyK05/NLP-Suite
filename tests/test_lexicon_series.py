@@ -171,6 +171,56 @@ class TestPlacingDocumentsOnAnAxis:
         offered = next(p for p in spec.params if p.name == "by").choices
         assert tuple(offered) == BY_CHOICES
 
+    def test_by_order_is_each_chapter(self) -> None:
+        got = facet_labels(
+            [("ch1.txt", None), ("ch2.txt", None)],
+            "order",
+            positions={"ch1.txt": 1.0, "ch2.txt": 2.0},
+            noun="Chapter",
+        ).unwrap()
+        assert got == {"ch1.txt": "Chapter 1", "ch2.txt": "Chapter 2"}
+
+    def test_by_period_is_blocks_of_the_axis(self) -> None:
+        from core.corpus_axis import DASH
+
+        positions = {f"ch{i}.txt": float(i) for i in range(1, 9)}
+        got = facet_labels([(name, None) for name in positions], "period", positions=positions, noun="Chapter").unwrap()
+        assert set(got.values()) == {
+            f"Chapters 1{DASH}2",
+            f"Chapters 3{DASH}4",
+            f"Chapters 5{DASH}6",
+            f"Chapters 7{DASH}8",
+        }
+
+    def test_by_a_detail_groups_by_its_values(self) -> None:
+        got = facet_labels(
+            [("a.txt", None), ("b.txt", None), ("c.txt", None)],
+            "field:Party",
+            details={"a.txt": {"Party": "Democratic"}, "b.txt": {"Party": "Republican"}, "c.txt": {}},
+        ).unwrap()
+        assert got == {"a.txt": "Democratic", "b.txt": "Republican"}
+
+    def test_an_order_axis_without_orders_is_refused(self) -> None:
+        result = facet_labels([("a.txt", None)], "order")
+        assert result.value is None
+        assert "LEXICON_NO_ORDER" in [d.code for d in result.diagnostics]
+
+    def test_a_detail_axis_needs_details(self) -> None:
+        result = facet_labels([("a.txt", None)], "field:Party")
+        assert result.value is None
+        assert "LEXICON_NO_DETAILS" in [d.code for d in result.diagnostics]
+
+    def test_the_desktop_offers_the_same_prefix_for_a_detail_value(self) -> None:
+        """The value spelling "field:Party" crosses the language boundary."""
+        from pathlib import Path
+
+        from core.io.document_fields import FIELD_VALUE_PREFIX
+
+        source = (Path(__file__).resolve().parents[1] / "desktop" / "src" / "ParamFields.tsx").read_text(
+            encoding="utf-8"
+        )
+        assert f'FIELD_VALUE_PREFIX = "{FIELD_VALUE_PREFIX}"' in source
+
 
 # --------------------------------------------------------------- the count --
 
@@ -339,3 +389,71 @@ class TestTheConditionalQuestion:
             within=parse_lexicon("Space: apollo").unwrap(),
         )
         assert "LEXICON_NO_ANCHOR" in [d.code for d in result.diagnostics]
+
+
+# ------------------------------------------------------------- the figures --
+
+
+def _facets(labels: list[str]) -> pd.DataFrame:
+    """A lexicon_series table: one category, one row per facet."""
+    return pd.DataFrame(
+        {
+            "Facet": labels,
+            "Category": ["Queen"] * len(labels),
+            "Per 1000": [float(i) for i in range(len(labels))],
+            "Occurrences": [i for i in range(len(labels))],
+            "Documents": [1] * len(labels),
+            "Tokens": [1000] * len(labels),
+        }
+    )
+
+
+def _drawn(panel: str, frame: pd.DataFrame, by: str):  # type: ignore[no-untyped-def]
+    from core.viz.panels import prepare_panel
+    from core.viz.panelspec import Source
+
+    return prepare_panel(panel, frame, {}, source=Source(path="lexicon_series.csv", settings={"by": by}))
+
+
+class TestFiguresAlongAnyAxis:
+    """A book counted chapter by chapter draws along its chapters, in reading order."""
+
+    CHAPTERS = tuple(f"Chapter {i}" for i in (10, 2, 1, 11, 3))
+
+    def test_the_rate_line_runs_across_the_chapters(self) -> None:
+        panel = _drawn("lexicon_series_rate", _facets(list(self.CHAPTERS)), "order").unwrap()
+        assert [mark.x for mark in panel.marks] == [1.0, 2.0, 3.0, 10.0, 11.0]
+        assert (panel.x_axis, panel.x_noun, panel.x_label) == ("order", "Chapter", "Chapter")
+        assert "across the chapters" in panel.title
+
+    def test_the_published_figure_says_chapters_not_years(self) -> None:
+        pytest.importorskip("seaborn")
+        import matplotlib.pyplot as plt
+
+        from core.viz.static.shapes import draw_line_series
+
+        three = pd.concat([_facets(list(self.CHAPTERS)).assign(Category=name) for name in ("A", "B", "C")])
+        panel = _drawn("lexicon_series_rate", three, "order").unwrap()
+        figure, notes = draw_line_series(panel)
+        ticks = [label.get_text() for axes in figure.axes for label in axes.get_xticklabels()]
+        plt.close(figure)
+        assert any("single chapters" in note for note in notes), notes
+        assert not any("year" in note for note in notes), notes
+        assert any(tick.startswith("Ch. ") for tick in ticks), ticks
+
+    def test_a_dated_run_is_still_a_line_over_time(self) -> None:
+        panel = _drawn("lexicon_series_rate", _facets(["1990", "1980"]), "year").unwrap()
+        assert [mark.x for mark in panel.marks] == [1980.0, 1990.0]
+        assert (panel.x_axis, panel.x_label) == ("time", "Year")
+
+    def test_a_detail_run_is_sent_to_the_heatmap_by_its_name(self) -> None:
+        result = _drawn("lexicon_series_rate", _facets(["sotu", "ina"]), "field:Kind")
+        assert result.value is None
+        message = " ".join(d.message for d in result.diagnostics)
+        assert "'Kind'" in message and "heatmap" in message
+
+    def test_the_heatmap_reads_chapters_in_order_and_names_the_detail(self) -> None:
+        panel = _drawn("lexicon_series_heatmap", _facets(list(self.CHAPTERS)), "order").unwrap()
+        assert list(panel.x_categories) == [f"Chapter {i}" for i in (1, 2, 3, 10, 11)]
+        by_kind = _drawn("lexicon_series_heatmap", _facets(["sotu", "ina"]), "field:Kind").unwrap()
+        assert by_kind.x_label == "Kind"

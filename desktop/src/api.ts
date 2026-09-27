@@ -20,6 +20,10 @@ export type Document = {
   sha256: string;
   document_date?: string | null;
   date_source?: "filename" | null;
+  /** Where the document sits on an order axis (chapter, session), if anywhere. */
+  document_order?: number | null;
+  /** The document's details (Speaker, Kind, Party...) as name -> value. */
+  fields?: Record<string, string>;
   text?: string;
   truncated?: boolean;
 };
@@ -30,6 +34,11 @@ export type Job = {
     date_from: string | null;
     date_to: string | null;
     include_undated: boolean;
+    /** The order window (chapters, sessions) and detail filters, when used. */
+    order_from?: number | null;
+    order_to?: number | null;
+    include_unordered?: boolean;
+    fields?: Record<string, string[]> | null;
     explicit_documents: boolean;
   } | null;
   id: string;
@@ -55,6 +64,9 @@ export type Param = {
   choice_labels?: Record<string, string>;
   minimum: number | null;
   maximum: number | null;
+  /** A choice that also names a document detail ("Party", "Kind"): the
+   *  declared choices are the base and the project's details extend them. */
+  details?: boolean;
 };
 export type Tool = {
   availability?: {
@@ -233,6 +245,12 @@ export type PreparedPanel = {
   subtitle: string;
   xLabel: string;
   yLabel: string;
+  /** What the x values are: "time" (decimal years), "order" (chapter or
+   *  session numbers, one step called `xNoun`), or "" for a plain quantity.
+   *  An order axis prints whole "Ch. 5"-style ticks. */
+  xAxis?: string;
+  /** What one step along an order x is called ("Chapter", "Session"). */
+  xNoun?: string;
   groups: string[];
   caption: string;
   notes: string[];
@@ -623,7 +641,8 @@ export type ModelInfo = {
   kindLabel: string;
   description: string;
   sizeMb: number;
-  status: "ready" | "not_downloaded" | "corrupt" | "unpublished" | "downloading";
+  status:
+    "ready" | "not_downloaded" | "corrupt" | "unpublished" | "downloading";
   /** Ships inside the app (and so cannot be removed). */
   bundled: boolean;
   /** A downloaded copy the reader can delete to free space. */
@@ -647,6 +666,13 @@ export type ModelListing = { models: ModelInfo[]; folder: string };
 
 export const listModels = (): Promise<ModelListing> => api("/models");
 
+export type CacheInfo = { parse_bytes: number; vector_bytes: number };
+export const cacheInfo = (): Promise<CacheInfo> => api("/caches");
+export const clearCaches = (): Promise<{
+  parses_removed: number;
+  vectors_removed: number;
+}> => api("/caches/clear", { method: "POST" });
+
 export const downloadModel = (id: string): Promise<ModelInfo> =>
   api(`/models/${encodeURIComponent(id)}/download`, { method: "POST" });
 
@@ -657,19 +683,39 @@ export const deleteModel = (id: string): Promise<ModelInfo> =>
   del(`/models/${encodeURIComponent(id)}`);
 
 /** Corpus at a glance (desktop_backend/glance.py): the newest result and what it found. */
-export type GlanceFigure = { tool: string; label: string; panel: string; path: string };
+export type GlanceFigure = {
+  tool: string;
+  label: string;
+  panel: string;
+  path: string;
+};
 export type Glance = {
-  state: "none" | "queued" | "running" | "ready" | "stale" | "failed" | "partial" | "cancelled" | "interrupted";
+  state:
+    | "none"
+    | "queued"
+    | "running"
+    | "ready"
+    | "stale"
+    | "failed"
+    | "partial"
+    | "cancelled"
+    | "interrupted";
   key: string;
   job?: Job;
   summary?: string[];
   figures?: GlanceFigure[];
 };
 
-export const glanceStatus = (projectId: string): Promise<Glance> => api(`/projects/${projectId}/glance`);
+export const glanceStatus = (projectId: string): Promise<Glance> =>
+  api(`/projects/${projectId}/glance`);
 
 export const startGlance = (projectId: string, parser: string): Promise<Job> =>
   post(`/projects/${projectId}/glance`, { parser });
 
-export const glanceFigureUrl = (projectId: string, path: string): Promise<string> =>
-  artifactBlobUrl(`/projects/${projectId}/glance/figure?path=${encodeURIComponent(path)}`);
+export const glanceFigureUrl = (
+  projectId: string,
+  path: string,
+): Promise<string> =>
+  artifactBlobUrl(
+    `/projects/${projectId}/glance/figure?path=${encodeURIComponent(path)}`,
+  );

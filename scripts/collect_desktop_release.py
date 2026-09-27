@@ -83,7 +83,7 @@ def main() -> None:
         "Linux package dependencies and a supported desktop/webview environment are still required.\n"
         "These are beta artifacts, not a signing/notarization certificate or full legacy-parity guarantee.\n"
         "Do not disable OS security protections to open a rejected package; request a signed release.\n"
-        "Restricted lexicons and transformer models are not bundled. See Learn and Setup.\n",
+        "Restricted lexicons and optional research models are not bundled. See Learn and Setup.\n",
         encoding="utf-8",
     )
     print(f"Collected {len(files)} installer(s) for {sys.platform}/{platform.machine()} in {args.destination}")

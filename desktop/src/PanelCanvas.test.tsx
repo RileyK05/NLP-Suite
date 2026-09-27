@@ -340,6 +340,48 @@ describe("drawing each shape", () => {
     expect(ticks).not.toContain("-0");
   });
 
+  it("draws two series on one row as separate bars from one baseline", () => {
+    // They were overlaid, the second at half opacity: where they overlapped
+    // the colours blended into one neither series has, and a reader could not
+    // tell which length was which side's.
+    const { svg } = draw({
+      shape: "ranked_bars",
+      xLabel: "immigration per 10,000 words",
+      groups: ["SOTU", "Inaugural"],
+      marks: [
+        mark({
+          key: "t:s",
+          label: "Donald J Trump",
+          x: 31,
+          y: 0,
+          group: "SOTU",
+        }),
+        mark({
+          key: "t:i",
+          label: "Donald J Trump",
+          x: 23,
+          y: 0,
+          group: "Inaugural",
+        }),
+      ],
+    });
+    const bars = [...svg.querySelectorAll('rect[role="button"]')].map(
+      (bar) => ({
+        x: Number(bar.getAttribute("x")),
+        y: Number(bar.getAttribute("y")),
+        height: Number(bar.getAttribute("height")),
+        fill: bar.getAttribute("fill"),
+        opacity: bar.getAttribute("fill-opacity"),
+      }),
+    );
+    expect(bars).toHaveLength(2);
+    const [first, second] = bars;
+    expect(first.x).toBe(second.x);
+    expect(first.y + first.height).toBeLessThanOrEqual(second.y);
+    expect(first.fill).not.toBe(second.fill);
+    expect(first.opacity).toBe(second.opacity);
+  });
+
   it("gives ranked bars a value axis and says what a length is", () => {
     // The bars were drawn with no scale and no axis title. The title is
     // where the relevance panel says its bars are occurrences, not the

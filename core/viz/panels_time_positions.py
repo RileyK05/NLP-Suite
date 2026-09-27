@@ -36,9 +36,22 @@ from typing import Any
 
 import pandas as pd
 
+from core.analysis.stop_entities import suspect_persons
+from core.corpus_axis import DEFAULT_NOUN, along, period_key, plural
+from core.io.document_fields import FIELD_VALUE_PREFIX
 from core.result import Diagnostic, Result
-from core.viz.panel_helpers import decimal_year, document_labels, is_function_word
+from core.viz.panel_helpers import (
+    POSITION,
+    POSITION_LABEL,
+    AxisInfo,
+    decimal_year,
+    document_labels,
+    is_function_word,
+    no_axis,
+    positioned,
+)
 from core.viz.panelspec import (
+    AXIS,
     Annotation,
     Evidence,
     PanelDefinition,
@@ -125,6 +138,21 @@ LEX_TOKENS = "Tokens"
 _LEXICON_REQUIRES = (FACET, CATEGORY, PER_1000, OCCURRENCES, LEX_DOCUMENTS, LEX_TOKENS)
 
 
+def _by_label(by: str) -> str:
+    """What a run's ``by`` is called on an axis: "Year", "Period", or the detail's own name ("Kind")."""
+    if by.lower().startswith(FIELD_VALUE_PREFIX):
+        return by[len(FIELD_VALUE_PREFIX) :].strip()
+    return by.capitalize()
+
+
+def _order_step(facet: object) -> tuple[str, float] | None:
+    """A ``by=order`` facet as (noun, step): "Chapter 3" -> ("Chapter", 3.0); "3" -> ("Document", 3.0)."""
+    match = re.match(r"^\s*(.*?)\s*(-?\d+(?:\.\d+)?)\s*$", str(facet))
+    if match is None:
+        return None
+    return (match.group(1) or DEFAULT_NOUN), float(match.group(2))
+
+
 def lexicon_series_rate(
     frame: pd.DataFrame,
     params: Mapping[str, Any],
@@ -138,16 +166,25 @@ def lexicon_series_rate(
     they were.
     """
     by = str(provenance.settings.get("by", "year")).lower()
-    if by not in ("year", "decade"):
+    if by not in ("year", "decade", "order"):
         return Result.failure(
             Diagnostic.error(
                 "PANEL_NOT_A_TIME_AXIS",
-                f"this run grouped documents by {by!r}, not year or decade, so its facets are not points on a "
-                "time axis; use the heatmap panel instead, which reads any grouping.",
+                f"this run grouped documents by {_by_label(str(provenance.settings.get('by', 'year')))!r}, not by "
+                "year, decade or each chapter's number, so its groups are not points along a line; use the "
+                "heatmap panel instead, which reads any grouping.",
             )
         )
     working = frame.copy()
-    working["_year"] = working[FACET].map(_leading_4digits)
+    noun = ""
+    if by == "order":
+        # Each chapter (or session) is one point, at its own number.
+        steps = working[FACET].map(_order_step)
+        working["_year"] = [None if step is None else step[1] for step in steps]
+        nouns = {step[0] for step in steps if step is not None}
+        noun = nouns.pop() if len(nouns) == 1 else DEFAULT_NOUN
+    else:
+        working["_year"] = working[FACET].map(_leading_4digits)
     working[PER_1000] = pd.to_numeric(working[PER_1000], errors="coerce")
     bad = working["_year"].isna() | working[PER_1000].isna()
     dropped = int(bad.sum())
@@ -168,7 +205,7 @@ def lexicon_series_rate(
     marks: list[PanelMark] = []
     for _, row in working.sort_values([CATEGORY, "_year"], kind="stable").iterrows():
         category = str(row[CATEGORY])
-        year = int(row["_year"])
+        at = float(row["_year"])
         rate = float(row[PER_1000])
         occurrences = int(row[OCCURRENCES]) if _is_finite(row[OCCURRENCES]) else 0
         docs = int(row[LEX_DOCUMENTS]) if _is_finite(row[LEX_DOCUMENTS]) else 0
@@ -177,7 +214,7 @@ def lexicon_series_rate(
             PanelMark(
                 key=f"{category}␟{row[FACET]}",
                 label=category,
-                x=float(year),
+                x=at if by == "order" else float(int(at)),
                 y=rate,
                 group=category,
                 evidence=Evidence(
@@ -194,15 +231,18 @@ def lexicon_series_rate(
     prepared = PreparedPanel(
         panel=LEXICON_SERIES_RATE.name,
         shape="line_series",
-        title="Lexicon category rate over time",
-        subtitle=f"{len(categories)} categor{'y' if len(categories) == 1 else 'ies'} · grouped by {by}",
+        title="Lexicon category rate " + (along("order", noun) if by == "order" else "over time"),
+        subtitle=f"{len(categories)} categor{'y' if len(categories) == 1 else 'ies'} · "
+        + (f"one point per {noun.lower()}" if by == "order" else f"grouped by {by}"),
         marks=tuple(marks),
-        x_label="Decade" if by == "decade" else "Year",
+        x_label=noun if by == "order" else "Decade" if by == "decade" else "Year",
+        x_axis="order" if by == "order" else "time",
+        x_noun=noun,
         y_label="Occurrences per 1,000 tokens",
         provenance=provenance,
         data=working.drop(columns=["_year"]),
         groups=categories,
-        line_gap=10.0 if by == "decade" else 1.0,
+        line_gap=10.0 if by == "decade" else 1.5 if by == "order" else 1.0,
         notes=(
             "A zero point is a real measurement: the facet had dated documents and the category's words never "
             "occurred in them. A gap in the line is a facet with no documents at all, which is different and "
@@ -222,7 +262,7 @@ def lexicon_series_heatmap(
     provenance: Provenance,
 ) -> Result[PreparedPanel]:
     """Facet x category grid of the per-1,000-token rate, for any --by."""
-    by = str(provenance.settings.get("by", "year")).lower()
+    by_as_run = str(provenance.settings.get("by", "year"))
     working = frame.copy()
     working[PER_1000] = pd.to_numeric(working[PER_1000], errors="coerce")
     bad = working[PER_1000].isna()
@@ -238,11 +278,9 @@ def lexicon_series_heatmap(
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no rate rows to plot"), *diagnostics)
 
-    # Chronological order when the facets look like years/decades; otherwise
-    # whatever order the run produced (already alphabetical from the engine).
-    facets = sorted(
-        working[FACET].astype(str).unique(), key=lambda f: (_leading_4digits(f) is None, _leading_4digits(f) or 0, f)
-    )
+    # Reading order: years and decades chronologically, chapters and periods
+    # by their numbers ("Chapter 2" before "Chapter 10"), names alphabetically.
+    facets = sorted(working[FACET].astype(str).unique(), key=period_key)
     categories = sorted(working[CATEGORY].astype(str).unique())
     facet_index = {f: i for i, f in enumerate(facets)}
     category_index = {c: i for i, c in enumerate(categories)}
@@ -271,9 +309,10 @@ def lexicon_series_heatmap(
         panel=LEXICON_SERIES_HEATMAP.name,
         shape="heatmap",
         title="Lexicon category rate by facet",
-        subtitle=f"{len(facets)} facet(s) ({by}) x {len(categories)} categor{'y' if len(categories) == 1 else 'ies'}",
+        subtitle=f"{len(facets)} facet(s) ({_by_label(by_as_run)}) x "
+        f"{len(categories)} categor{'y' if len(categories) == 1 else 'ies'}",
         marks=tuple(marks),
-        x_label=by.capitalize(),
+        x_label=_by_label(by_as_run),
         y_label="Category",
         provenance=provenance,
         data=working,
@@ -297,13 +336,14 @@ LEXICON_SERIES_RATE = PanelDefinition(
     question="How often does each word group appear per 1,000 tokens, year by year?",
     tool="lexicon_series",
     shape="line_series",
-    summary="One line per lexicon category, rate per 1,000 tokens across a year or decade facet.",
+    summary="One line per lexicon category, rate per 1,000 tokens across years, decades or chapters.",
     requires=_LEXICON_REQUIRES,
     params=(),
     build=lexicon_series_rate,
     notes=(
-        "Requires a run grouped by year or decade; a run grouped by document or by a name pattern has no time "
-        "axis to draw and this panel refuses -- use the heatmap panel instead.",
+        "Requires a run grouped by year, decade or order (one point per chapter or session); a run grouped by "
+        "document, period, a name pattern or a detail has no line to draw and this panel refuses -- use the "
+        "heatmap panel instead.",
     ),
 )
 
@@ -347,7 +387,13 @@ def date_annotator_timeline(
     """
     label_top = int(params["label-top"])
     working = frame.copy()
-    working["_speech_year"] = working[DATE].map(decimal_year)
+    working["_speech_year"], axis = positioned(working)
+    if axis.kind == "none":
+        return Result.failure(no_axis("Placing the dates each document mentions"))
+    # On an order axis the question is which years each chapter reaches for;
+    # "years from the date spoken" has no meaning there, so no diagonal.
+    timed = axis.kind == "time"
+    working["_place"] = working[DATE] if timed else working[POSITION_LABEL]
     working["_mentioned_year"] = working[NORMALIZED].map(_leading_4digits)
     bad = working["_speech_year"].isna() | working["_mentioned_year"].isna()
     dropped = int(bad.sum())
@@ -364,7 +410,12 @@ def date_annotator_timeline(
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no dated mentions to plot"), *diagnostics)
 
-    working["_gap"] = (working["_mentioned_year"] - working["_speech_year"]).abs()
+    working["_gap"] = (
+        (working["_mentioned_year"] - working["_speech_year"]).abs()
+        if timed
+        # Without a date spoken, the most distant years are the ones furthest from the rest.
+        else (working["_mentioned_year"] - working["_mentioned_year"].median()).abs()
+    )
     # Label only mentions that are plausibly dates. On the real corpus the
     # widest gaps were bare numbers read as years ("1500", "1140"); a real
     # historical anchor (1776, 1789) recurs across speeches, and a full date
@@ -404,8 +455,8 @@ def date_annotator_timeline(
                     filters=((DATE_ID, date_id),),
                     count=1,
                     describe=(
-                        f"{row[DOCUMENT]} ({row[DATE]}) mentions {row[SURFACE]!r} ({row[DATE_TYPE]}), "
-                        f"{int(mentioned_year) - int(speech_year):+d} years from the speech date"
+                        f"{row[DOCUMENT]} ({row['_place']}) mentions {row[SURFACE]!r} ({row[DATE_TYPE]})"
+                        + (f", {int(mentioned_year) - int(speech_year):+d} years from the speech date" if timed else "")
                     ),
                 ),
             )
@@ -413,14 +464,17 @@ def date_annotator_timeline(
     prepared = PreparedPanel(
         panel=DATE_ANNOTATOR_TIMELINE.name,
         shape="scatter_labelled",
-        title="Dates mentioned, against the date spoken",
-        subtitle=f"{len(marks)} extracted date expression(s); labelling the {len(labelled)} widest gaps",
+        title="Dates mentioned, against the date spoken" if timed else f"Dates mentioned, by {axis.noun.lower()}",
+        subtitle=f"{len(marks)} extracted date expression(s); labelling the {len(labelled)} "
+        + ("widest gaps" if timed else "most distant dates named"),
         marks=tuple(marks),
-        x_label="Speech date",
+        x_label="Speech date" if timed else axis.noun,
         y_label="Year the extracted date expression names",
         provenance=provenance,
-        data=working.drop(columns=["_speech_year", "_mentioned_year", "_gap"]),
-        annotations=(
+        data=working.drop(columns=["_speech_year", "_mentioned_year", "_gap", "_place"]),
+        annotations=()
+        if not timed
+        else (
             Annotation(
                 kind="note",
                 value=0.0,
@@ -497,7 +551,7 @@ DATE_ANNOTATOR_TIMELINE = PanelDefinition(
     tool="date_annotator",
     shape="scatter_labelled",
     summary="Speech date against the year each extracted date expression names.",
-    requires=(DOCUMENT, DATE, SURFACE, NORMALIZED, DATE_TYPE, DATE_ID),
+    requires=(DOCUMENT, AXIS, SURFACE, NORMALIZED, DATE_TYPE, DATE_ID),
     params=(
         PanelParam(
             name="label-top",
@@ -556,12 +610,21 @@ def gender_annotator_mentions_over_time(
     """Stacked mentions by predicted gender per year; unknown always a band."""
     normalize = bool(params["normalize"])
     working = frame.copy()
-    working[YEAR] = pd.to_numeric(working[YEAR], errors="coerce")
+    # One band per step along the axis: a year, or a chapter or session.
+    _x, axis = positioned(working)
+    if axis.kind == "order":
+        step = POSITION
+    elif YEAR in working.columns:
+        step, axis = YEAR, AxisInfo("time", "Year")
+    else:
+        return Result.failure(no_axis("Named mentions along the corpus"))
+    working[step] = pd.to_numeric(working[step], errors="coerce")
     working[MENTIONS] = pd.to_numeric(working[MENTIONS], errors="coerce")
-    bad = working[YEAR].isna() | working[MENTIONS].isna()
+    bad = working[step].isna() | working[MENTIONS].isna()
     dropped = int(bad.sum())
     working = working.loc[~bad].copy()
-    working[YEAR] = working[YEAR].astype(int)
+    working[step] = working[step].astype(int)
+    step_name = "" if axis.kind == "time" else f"{axis.noun} "
     working[GENDER] = working[GENDER].where(working[GENDER].isin(_GENDER_ORDER), "unknown")
     diagnostics: list[Diagnostic] = []
     if dropped:
@@ -575,8 +638,8 @@ def gender_annotator_mentions_over_time(
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no dated name rows to plot"), *diagnostics)
 
-    totals = working.groupby(YEAR)[MENTIONS].sum()
-    per_cell = working.groupby([YEAR, GENDER])[MENTIONS].sum()
+    totals = working.groupby(step)[MENTIONS].sum()
+    per_cell = working.groupby([step, GENDER])[MENTIONS].sum()
     years = sorted(totals.index)
 
     marks: list[PanelMark] = []
@@ -595,10 +658,10 @@ def gender_annotator_mentions_over_time(
                     size=count,
                     evidence=Evidence(
                         scope="rows",
-                        filters=((YEAR, str(year)), (GENDER, gender)),
+                        filters=((step, str(year)), (GENDER, gender)),
                         count=int(count),
                         describe=(
-                            f"{year}: {int(count)} of {int(total)} name mention(s) predicted {gender}"
+                            f"{step_name}{year}: {int(count)} of {int(total)} name mention(s) predicted {gender}"
                             + (f" ({value:.0%})" if normalize and total else "")
                         ),
                     ),
@@ -607,10 +670,14 @@ def gender_annotator_mentions_over_time(
     prepared = PreparedPanel(
         panel=GENDER_ANNOTATOR_MENTIONS_OVER_TIME.name,
         shape="stream",
-        title="Predicted gender of named mentions, by year",
-        subtitle=f"{len(years)} dated year(s) · {working[DOCUMENT_ID].nunique()} document(s)",
+        title="Predicted gender of named mentions, by " + ("year" if axis.kind == "time" else axis.noun.lower()),
+        subtitle=f"{len(years)} "
+        + ("dated year(s)" if axis.kind == "time" else plural(axis.noun).lower())
+        + f" · {working[DOCUMENT_ID].nunique()} document(s)",
         marks=tuple(marks),
-        x_label="Year",
+        x_label=axis.x_label,
+        x_axis=axis.x_axis,
+        x_noun=axis.x_noun,
         y_label="Share of name mentions" if normalize else "Name mentions",
         provenance=provenance,
         data=working,
@@ -636,7 +703,7 @@ GENDER_ANNOTATOR_MENTIONS_OVER_TIME = PanelDefinition(
     tool="gender_annotator",
     shape="stream",
     summary="Stacked mentions by predicted gender category per dated year, with unknown always shown.",
-    requires=(DOCUMENT_ID, YEAR, GENDER, MENTIONS),
+    requires=(DOCUMENT_ID, AXIS, GENDER, MENTIONS),
     params=(
         PanelParam(
             name="normalize",
@@ -666,14 +733,22 @@ GENDER_ANNOTATOR_MENTIONS_OVER_TIME = PanelDefinition(
 # Date, which every row does carry.
 
 
-def _pick_documents(ids_and_dates: Sequence[tuple[str, str | None]], spec: str) -> tuple[list[str], list[str]]:
+def _pick_documents(
+    ids_and_dates: Sequence[tuple[str, str | None]], spec: str, *, in_order: bool = False
+) -> tuple[list[str], list[str]]:
     """Which Document IDs to draw: named by *spec*, or first/middle/last by date.
 
     *spec* tokens match a Document ID, a 4-digit year, or an exact Date
-    string. Returns (chosen ids in spec/date order, unmatched tokens) so the
-    caller can warn about a token nobody has.
+    string ("Chapter 3" on an order axis). Returns (chosen ids in spec/date
+    order, unmatched tokens) so the caller can warn about a token nobody has.
+    *in_order*: the pairs are already in axis order (:func:`_places`), which
+    sorting the places as text would break ("Chapter 10" before "Chapter 3").
     """
-    ordered_by_date = sorted(dict.fromkeys(ids_and_dates), key=lambda pair: (pair[1] is None, pair[1] or ""))
+    ordered_by_date = (
+        list(dict.fromkeys(ids_and_dates))
+        if in_order
+        else sorted(dict.fromkeys(ids_and_dates), key=lambda pair: (pair[1] is None, pair[1] or ""))
+    )
     if not spec.strip():
         ids = [doc_id for doc_id, _ in ordered_by_date]
         if len(ids) <= 3:
@@ -737,6 +812,33 @@ def _document_label(doc_id: str, when: str | None) -> str:
     return f"{when} (doc {doc_id})" if when else f"doc {doc_id}"
 
 
+def _places(working: pd.DataFrame) -> tuple[list[tuple[str, str | None]], dict[str, str], str]:
+    """Each document's place, in axis order, for the within-document arcs.
+
+    ``(ids and places in order, place by id, unit)``: the place is a date
+    for a dated corpus (as the arcs always showed), "Chapter 3" for one lined
+    up by chapter, nothing otherwise. The unit is what one document is called
+    in the titles: "speech", "chapter", or "document".
+    """
+    firsts = working.drop_duplicates(DOCUMENT_ID).copy()
+    x, axis = positioned(firsts)
+    firsts["_x"] = list(x)
+    if axis.kind == "order":
+        place = firsts[POSITION_LABEL]
+        unit = axis.noun.lower()
+    elif axis.kind == "time":
+        place = firsts[DATE]
+        unit = "speech"
+    else:
+        place = pd.Series([None] * len(firsts), index=firsts.index)
+        unit = "document"
+    firsts["_place"] = [str(value) if pd.notna(value) else None for value in place]
+    ordered = firsts.sort_values("_x", kind="stable", na_position="last")
+    pairs = list(zip(ordered[DOCUMENT_ID].astype(str), ordered["_place"], strict=True))
+    by_id = {doc_id: when for doc_id, when in pairs if when}
+    return pairs, by_id, unit
+
+
 def narrative_emotion_arc(
     frame: pd.DataFrame,
     params: Mapping[str, Any],
@@ -776,9 +878,8 @@ def narrative_emotion_arc(
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no scored sentences to bin"), *diagnostics)
 
-    when_by_id = working.drop_duplicates(DOCUMENT_ID).set_index(DOCUMENT_ID)[DATE].astype(str).to_dict()
-    ids_and_dates = [(doc_id, when_by_id.get(doc_id)) for doc_id in working[DOCUMENT_ID].unique()]
-    chosen, unmatched = _pick_documents(ids_and_dates, documents_spec)
+    ids_and_dates, when_by_id, unit = _places(working)
+    chosen, unmatched = _pick_documents(ids_and_dates, documents_spec, in_order=True)
     if unmatched:
         diagnostics.append(
             Diagnostic.warning(
@@ -822,7 +923,7 @@ def narrative_emotion_arc(
                     else ((DOCUMENT_ID, doc_id),),
                     count=int(row["N"]),
                     describe=(
-                        f"{labels[doc_id]}, position {row['Bin center']:.0%} through the speech: mean compound "
+                        f"{labels[doc_id]}, position {row['Bin center']:.0%} through the {unit}: mean compound "
                         f"{row['Mean']:.3f} over {int(row['N'])} sentence(s)"
                     ),
                 ),
@@ -853,7 +954,7 @@ def narrative_emotion_arc(
                         filters=((DOCUMENT_ID, str(bin_group[DOCUMENT_ID].iloc[0])),),
                         count=n_docs,
                         describe=(
-                            f"position {(int(bin_index) + 0.5) / bins:.0%} through the speech: median of "
+                            f"position {(int(bin_index) + 0.5) / bins:.0%} through the {unit}: median of "
                             f"{n_docs} documents' own mean compound is {median:.3f}"
                         ),
                     ),
@@ -865,10 +966,10 @@ def narrative_emotion_arc(
     prepared = PreparedPanel(
         panel=NARRATIVE_EMOTION_ARC.name,
         shape="line_series",
-        title="Sentiment across the speech, by relative position",
+        title=f"Sentiment across the {unit}, by relative position",
         subtitle=f"{len(chosen)} document(s) · {bins} bins",
         marks=tuple(marks),
-        x_label="Relative position in the speech (0 = opening, 1 = close)",
+        x_label=f"Relative position in the {unit} (0 = opening, 1 = close)",
         y_label="Mean VADER compound",
         provenance=provenance,
         data=pd.concat([binned, all_binned]).drop_duplicates().reset_index(drop=True),
@@ -918,9 +1019,8 @@ def shapes_story_arc(
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no scored sentences to bin"), *diagnostics)
 
-    when_by_id = working.drop_duplicates(DOCUMENT_ID).set_index(DOCUMENT_ID)[DATE].astype(str).to_dict()
-    ids_and_dates = [(doc_id, when_by_id.get(doc_id)) for doc_id in working[DOCUMENT_ID].unique()]
-    chosen, unmatched = _pick_documents(ids_and_dates, documents_spec)
+    ids_and_dates, when_by_id, unit = _places(working)
+    chosen, unmatched = _pick_documents(ids_and_dates, documents_spec, in_order=True)
     if unmatched:
         diagnostics.append(
             Diagnostic.warning(
@@ -957,7 +1057,7 @@ def shapes_story_arc(
                     filters=((DOCUMENT_ID, doc_id),),
                     count=int(row["N"]),
                     describe=(
-                        f"{labels[doc_id]}, position {row['Bin center']:.0%} through the speech: mean {column} "
+                        f"{labels[doc_id]}, position {row['Bin center']:.0%} through the {unit}: mean {column} "
                         f"{row['Mean']:.3f} over {int(row['N'])} sentence(s)"
                     ),
                 ),
@@ -966,10 +1066,10 @@ def shapes_story_arc(
     prepared = PreparedPanel(
         panel=SHAPES_STORY_ARC.name,
         shape="line_series",
-        title=f"Story shape: {column.lower()} across the speech",
+        title=f"Story shape: {column.lower()} across the {unit}",
         subtitle=f"{len(chosen)} document(s) · {bins} bins",
         marks=tuple(marks),
-        x_label="Relative position in the speech (0 = opening, 1 = close)",
+        x_label=f"Relative position in the {unit} (0 = opening, 1 = close)",
         y_label=f"Mean {column}",
         provenance=provenance,
         data=binned,
@@ -998,7 +1098,7 @@ NARRATIVE_EMOTION_ARC = PanelDefinition(
     tool="narrative",
     shape="line_series",
     summary="Binned mean sentiment over relative sentence position, one line per chosen document, plus a corpus median.",
-    requires=(DOCUMENT_ID, DATE, SENTENCE_ID, "Compound"),
+    requires=(DOCUMENT_ID, SENTENCE_ID, "Compound"),
     params=(
         PanelParam(
             name="documents",
@@ -1024,7 +1124,7 @@ NARRATIVE_EMOTION_ARC = PanelDefinition(
     ),
 )
 
-NARRATIVE_CHARACTER_POSITIONS_REQUIRES = ("Character", "Mentions", DOCUMENT_ID, DOCUMENT, DATE, YEAR)
+NARRATIVE_CHARACTER_POSITIONS_REQUIRES = ("Character", "Mentions", DOCUMENT_ID, DOCUMENT, AXIS)
 
 
 def narrative_character_positions(
@@ -1042,7 +1142,10 @@ def narrative_character_positions(
     CHARACTER = "Character"
     working = frame.copy()
     working[MENTIONS] = pd.to_numeric(working[MENTIONS], errors="coerce").fillna(0)
-    working["_year"] = working[DATE].map(decimal_year)
+    working["_year"], axis = positioned(working)
+    if axis.kind == "none":
+        return Result.failure(no_axis("Placing each character's documents"))
+    working["_place"] = working[POSITION_LABEL] if axis.kind == "order" else working[DATE]
     bad = working["_year"].isna()
     dropped = int(bad.sum())
     working = working.loc[~bad].copy()
@@ -1086,7 +1189,7 @@ def narrative_character_positions(
                     scope="rows",
                     filters=((CHARACTER, character), (DOCUMENT_ID, str(row[DOCUMENT_ID]))),
                     count=int(row[MENTIONS]),
-                    describe=f"{character} in {row[DOCUMENT]} ({row[DATE]}): {int(row[MENTIONS])} mention(s)",
+                    describe=f"{character} in {row[DOCUMENT]} ({row['_place']}): {int(row[MENTIONS])} mention(s)",
                 ),
             )
         )
@@ -1096,10 +1199,10 @@ def narrative_character_positions(
         title="Named characters, by the documents they appear in",
         subtitle=f"{len(y_categories)} character(s), ranked by total mentions",
         marks=tuple(marks),
-        x_label="Speech date",
+        x_label="Speech date" if axis.kind == "time" else axis.noun,
         y_label="Character (most-mentioned first)",
         provenance=provenance,
-        data=subset.drop(columns=["_year"]),
+        data=subset.drop(columns=["_year", "_place"]),
         y_categories=y_categories,
         notes=(
             "'Character' is a NER PERSON span within one document, extracted heuristically; it can include "
@@ -1135,6 +1238,133 @@ NARRATIVE_CHARACTER_POSITIONS = PanelDefinition(
     notes=("Character extraction is heuristic NER; treat unfamiliar or odd-looking names with suspicion.",),
 )
 
+
+def narrative_characters_by_order(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Top characters x the corpus's axis: the "who is in which chapter" strip.
+
+    One cell per character and chapter (or dated document), coloured by how
+    many mentions it holds. A blank cell is a chapter the character does not
+    appear in -- the cast of a book, readable at a glance.
+    """
+    top_n = int(params["top-n"])
+    CHARACTER = "Character"
+    working = frame.copy()
+    working[MENTIONS] = pd.to_numeric(working[MENTIONS], errors="coerce").fillna(0)
+    working["_year"], axis = positioned(working)
+    if axis.kind == "none":
+        return Result.failure(no_axis("Placing each character's chapters"))
+    working["_place"] = working[POSITION_LABEL] if axis.kind == "order" else working[DATE]
+    bad = working["_year"].isna()
+    dropped = int(bad.sum())
+    working = working.loc[~bad].copy()
+    diagnostics: list[Diagnostic] = []
+    if dropped:
+        diagnostics.append(
+            Diagnostic.warning(
+                "PANEL_UNDATED_ROWS", f"{dropped} row(s) had no readable Date and were left out.", dropped=dropped
+            )
+        )
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no placed character mentions to plot"), *diagnostics)
+    totals = working.groupby(CHARACTER)[MENTIONS].sum().sort_values(ascending=False)
+    top_characters = [str(name) for name in totals.head(top_n).index]
+    if not top_characters:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no character rows to rank"), *diagnostics)
+    if len(totals) > top_n:
+        diagnostics.append(
+            Diagnostic.info(
+                "PANEL_CHARACTERS_CAPPED",
+                f"showing the {top_n} most-mentioned of {len(totals)} extracted characters.",
+                drawn=top_n,
+                available=len(totals),
+            )
+        )
+    # The corpus's steps in axis order: chapters 1..61, or a dated corpus's
+    # documents by date.
+    steps = (
+        working[[DOCUMENT_ID, "_year", "_place"]]
+        .drop_duplicates(subset=[DOCUMENT_ID])
+        .sort_values("_year", kind="stable")
+    )
+    x_categories = tuple(str(place) for place in steps["_place"])
+    x_index = {str(doc): i for i, doc in enumerate(steps[DOCUMENT_ID])}
+    y_categories = tuple(top_characters)
+    y_index = {name: i for i, name in enumerate(y_categories)}
+    subset = working[working[CHARACTER].astype(str).isin(y_categories)]
+    marks: list[PanelMark] = []
+    for _, row in subset.iterrows():
+        count = int(row[MENTIONS])
+        if count <= 0:
+            continue
+        character = str(row[CHARACTER])
+        marks.append(
+            PanelMark(
+                key=f"{character}␟{row[DOCUMENT_ID]}",
+                label=character,
+                x=float(x_index[str(row[DOCUMENT_ID])]),
+                y=float(y_index[character]),
+                value=float(count),
+                evidence=Evidence(
+                    scope="rows",
+                    filters=((CHARACTER, character), (DOCUMENT_ID, str(row[DOCUMENT_ID]))),
+                    count=count,
+                    describe=f"{character} in {row[DOCUMENT]} ({row['_place']}): {count} mention(s)",
+                ),
+            )
+        )
+    steps_word = plural(axis.noun).lower() if axis.kind == "order" else "documents"
+    prepared = PreparedPanel(
+        panel=NARRATIVE_CHARACTERS_BY_ORDER.name,
+        shape="heatmap",
+        title=f"Named characters {axis.along}",
+        subtitle=f"{len(y_categories)} character(s) x {len(x_categories)} {steps_word}; darker is more mentions",
+        marks=tuple(marks),
+        x_label=axis.x_label,
+        y_label="Character (most-mentioned first)",
+        provenance=provenance,
+        data=subset.drop(columns=["_year", "_place"]),
+        x_categories=x_categories,
+        y_categories=y_categories,
+        color_scale="sequential",
+        value_label="Mentions",
+        height=max(500, 26 * len(y_categories) + 160),
+        notes=(
+            "'Character' is a NER PERSON span within one document, extracted heuristically; it can include "
+            "titles or misparsed fragments -- read the hover before treating a name as a real recurring figure.",
+            "Cells are raw mention counts, so a longer chapter is darker down its column; a blank cell is a "
+            "document with no mention, not a missing measurement.",
+        ),
+    )
+    return Result.success(prepared, *diagnostics)
+
+
+NARRATIVE_CHARACTERS_BY_ORDER = PanelDefinition(
+    name="narrative_characters_by_order",
+    title="Named characters, in each chapter",
+    question="Who is in which chapter (or which speech)?",
+    tool="narrative",
+    shape="heatmap",
+    summary="Top characters by total mentions, one row each, one column per document along the corpus's axis; cells are mentions.",
+    requires=NARRATIVE_CHARACTER_POSITIONS_REQUIRES,
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=20,
+            minimum=1,
+            maximum=100,
+            label="Characters to show",
+            help="How many of the most-mentioned characters to draw as rows.",
+        ),
+    ),
+    build=narrative_characters_by_order,
+    notes=("Character extraction is heuristic NER; treat unfamiliar or odd-looking names with suspicion.",),
+)
+
 SHAPES_STORY_ARC = PanelDefinition(
     name="shapes_story_arc",
     title="Story shape across the speech",
@@ -1142,7 +1372,7 @@ SHAPES_STORY_ARC = PanelDefinition(
     tool="shapes",
     shape="line_series",
     summary="Binned mean Noun Ratio or Verb Ratio over relative sentence position, one line per chosen document.",
-    requires=(DOCUMENT_ID, DATE, SENTENCE_ID, "Noun Ratio", "Verb Ratio"),
+    requires=(DOCUMENT_ID, SENTENCE_ID, "Noun Ratio", "Verb Ratio"),
     params=(
         PanelParam(name="documents", type="str", default="", label="Documents", help=_DOCUMENTS_PARAM_HELP),
         PanelParam(
@@ -1304,6 +1534,31 @@ NER_TAG = "NER Tag"
 NER_COUNT = "Count"
 
 
+def _person_suspects(matched: pd.DataFrame, total_docs: int, tag: str) -> tuple[str, ...]:
+    """ "Probably not people" suggestions (plan 5.2): named, never dropped.
+
+    The reviewed stop-entity rule of core/analysis/stop_entities.py serves
+    this panel and the gender and quote panels, which inherit the same noise
+    ("Mr. Speaker" is not a person in every meeting).
+    """
+    if tag != "PERSON" or ENTITY not in matched.columns or not total_docs:
+        return ()
+    shares = {
+        str(entity): group[DOCUMENT_ID].nunique() / total_docs
+        for entity, group in matched.groupby(ENTITY)
+        if str(entity).strip()
+    }
+    suspects = suspect_persons(shares.keys(), shares)
+    if not suspects:
+        return ()
+    listed = ", ".join(suspects[:6]) + (f" and {len(suspects) - 6} more" if len(suspects) > 6 else "")
+    return (
+        f"Most frequent PERSON entities that are probably not people: {listed}. "
+        "Suggested, not removed: add the ones you agree about to this tool's 'ignore' parameter "
+        "to leave them out of every table and figure.",
+    )
+
+
 def ner_top_entities(
     frame: pd.DataFrame,
     params: Mapping[str, Any],
@@ -1359,6 +1614,7 @@ def ner_top_entities(
             "document can outrank one mentioned once each across many.",
             "Entity text is the NER model's own span; the same real-world entity can appear under slightly "
             "different surface strings ('U.S.' vs 'United States') and be counted separately.",
+            *_person_suspects(matched, total_docs, tag),
         ),
     )
     return Result.success(prepared)
@@ -1376,17 +1632,26 @@ def ner_entity_timeline(
 
     working = frame.copy()
     working[NER_TAG] = working[NER_TAG].astype(str).str.upper()
-    working[YEAR] = pd.to_numeric(working[YEAR], errors="coerce")
+    # A step along the axis: the year for a dated corpus (as always), the
+    # chapter or session number for one lined up by order.
+    _x, axis = positioned(working)
+    if axis.kind == "order":
+        step = POSITION
+    elif YEAR in working.columns:
+        step, axis = YEAR, AxisInfo("time", "Year")
+    else:
+        return Result.failure(no_axis("Entity mentions along the corpus"))
+    working[step] = pd.to_numeric(working[step], errors="coerce")
     working[NER_COUNT] = pd.to_numeric(working[NER_COUNT], errors="coerce").fillna(0)
-    dated = working[working[YEAR].notna()].copy()
+    dated = working[working[step].notna()].copy()
     if dated.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no dated rows in this table"))
-    dated[YEAR] = dated[YEAR].astype(int)
+    dated[step] = dated[step].astype(int)
     # Every year the corpus itself has documents in, from ANY entity's rows --
     # not just the chosen ones -- so a chosen entity's zero year (documents
     # existed, it just was not mentioned) can be told apart from a gap (no
     # documents that year at all), the rule panels_ngram_viewer.py set.
-    corpus_years = sorted(dated[YEAR].unique())
+    corpus_years = sorted(dated[step].unique())
 
     matched = dated[dated[NER_TAG] == tag]
     if matched.empty:
@@ -1412,7 +1677,13 @@ def ner_entity_timeline(
     if not entities:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no requested entity matched this tag"), *diagnostics)
 
-    per_cell = matched.groupby([ENTITY, YEAR])[NER_COUNT].sum()
+    per_cell = matched.groupby([ENTITY, step])[NER_COUNT].sum()
+    step_name = "" if axis.kind == "time" else f"{axis.noun} "
+    zero_note = (
+        " (dated documents existed this year; none mentioned it)"
+        if axis.kind == "time"
+        else f" (this {axis.noun.lower()} exists; it never mentions it)"
+    )
     marks: list[PanelMark] = []
     for entity in entities:
         for year in corpus_years:
@@ -1426,29 +1697,33 @@ def ner_entity_timeline(
                     group=entity,
                     evidence=Evidence(
                         scope="rows",
-                        filters=((ENTITY, entity), (YEAR, str(year))),
+                        filters=((ENTITY, entity), (step, str(year))),
                         count=int(count),
-                        describe=f"{entity}, {year}: {int(count)} mention(s)"
-                        + ("" if count else " (dated documents existed this year; none mentioned it)"),
+                        describe=f"{entity}, {step_name}{year}: {int(count)} mention(s)" + ("" if count else zero_note),
                     ),
                 )
             )
     prepared = PreparedPanel(
         panel=NER_ENTITY_TIMELINE.name,
         shape="line_series",
-        title=f"{tag} entity mentions over time",
-        subtitle=f"{len(entities)} {tag} entities across {len(corpus_years)} dated year(s)",
+        title=f"{tag} entity mentions {axis.along}",
+        subtitle=f"{len(entities)} {tag} entities across {len(corpus_years)} "
+        + ("dated year(s)" if axis.kind == "time" else f"{plural(axis.noun).lower()}"),
         marks=tuple(marks),
-        x_label="Year",
+        x_label=axis.x_label,
+        x_axis=axis.x_axis,
+        x_noun=axis.x_noun,
         y_label="Mentions (raw count)",
         provenance=provenance,
         data=matched,
         groups=tuple(entities),
         notes=(
-            "Raw counts, not a rate: this table carries no per-year token totals to normalise against, so a "
-            "taller point can mean a longer speech that year rather than more attention to that entity.",
+            "Raw counts: the table's Tokens column gives each document's length, so a rate can be computed "
+            "from it, but this figure draws the counts themselves. A taller point can mean a longer speech "
+            "rather than more attention to that entity.",
             "A zero point is a year with dated documents in which this entity was never mentioned; a gap is a "
             "year with no dated documents in the corpus at all.",
+            *_person_suspects(matched, int(dated[DOCUMENT_ID].nunique()), tag),
         ),
     )
     return Result.success(prepared, *diagnostics)
@@ -1491,7 +1766,7 @@ NER_ENTITY_TIMELINE = PanelDefinition(
     tool="ner",
     shape="line_series",
     summary="Chosen entities' mentions per dated year, one line each, raw counts with explicit no-mention zeros.",
-    requires=(ENTITY, NER_TAG, NER_COUNT, YEAR),
+    requires=(ENTITY, NER_TAG, NER_COUNT, AXIS),
     params=(
         PanelParam(
             name="tag",
@@ -1548,7 +1823,10 @@ def kwic_hit_positions(
     """
     working = frame.copy()
     working[SENTENCE_ID] = pd.to_numeric(working[SENTENCE_ID], errors="coerce")
-    bad = working[SENTENCE_ID].isna() | working[DATE].isna()
+    working["_x"], axis = positioned(working)
+    if axis.kind == "none":
+        return Result.failure(no_axis("Ordering the documents with hits"))
+    bad = working[SENTENCE_ID].isna() | working["_x"].isna()
     dropped = int(bad.sum())
     working = working.loc[~bad].copy()
     diagnostics: list[Diagnostic] = []
@@ -1564,7 +1842,7 @@ def kwic_hit_positions(
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no hits to plot"), *diagnostics)
 
     if len(working) > _MARK_CAP:
-        working = working.sort_values(DATE, kind="stable").head(_MARK_CAP)
+        working = working.sort_values("_x", kind="stable").head(_MARK_CAP)
         diagnostics.append(
             Diagnostic.warning(
                 "PANEL_TOO_MANY_MARKS", f"kept the first {_MARK_CAP} hits by date for a readable plot.", drawn=_MARK_CAP
@@ -1572,7 +1850,7 @@ def kwic_hit_positions(
         )
 
     labels = document_labels(working[DOCUMENT].astype(str).unique())
-    ordered_docs = working.drop_duplicates(DOCUMENT).sort_values(DATE, kind="stable")[DOCUMENT].astype(str).tolist()
+    ordered_docs = working.drop_duplicates(DOCUMENT).sort_values("_x", kind="stable")[DOCUMENT].astype(str).tolist()
     y_categories = tuple(labels[doc] for doc in ordered_docs)
     row_index = {doc: i for i, doc in enumerate(ordered_docs)}
 
@@ -1599,12 +1877,13 @@ def kwic_hit_positions(
         panel=KWIC_HIT_POSITIONS.name,
         shape="positions",
         title="Where each hit falls, by document",
-        subtitle=f"{len(marks)} hit(s) across {len(y_categories)} document(s), ordered by date",
+        subtitle=f"{len(marks)} hit(s) across {len(y_categories)} document(s), ordered by "
+        + ("date" if axis.kind == "time" else axis.noun.lower()),
         marks=tuple(marks),
         x_label="Sentence number in the document (raw, not a 0-1 fraction)",
-        y_label="Document (earliest first)",
+        y_label="Document (earliest first)" if axis.kind == "time" else f"Document (in {axis.noun.lower()} order)",
         provenance=provenance,
-        data=working,
+        data=working.drop(columns=["_x"]),
         y_categories=y_categories,
         notes=(
             "x is the raw sentence number the hit fell in, not a position fraction: this table does not carry "
@@ -1624,7 +1903,7 @@ KWIC_HIT_POSITIONS = PanelDefinition(
     tool="kwic",
     shape="positions",
     summary="Documents with a hit as rows (by date), ticked at each hit's raw sentence position.",
-    requires=(DOCUMENT, DATE, SENTENCE_ID, HIT, LEFT_CONTEXT, RIGHT_CONTEXT),
+    requires=(DOCUMENT, AXIS, SENTENCE_ID, HIT, LEFT_CONTEXT, RIGHT_CONTEXT),
     params=(),
     build=kwic_hit_positions,
     notes=(
@@ -1769,6 +2048,7 @@ TIME_POSITIONS_PANELS: tuple[PanelDefinition, ...] = (
     GENDER_ANNOTATOR_MENTIONS_OVER_TIME,
     NARRATIVE_EMOTION_ARC,
     NARRATIVE_CHARACTER_POSITIONS,
+    NARRATIVE_CHARACTERS_BY_ORDER,
     SHAPES_STORY_ARC,
     DISPERSION_FREQUENCY_VS_CONCENTRATION,
     NER_TOP_ENTITIES,

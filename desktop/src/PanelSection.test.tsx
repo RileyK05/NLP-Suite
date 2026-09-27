@@ -2,9 +2,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { PanelParamField, panelDefaults, PanelSection } from "./PanelSection";
+import {
+  PanelParamField,
+  detailChoices,
+  panelDefaults,
+  PanelSection,
+} from "./PanelSection";
 import { api, post } from "./api";
-import type { PanelAnswer, PanelInfo } from "./api";
+import type { PanelAnswer, PanelInfo, Param } from "./api";
+import type { ProjectDetails } from "./details";
 
 /**
  * The panels section, against a finished run.
@@ -171,6 +177,48 @@ describe("building controls from the declaration", () => {
       (option) => option.value,
     );
     expect(options).toEqual(["evidence", "effect"]);
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("a detail-taking choice offers the project's details beside the declared ones", () => {
+    // "Group by Party" (0.5.0 plan 1.10): the menu is the declared choices
+    // plus the details the corpus actually carries. Date is left out --
+    // year and decade already group by it -- and a detail whose name repeats
+    // a declared choice is not offered twice.
+    const param: Param = {
+      ...volcano.params[1],
+      name: "group-by",
+      choices: ["decade", "speaker"],
+      details: true,
+    };
+    const details = {
+      names: [{ name: "Party" }, { name: "Date" }, { name: "speaker" }],
+    } as unknown as ProjectDetails;
+    expect(detailChoices(details, param)).toEqual([
+      "decade",
+      "speaker",
+      "Party",
+    ]);
+    expect(detailChoices(null, param)).toEqual(["decade", "speaker"]);
+    expect(detailChoices(details, volcano.params[1])).toBeUndefined();
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        <PanelParamField
+          param={param}
+          value="decade"
+          onChange={() => {}}
+          extraChoices={detailChoices(details, param)}
+        />,
+      ),
+    );
+    const options = [...container.querySelectorAll("option")].map(
+      (option) => option.value,
+    );
+    expect(options).toEqual(["decade", "speaker", "Party"]);
     act(() => root.unmount());
     container.remove();
   });

@@ -4,7 +4,9 @@ import {
   fitText,
   labelMargin,
   niceTicks,
+  orderTickLabels,
   placeLabels,
+  shortNoun,
   textWidth,
   tickLabels,
 } from "./panelTicks";
@@ -27,9 +29,7 @@ describe("niceTicks", () => {
   it("puts zero exactly at zero, with no floating residue", () => {
     const ticks = niceTicks(-0.3, 0.3);
     expect(ticks).toContain(0);
-    expect(ticks.every((tick) => Number(tick.toFixed(10)) === tick)).toBe(
-      true,
-    );
+    expect(ticks.every((tick) => Number(tick.toFixed(10)) === tick)).toBe(true);
   });
 
   it("stays inside the range it was given", () => {
@@ -74,6 +74,29 @@ describe("tickLabels", () => {
 
   it("groups thousands below the suffix threshold", () => {
     expect(tickLabels([0, 2500, 5000])).toEqual(["0", "2,500", "5,000"]);
+  });
+
+  it("names an order axis's whole steps", () => {
+    // "Ch. 5", never "Ch. 2.5": a chapter is not a quantity to divide.
+    expect(tickLabels([2, 4, 6], { noun: "Chapter" })).toEqual([
+      "Ch. 2",
+      "Ch. 4",
+      "Ch. 6",
+    ]);
+    expect(orderTickLabels([1.5], "Chapter")).toEqual(["Ch. 1.5"]);
+    expect(shortNoun("Chapter")).toBe("Ch.");
+    expect(shortNoun("Session")).toBe("Ses.");
+    expect(shortNoun("Part")).toBe("Pt.");
+    expect(shortNoun("Part of the tale")).toBe("Pt.");
+    expect(shortNoun("Canto")).toBe("Ca.");
+    expect(shortNoun("")).toBe("Doc.");
+  });
+
+  it("keeps an order axis on whole steps", () => {
+    // Chapters 1-13 stepped at 2.5 would print "Ch. 2.5".
+    for (const tick of niceTicks(1, 13, 5, { integer: true })) {
+      expect(Number.isInteger(tick)).toBe(true);
+    }
   });
 });
 

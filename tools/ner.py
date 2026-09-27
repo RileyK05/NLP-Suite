@@ -6,7 +6,7 @@ import argparse
 import sys
 
 from core.analysis.movement import movement_summary, movement_tracks
-from core.analysis.ner import entity_timeline, location_tracking
+from core.analysis.ner import entity_timeline, location_tracking, parse_ignore
 from core.io.reader import read_corpus
 from core.result import Diagnostic
 from tools._cli import handle_result_states, build_common_parser, get_pipeline, make_writer, resolve_config
@@ -16,6 +16,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = build_common_parser("NER — entity timeline + location tracking + movement")
     p.add_argument("--movement", action="store_true", help="also write person-location movement tracks")
     p.add_argument("--geocode", action="store_true", help="add Lat/Lon to movement tracks (offline KB)")
+    p.add_argument("--ignore", default="", help="comma-separated entity names to leave out")
     return p.parse_args(argv)
 
 
@@ -50,12 +51,13 @@ def main(argv: list[str] | None = None) -> int:
     parse_state = handle_result_states(table_result)
     table = table_result.unwrap()
 
-    tl = entity_timeline(table)
+    ignored = parse_ignore(args.ignore)
+    tl = entity_timeline(table, ignore=ignored)
     if not tl.ok:
         for d in tl.diagnostics:
             print(d, file=sys.stderr)
         return 1
-    loc = location_tracking(table)
+    loc = location_tracking(table, ignore=ignored)
     if not loc.ok:
         for d in loc.diagnostics:
             print(d, file=sys.stderr)
@@ -78,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
 
     movement_diags: tuple[Diagnostic, ...] = ()
     if args.movement:
-        tracks = movement_tracks(table, geocode=args.geocode)
+        tracks = movement_tracks(table, geocode=args.geocode, ignore=ignored)
         writer.add_diagnostics(*tracks.diagnostics)
         if tracks.value is not None:
             pairs = tracks.unwrap()

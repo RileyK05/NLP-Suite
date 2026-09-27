@@ -104,12 +104,16 @@ function zoomScale(
   scale: ReturnType<typeof linearScale>,
   from: number,
   to: number,
-  plain = false,
+  options: { plain?: boolean; integer?: boolean; noun?: string } = {},
 ) {
   const span = scale.max - scale.min;
-  return linearScale(scale.min + from * span, scale.min + to * span, 0, 5, {
-    plain,
-  });
+  return linearScale(
+    scale.min + from * span,
+    scale.min + to * span,
+    0,
+    5,
+    options,
+  );
 }
 
 export type PanelSelection = { key: string } | null;
@@ -160,13 +164,23 @@ function linearScale(
   max: number,
   padFraction = 0.05,
   count = 5,
-  { floor, plain = false }: { floor?: number; plain?: boolean } = {},
+  {
+    floor,
+    plain = false,
+    integer = false,
+    noun,
+  }: {
+    floor?: number;
+    plain?: boolean;
+    integer?: boolean;
+    noun?: string;
+  } = {},
 ) {
   const span = max - min;
   const pad = span > 0 ? span * padFraction : Math.abs(max) * 0.1 || 1;
   const low = floor !== undefined && min >= floor ? floor : min - pad;
   const high = max + pad;
-  const ticks = axisTicks(low, high, count, { plain });
+  const ticks = axisTicks(low, high, count, { plain, integer, noun });
   return {
     min: low,
     max: high,
@@ -177,9 +191,25 @@ function linearScale(
 }
 
 /** Whether an axis is years: whole numbers in a calendar range print
- *  ungrouped (1990, never "1,990"). */
+ *  ungrouped (1990, never "1,990"). The guess for figures built before
+ *  `PreparedPanel` carried its axis kind; a builder that says "time" or
+ *  "order" is believed instead (xTickOptions). */
 function isYearAxis(min: number, max: number): boolean {
   return min >= 1000 && max <= 2500;
+}
+
+/** How to print one axis's ticks, from the panel's own axis kind. An order
+ *  axis gets whole steps named after their noun ("Ch. 5"); a time axis plain
+ *  years; anything else falls back to the calendar-range guess. */
+function xTickOptions(
+  prepared: { xAxis?: string; xNoun?: string },
+  min: number,
+  max: number,
+): { plain?: boolean; integer?: boolean; noun?: string } {
+  if (prepared.xAxis === "order")
+    return { integer: true, noun: prepared.xNoun || "Document" };
+  if (prepared.xAxis === "time") return { plain: true };
+  return { plain: isYearAxis(min, max) };
 }
 
 /** A colour-scale end value: the scale's ends are data extremes, not round
@@ -906,9 +936,16 @@ function ScatterFigure({
     ...prepared.marks.map((m) => m.y),
     ...annotations.filter((a) => a.kind === "hline").map((a) => a.value),
   ];
-  const baseX = linearScale(Math.min(...xs), Math.max(...xs), 0.06);
+  const xOptions = xTickOptions(prepared, Math.min(...xs), Math.max(...xs));
+  const baseX = linearScale(
+    Math.min(...xs),
+    Math.max(...xs),
+    0.06,
+    5,
+    xOptions,
+  );
   const baseY = linearScale(Math.min(...ys), Math.max(...ys), 0.08);
-  const x = zoom ? zoomScale(baseX, zoom.x0, zoom.x1) : baseX;
+  const x = zoom ? zoomScale(baseX, zoom.x0, zoom.x1, xOptions) : baseX;
   const y = zoom ? zoomScale(baseY, zoom.y0, zoom.y1) : baseY;
   const inView = (mark: PlacedMark) =>
     mark.x >= x.min && mark.x <= x.max && mark.y >= y.min && mark.y <= y.max;
@@ -1036,12 +1073,9 @@ function LineSeriesFigure({
   // Half a step of room at each end of x and 8% above the highest point, so
   // the first, last and highest marks are drawn whole. A series that never
   // goes below zero keeps its zero baseline.
-  const baseX = linearScale(first, last, 0.015, 5, {
-    plain: isYearAxis(first, last),
-  });
-  const x = zoom
-    ? zoomScale(baseX, zoom.x0, zoom.x1, isYearAxis(first, last))
-    : baseX;
+  const xOptions = xTickOptions(prepared, first, last);
+  const baseX = linearScale(first, last, 0.015, 5, xOptions);
+  const x = zoom ? zoomScale(baseX, zoom.x0, zoom.x1, xOptions) : baseX;
   const minY = Math.min(...layout.marks.map((mark) => mark.y));
   const maxY = Math.max(...layout.marks.map((mark) => mark.y));
   // Zero stays on the axis only when the data comes near it (lowest value
@@ -1064,7 +1098,10 @@ function LineSeriesFigure({
     years.length <= MAX_LABELS &&
     years.every((year) => Number.isInteger(year));
   const xTicks = annual
-    ? years.map((year) => ({ at: xAt(year), label: String(year) }))
+    ? years.map((year, index) => ({
+        at: xAt(year),
+        label: tickLabels(years, xOptions)[index],
+      }))
     : frameTicks(x, xAt);
   const pointsOnly = new Set(prepared.pointsOnly ?? []);
   // Beside points-only series (each a single document), a joined series is
@@ -1184,12 +1221,19 @@ function RankedBarsFigure({
         />
       )}
       {layout.rows.map((row, index) => {
-        const top = area.top + index * rowHeight + (rowHeight - barHeight) / 2;
+        // Two or more series share the row as thin bars one under another,
+        // each from the same zero baseline and in its own colour. Overlaid
+        // half-transparent bars blended into a third colour neither series has.
+        const series = Math.max(1, row.marks.length);
+        const band =
+          series > 1 ? Math.min(rowHeight * 0.84, 13 * series) : barHeight;
+        const thickness = Math.max(1, (band - (series - 1)) / series);
+        const top = area.top + index * rowHeight + (rowHeight - band) / 2;
         return (
           <g key={`row-${row.label}`}>
             <text
               x={area.left - 8}
-              y={top + barHeight / 2 + 4}
+              y={top + band / 2 + 4}
               fontSize="10"
               textAnchor="end"
               fill={TEXT}
@@ -1205,11 +1249,11 @@ function RankedBarsFigure({
                 <rect
                   key={mark.key}
                   x={left + 1}
-                  y={top + markIndex * 2}
+                  y={top + markIndex * (thickness + 1)}
                   width={Math.max(1, span - 2)}
-                  height={Math.max(1, barHeight - (row.marks.length - 1) * 2)}
+                  height={thickness}
                   fill={mark.color}
-                  fillOpacity={markIndex === 0 ? 0.95 : 0.5}
+                  fillOpacity={0.95}
                   opacity={isDim(mark)}
                   {...(markProps(mark, () => pick(mark)) as object)}
                 />
@@ -1255,9 +1299,10 @@ function StreamFigure({
       <Frame
         prepared={prepared}
         xTicks={(() => {
-          const labels = tickLabels(axis, {
-            plain: isYearAxis(axis[0], axis[axis.length - 1]),
-          });
+          const labels = tickLabels(
+            axis,
+            xTickOptions(prepared, axis[0], axis[axis.length - 1]),
+          );
           return axis.map((_, index) => ({
             at: xAt(index),
             label: labels[index],
@@ -1886,9 +1931,13 @@ function SmallMultiplesFigure({
   };
   const cellWidth = grid.width / layout.columns;
   const cellHeight = grid.height / Math.max(1, layout.rows);
-  const x = linearScale(layout.xMin, layout.xMax, 0.03, 4, {
-    plain: isYearAxis(layout.xMin, layout.xMax),
-  });
+  const x = linearScale(
+    layout.xMin,
+    layout.xMax,
+    0.03,
+    4,
+    xTickOptions(prepared, layout.xMin, layout.xMax),
+  );
   const pointsOnly = new Set(prepared.pointsOnly ?? []);
   return (
     <>

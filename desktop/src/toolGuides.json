@@ -1,429 +1,612 @@
 {
   "clause_svo": {
-    "what": "Reports clause-tag frequencies and subject–verb–object candidates from the shared parse. SVO tables can help locate statements about who performs an action on what.",
-    "how": "Uses parser annotations and returns separate clause and SVO tables with sentence/document provenance. Inspect the source sentence for each extracted triple.",
-    "question": "Which subjects are linked to verbs such as support or protect, and what objects appear with them?",
-    "interpretation": "A triple is a parser-derived candidate, not a verified fact. Its grammatical roles are not always identical to real-world actor and recipient roles, especially in passive constructions.",
-    "limits": "Coordination, omitted arguments and parsing mistakes can produce incomplete triples. spaCy dependency annotations do not provide CoreNLP constituency clauses; missing clause tags are not evidence that a speech has no clauses."
+    "what": "Who does what to whom: subject-verb-object candidates and clause tags, straight from the dependency parse.",
+    "how": "Every parsed clause is tagged, and its subject, verb and object are pulled out as triples with their counts. The results are tables of the most frequent triples and clause types per document.",
+    "formula": "No statistics here, just extraction: a verb with a nominal subject (nsubj) and object (dobj or obj) becomes one (subject, verb, object) triple, lemmatized, then counted. Passive constructions are labelled so the receiver can be told apart from the agent.",
+    "question": "Does a collection of speeches talk about people doing things, or about things happening? Rank the triples and read who sits in the subject slot.",
+    "interpretation": "Frequent triples are the corpus's stock phrasings, not proof of anyone's beliefs. Compare triple rates per 1,000 words between groups before calling a phrasing characteristic.",
+    "limits": "Only clauses the parser recognises become triples; coordination and ellipsis are missed often. Pronoun subjects stay pronouns unless coreference is run first, so 'he signed' and 'Lincoln signed' are different triples.",
+    "settings": "This tool has no settings of its own. Parse quality decides everything here, so if the triples look odd, inspect the parse on a passage first (the Interactive page shows it).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"clause_svo\", corpus)\nnlp.show(result.table, title=\"Most frequent clause patterns\")"
   },
   "collocations": {
-    "what": "Scores word pairs by how much more often they occur together than chance alone would predict, using seven standard association measures side by side.",
-    "how": "Choose adjacent for strict bigrams or window to catch pairs separated by other words. Raise the minimum count first: association measures are unreliable on pairs seen once or twice.",
-    "question": "Which words genuinely belong together in this corpus? What are its fixed phrases, technical terms and characteristic word partnerships, as opposed to merely frequent pairs?",
-    "interpretation": "Sort by G2 when you want one answer: it is the most reliable measure on sparse data. PMI surfaces rare but tight pairs and inflates on low counts, t-score favours frequent well-attested pairs, and log Dice is comparable across corpora of different sizes on a scale topping out at 14.",
-    "limits": "Pairs never cross a sentence boundary. Tokens that are not purely alphabetic are skipped, and stopwords are only removed if you supply a stopword file. Rare pairs score highest on PMI by construction, so read it alongside the count column, never on its own."
+    "what": "Which words keep company: pairs that occur together more often than chance would predict.",
+    "how": "Pairs are counted across sentences (adjacent words, or within a window), then scored by four association measures, so you can see whether a pairing survives only under one of them.",
+    "formula": "With O the observed pair count and E the count expected if the words were independent: PMI = log2(O/E); PPMI is PMI clamped at zero; t-score = (O-E)/sqrt(O); z-score = (O-E)/sqrt(E). PMI flatters rare pairs, t-score favours frequent ones - agreement between them is the interesting signal.",
+    "question": "What words cling to 'border' or 'economy' in this collection? Look for pairs strong by both PMI and t-score.",
+    "interpretation": "A high PMI on a pair seen three times is usually noise; check the raw count column first. Collocates describe usage in this corpus only - a different collection will have different company.",
+    "limits": "Function words and punctuation can dominate unless min-length and stopword choices filter them. Window counting admits pairs that never stand next to each other; adjacent counting misses flexible phrasings.",
+    "settings": "field picks lemmas (groups inflections) or forms (keeps them apart). span=adjacent looks at neighbours only; span=window with window=5 looks at five words each side. min-count drops pairs seen less often (raise it to quiet rare noise), min-length drops short tokens, top-n keeps the strongest N rows. case-sensitive distinguishes 'March' from 'march'.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\npairs = nlp.run(\"collocations\", corpus, span=\"window\", window=5, min_count=3).table\nnlp.show(pairs, x=\"Collocate\", y=\"PMI\", kind=\"bar\", title=\"Strongest collocates\")"
   },
   "conll_wordlist": {
-    "what": "Builds a word frequency list from the parsed corpus with an optional part-of-speech filter (nouns only, verbs only, function words, and so on). It is the word-list workbench behind the legacy wordfrequency analyses.",
-    "how": "Choose the token field (surface form or lemma), a POS category filter, how many top words to keep (0 keeps everything), and whether matching stays case-sensitive. The parse supplies the token stream and POS tags.",
-    "question": "What are the most frequent content words in this corpus, and how does the noun/verb balance shift between sub-corpora?",
-    "interpretation": "Ranks are raw frequencies; the category filter changes the population, so a word can rank differently under 'noun' than under 'all'. Case-sensitive counts keep proper nouns separate from common nouns.",
-    "limits": "Frequencies only - no dispersion or keyness here; use keyword/keyness or n-grams for distributional views. POS filters inherit the parser's tagset decisions."
+    "what": "Ranked word lists by part of speech: the most frequent nouns, verbs, adjectives or adverbs in the corpus.",
+    "how": "Tokens from the parse are grouped by their POS tag and counted, so the lists are grammar-aware rather than just raw frequency.",
+    "formula": "Counts of each form or lemma within a POS category, ranked; no weighting or smoothing. Choose lemma to merge 'policy/policies' into one row, form to keep them apart.",
+    "question": "Which nouns dominate this collection of editorials - and which verbs? Two ranked lists answer that in a minute.",
+    "interpretation": "A top noun is frequent, not necessarily important; compare against another corpus with keyness before claiming it is characteristic. Rates beat counts when documents differ in length.",
+    "limits": "POS tagging errors (especially on names and archaic spellings) leak into the lists. Category boundaries are the tagset's: 'all' mixes every class, and noun-verb is for words tagged either way.",
+    "settings": "field: lemma or form. category limits the list to one part of speech (all, noun, verb, adjective, adverb, function, noun-verb). top-n keeps the first N. case-sensitive treats 'March' and 'march' as different words.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nnouns = nlp.run(\"conll_wordlist\", corpus, category=\"noun\", top_n=25).table\nnlp.show(nouns, x=\"Word\", y=\"Count\", kind=\"bar\", title=\"Most frequent nouns\")"
   },
   "corpus_statistics": {
-    "what": "Per-document lexical diversity: four stable measures (TTR, RootTTR, Herdan/LogTTR, Yule's K) computed in one grouped pass over the parse. The stable subset of the legacy's five-measure diversity battery.",
-    "how": "Pick the token field; every document gets one row with its measure values. No sampling loops: vocd-D and MTLD live in the dedicated lexical_diversity tool instead.",
-    "question": "How does vocabulary richness vary across documents - do later speeches draw on a wider lexicon than earlier ones?",
-    "interpretation": "Higher TTR/RootTTR/Herdan mean richer vocabulary; Yule's K goes the other way (lower is richer, and it is length-robust). Compare documents of different lengths with Herdan or Yule K, not raw TTR.",
-    "limits": "TTR falls with document length, so cross-document comparisons at very different lengths mislead; use the length-robust measures. Punctuation-only tokens are excluded by the tokenization rules."
+    "what": "The size and shape of each document: token counts, type counts, sentence counts and average lengths.",
+    "how": "Computed per document from the parse (or raw text), then joinable by year or any document column so a corpus's growth or shrinkage over time is visible.",
+    "formula": "Plain counts and means per document: tokens, unique types, sentences, mean sentence length (tokens/sentences) and mean word length (characters/token). TTR (types/tokens) is included but see lexical diversity's limits before reading it.",
+    "question": "Do speeches get longer across periods? Plot Words and mean sentence length by Year and read the trend with your eyes first.",
+    "interpretation": "Absolute counts mostly measure document length; use per-1,000-word rates when comparing. A rising mean sentence length is a syntactic fact about these documents, not a difficulty score.",
+    "limits": "Tokenisation and sentence-splitting conventions set the numbers; another tool's counts may differ slightly. Very short documents make ratios wobble.",
+    "settings": "field chooses what counts as a word unit: form (surface tokens) or lemma (dictionary forms merged). Everything else in the run form is about grouping and plotting, not counting.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nstats = nlp.measures(corpus, which=[\"corpus_statistics\"])\nnlp.show(stats, x=\"Year\", y=\"Words\", kind=\"scatter\", title=\"Document lengths over time\")"
   },
   "dispersion": {
-    "what": "Measures how evenly each word is spread across the corpus, so you can tell core vocabulary from a word that is frequent only because one document repeats it.",
-    "how": "Split by document for a collection, or into equal chunks to measure dispersion inside a single long text. Raise the minimum count first: dispersion of a word seen twice means nothing. Turn on the plot to see where each word actually falls across the corpus, with document boundaries marked.",
-    "question": "Is this frequent word actually characteristic of the whole corpus, or is it one document's topic showing up in the totals?",
-    "interpretation": "Gries' DP runs from 0 (perfectly even) to 1 (concentrated); Juilland's D runs the opposite way, 1 even to 0 concentrated. Rank by adjusted frequency rather than raw frequency when you want a defensible core-vocabulary list. Two words with the same DP can still have different shapes in the plot, and that shape is often the finding.",
-    "limits": "Dispersion depends entirely on how you split the corpus: the same text chunked ten ways and fifty ways gives different numbers, so only compare values computed the same way. At least two non-empty parts are required."
+    "what": "Whether a word is spread evenly through the corpus or bunched into a few documents - frequency alone cannot tell you.",
+    "how": "Each word's occurrences are split across parts (whole documents, or equal chunks), and its evenness of spread is scored. High frequency plus high concentration is a different finding from high frequency everywhere.",
+    "formula": "Gries' DP = half the sum of |f_i/N - 1/k| over k parts, where f_i is the count in part i and N the total: 0 means perfectly even, near 1 means one part holds everything. DPnorm divides DP by its maximum for this corpus's k, so corpora with different part counts can be compared. Juilland-style evenness is also reported; it runs in the opposite direction (high = even).",
+    "question": "Is 'freedom' a theme of the whole collection or of a few speeches? Cross frequency against DPnorm and look for frequent-but-concentrated words.",
+    "interpretation": "Low DP (or high evenness) with high frequency = a general theme. High DP with high frequency = a burst tied to specific documents - read those documents.",
+    "limits": "Part granularity decides the score: the same word can look dispersed by document and bursty by chunk. Words near min-count have unstable scores; short documents make document-level parts coarse.",
+    "settings": "field: lemma or form. parts=document (default) or chunk with chunks=N (equal slices of each document). min-count and min-length filter rare words and short tokens before ranking; top-n keeps the N most frequent candidates. plot draws frequency against concentration.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nspread = nlp.run(\"dispersion\", corpus, parts=\"chunk\", chunks=10, min_count=5).table\nnlp.show(spread, x=\"Frequency\", y=\"DP norm\", kind=\"scatter\", title=\"Frequency vs concentration\")"
   },
   "doc_duplicates": {
-    "what": "Finds candidate repeated documents using separate exact, normalized and fuzzy comparisons. Exact and normalized matches are different categories, not interchangeable definitions of duplication.",
-    "how": "Returns exact groups, normalized groups and fuzzy pairs. The threshold controls fuzzy matching on a 0–100 scale. This analysis reports findings; it does not remove your documents.",
-    "question": "Did the corpus accidentally include a speech twice, perhaps with different whitespace or minor editorial changes?",
-    "interpretation": "Start with exact matches, then inspect normalized matches and fuzzy pairs. A candidate match can be an intentional revision or quotation rather than an import error.",
-    "limits": "A permissive threshold can join genuinely different texts. Near-duplicate checks can be expensive on long documents and large collections. Review matches before making any deletion decisions."
+    "what": "Near-duplicate documents in the corpus - the same text filed twice under different names, lightly edited reprints and the like.",
+    "how": "Every pair of documents is compared and the pairs above the similarity threshold are listed, so you can decide whether to drop one before it double-counts in every later analysis.",
+    "formula": "Each document becomes a TF-IDF vector over its words; each pair is scored as cosine similarity (the same measure as document similarity) and pairs at or above threshold (default 80, on a 0-100 scale) are reported.",
+    "question": "Before trusting any count: are any of these speeches copies of each other? Run this first on any corpus you did not type yourself.",
+    "interpretation": "A pair at 95+ is almost certainly one text; 80-90 may be boilerplate shared by many documents (oaths, formulas). Inspect a couple of flagged pairs before deleting anything.",
+    "limits": "Heavy paraphrase and translation evade TF-IDF overlap. Boilerplate inflates similarity for unrelated documents - lower it only if the false negatives matter more than the false alarms.",
+    "settings": "threshold is the similarity score (0-100) at which a pair counts as a duplicate; 80 is the default. Raise it for fewer, clearer reports; lower it to catch lightly edited reprints at the cost of more pairs to read.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\npairs = nlp.run(\"doc_duplicates\", corpus, threshold=80).table\nnlp.show(pairs, title=\"Documents that look like each other\")"
   },
   "doc_similarity": {
-    "what": "Compares documents by their weighted vocabulary using TF-IDF and cosine similarity. Terms common in a document but less common across the collection receive more distinctive weight.",
-    "how": "Produces a table of document pairs plus pairs meeting the duplicate threshold. The threshold setting is on a 0–100 scale. An optional stopword file changes which vocabulary contributes.",
-    "question": "Which State of the Union speeches have the most similar vocabulary? Inspect the highest-scoring pairs alongside their original passages.",
-    "interpretation": "A higher score means more similar weighted vocabulary, not identical meaning. With 87 documents there are 3,741 distinct pairs. Changing the corpus can change TF-IDF weights and scores.",
-    "limits": "Word overlap does not detect agreement, contradiction, plagiarism or historical influence. Pair counts grow quadratically. Calibrate any duplicate threshold by reading examples."
+    "what": "Which documents resemble which: a matrix or neighbour list of pairwise similarity across the corpus.",
+    "how": "Documents are compared by their words (TF-IDF cosine), giving both a full matrix for the heat map and each document's closest matches.",
+    "formula": "Each document is a TF-IDF vector (tf x idf with the smoothed idf definition, same as the TF-IDF tool); similarity is the cosine of the two vectors, reported 0-100. stopwords can be removed before vectorising.",
+    "question": "Which speeches talk about the same things as this one? Use the neighbours table to find the matches, then read them side by side.",
+    "interpretation": "High similarity means shared vocabulary weighted by rarity - a thematic kinship, not agreement. The matrix's structure (blocks of similar documents) is often more informative than any single cell.",
+    "limits": "Shared boilerplate inflates similarity; synonymy defeats it (two documents about 'jobs' and 'employment' can score low). Short documents give unstable vectors.",
+    "settings": "threshold is the score (0-100) above which a pair is reported as neighbours; 80 is the default. stopwords: leave empty to keep every word, or name a built-in list to drop function words before comparing - often the difference between topical and syntactic similarity.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nmatrix = nlp.run(\"doc_similarity\", corpus, threshold=80).table\nnlp.show(matrix, kind=\"heatmap\", title=\"Document similarity\")"
   },
   "k_sentences": {
-    "what": "Extracts the first K and last K sentences of every document and reports how often each sentence-opening repeats, plus repetition windows.",
-    "how": "Set K for the opening and closing windows (defaults 2 and 2). The tool walks each parsed document in sentence order and outputs both the per-document windows and a repetition table.",
-    "question": "Do speeches open and close with the same formulas ('My fellow Americans', 'God bless...')? Which openings recur most?",
-    "interpretation": "The repetitions table counts sentence-level echoes: high counts mark ritual openings/closings. Compare the K-first and K-last halves for framing shifts.",
-    "limits": "Sentence segmentation comes from the parse; very short documents produce overlapping windows. The tool reports text windows, not semantic similarity."
+    "what": "The first and last sentences of every document, side by side - openings and closings as a reading corpus of their own.",
+    "how": "Extracts k-first and k-last sentences per document into one table with document names and positions, ready to skim or feed to another tool.",
+    "formula": "Sentence splitting on the parse; the first k and last k sentences of each document are copied out verbatim. No scoring, no selection heuristics.",
+    "question": "How do these sermons open - with scripture, with a story, with a claim? Read thirty openings in one table and the pattern surfaces fast.",
+    "interpretation": "These are complete sentences with names attached, so counts and rates over this table are counts over openings/closings only - label them that way in any write-up.",
+    "limits": "Sentence segmentation errors show up immediately in extracted text. Documents shorter than k sentences are simply all opening and all closing; the table does not warn about it.",
+    "settings": "k-first: how many sentences from the start of each document (default 2). k-last: how many from the end (default 2). Raise them for a wider window; lower to 1 for a clean 'opening sentence' corpus.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nedges = nlp.run(\"k_sentences\", corpus, k_first=1, k_last=1).table\nnlp.show(edges, title=\"Openings and closings\")"
   },
   "keyness": {
-    "what": "Compares two groups of documents and ranks words by how strongly they distinguish the groups (G2 log-likelihood).",
-    "how": "Give a regex over document names: matching documents form group A, the rest form group B. Positive Log Ratio means over-represented in group A.",
-    "question": "What words does discourse A use that discourse B does not? Which vocabulary marks a genre, an author, a period?",
-    "interpretation": "Rank words by G2 and read the top rows as the distinctive vocabulary of the matched group; check Log Ratio direction against the group label.",
-    "limits": "Both groups need at least one document. Output is capped by the row limit; set 0 to keep everything."
+    "what": "What words set one group of documents apart from another - the distinctive vocabulary of a period, party or author.",
+    "how": "Two groups (chosen by any document column, or by a name pattern) are counted word by word and compared; the ranked output combines a significance measure with effect-size columns so a word can be statistically strong but trivially small.",
+    "formula": "G2 log-likelihood: G2 = 2 * sum(O * ln(O/E)) over the four cells of a word's 2x2 table, with a 0.5 smoothing (Haldane-Anscombe) so zeros do not break the logarithm; the p-value comes from the chi-square distribution with 1 degree of freedom. Log Ratio = log2(rateA/rateB) is the effect size; Pct Diff and BIC are reported beside it.",
+    "question": "What does a wartime legislature say that a peacetime one does not? Point the two groups at the periods and read the over-used column first.",
+    "interpretation": "G2 says the difference is unlikely to be chance; Log Ratio says how big it is. Trust words with both a small p and a large log ratio, then check the raw counts so one document is not driving it.",
+    "limits": "Documents differ in length, so rates decide the comparison - a long document can dominate pooled counts. Keyness is difference, not importance, and it is silent about words used equally in both groups. Multiple comparisons over thousands of words guarantee some small p-values by luck.",
+    "settings": "group-field: the document column that defines the groups (e.g. Year or Party); group-a and group-b: the two values to compare, or group-pattern with a regular expression (used as group-a against 'everything else'). field: lemma or form. smoothing is added to every cell (0.5 by default; keep it positive). top-n keeps N words per direction.",
+    "example": "import nlpsuite as nlp\n\nearly = nlp.corpus({\"Year\": range(1900, 1950)})\nlate = nlp.corpus({\"Year\": range(1950, 2000)})\nkeys = nlp.keyness(late, early, top_n=50)\nnlp.show(keys, x=\"Word\", y=\"Log Ratio\", kind=\"bar\", title=\"Words more typical of the later group\")"
   },
   "kwic": {
-    "what": "Lists every occurrence of a word with its surrounding context in a table. This is the classical concordance view used in corpus linguistics.",
-    "how": "Enter a word or fragment and the context window width. Regex and case-sensitive matching are available. Each row keeps document and sentence provenance.",
-    "question": "In what surroundings does this word appear? Does 'freedom' collocate with 'speech' or with 'from'?",
-    "interpretation": "Scan left and right contexts for recurring collocates; frequent neighbors of the node word are candidates for further collocation analysis.",
-    "limits": "Matches stop at the hit limit; context stays inside the sentence. Lemma search needs a parse; use search for raw text lines."
+    "what": "Keyword in context: every occurrence of a word or pattern with the words around it, the classic concordance view.",
+    "how": "Matches are pulled from the parsed text with a window of surrounding tokens and their document and position, so you can read how a word is actually used rather than only how often.",
+    "formula": "Search over token forms or lemmas (or a regular expression over forms); each hit is one row with the left context, the match and the right context of `window` tokens. No scoring - it is a retrieval tool.",
+    "question": "Is 'liberty' used about the nation or about the person? Read fifty contexts and you will know - that is the whole method.",
+    "interpretation": "Clusters of use (all about 'economic', all in one period) are the finding; single rows are illustrations. Hit positions let you see whether uses gather at openings or endings.",
+    "limits": "A fixed window can cut phrases in half; regex over forms misses lemma siblings unless you write them in. Max-hits silently truncates very common words - read the hit count before quoting proportions.",
+    "settings": "query: the word, phrase or pattern to find. field: form or lemma matching. window: tokens of context each side (default 5). max-hits: stop after N matches (default 1000). case-sensitive: distinguish 'March' from 'march'. regex: treat query as a regular expression.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nhits = nlp.run(\"kwic\", corpus, query=\"border\", field=\"lemma\", window=5).table\nnlp.show(hits, title=\"Every use of 'border' in context\")"
   },
   "lexical_diversity": {
-    "what": "Measures vocabulary variety through complementary statistics: type-token ratio (TTR), Guiraud, MTLD and sampled vocd-D. A type is a distinct word; a token is a word occurrence.",
-    "how": "Uses raw text and produces one document-level table. The seed controls vocd sampling so you can repeat a run with the same settings.",
-    "question": "Which speeches rely most heavily on repeated vocabulary, and does the pattern remain when you compare similar-length speeches?",
-    "interpretation": "TTR is distinct words divided by word occurrences. It usually decreases as documents grow. MTLD and vocd-D address length sensitivity in different ways; inspect multiple measures together.",
-    "limits": "Vocabulary variety is not writing quality or intelligence. Tokenization, document length, names and transcription conventions affect the result. Very short documents may not support every measure."
+    "what": "How varied a document's vocabulary is, measured four ways so the answer does not depend on one formula.",
+    "how": "Each document is tokenised and scored with Guiraud, TTR, MTLD and vocd-D. All are length-sensitive in their own way, so compare like with like and read the length-check panel beside the scores.",
+    "formula": "TTR = types/tokens. Guiraud = types/sqrt(tokens). MTLD (McCarthy & Jarvis) walks the token stream measuring how much of a 1.0 TTR-to-0.74 TTR drop each token explains, forward and backward, and averages the two (10-token floor). vocd-D fits D in the equation TTR = D/N^(0.5) by sampling token runs of 35-50 words 100 times (seeded) and keeping the mean best fit.",
+    "question": "Do later essays reuse a smaller vocabulary than earlier ones? Compare MTLD across periods at similar document lengths.",
+    "interpretation": "Higher scores mean more varied vocabulary at that length. MTLD and vocd-D survive length differences better than TTR and Guiraud; where they disagree, length or bursts of repetition is usually why.",
+    "limits": "Every score falls as documents get longer; TTR fastest of all. Repetition of names and formulaic phrases lowers the score for structural reasons. Short texts give noisy MTLD/vocd-D - the length-check panel exists for this.",
+    "settings": "seed fixes vocd-D's random sampling so two runs agree; change it only to test stability. No other settings: the four measures are always all reported.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ndiversity = nlp.measures(corpus, which=[\"lexical_diversity\"])\nnlp.show(diversity, x=\"Year\", y=\"MTLD\", kind=\"scatter\", title=\"Vocabulary variety over time\")"
   },
   "narrative": {
-    "what": "Tracks sentence-level sentiment and length, alongside character-mention outputs, to help explore how a document develops from beginning to end.",
-    "how": "Uses parsed text and VADER for emotion arcs; the character-related analysis also depends on its lexical resources. Outputs separate emotion, length, character mentions and character arcs.",
-    "question": "Where does a speech shift toward more negative vocabulary, and what is being discussed at those points?",
-    "interpretation": "The horizontal progression is through the document, not necessarily historical time. Inspect individual sentences around apparent peaks and compare different-length speeches carefully.",
-    "limits": "An arc is not an automatic plot interpretation or proof of persuasion. Sentiment and character heuristics can misread quotations, names and irony. Inspect diagnostics when resources are missing."
+    "what": "How a story moves: sentiment across the text, where characters appear, and who is named when.",
+    "how": "Each document (or chapter) is cut into equal segments; tone and character mentions are charted against position, turning a whole book or speech collection into one readable curve.",
+    "formula": "The emotion arc is VADER compound sentiment per segment, z-scored within the document so its shape is comparable across lengths. Character positions are each mention's location as a fraction through the text (0-1); the character-by-order heat strip aggregates those fractions into columns per document and rows per name.",
+    "question": "Where do these memoirs turn dark - at the midpoint or near the end? Read the arc, then open the segments it dips over.",
+    "interpretation": "The curve is a map of tone, not plot: a flat arc with a late dip is a finding about sentiment, which you then check against the text. Character density is about mentions, not importance.",
+    "limits": "Segment count sets the resolution and the arc smooths local events away. Names miss nicknames and pronouns unless coreference or the gender tools have been run. Irony and negation still fool VADER in places.",
+    "settings": "field: form (surface words) or lemma for the word-level work under the arc. Segmenting is fixed at equal fractions of each document so that different lengths line up.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"narrative\", corpus)\nnlp.show(result.table, x=\"Position\", y=\"Sentiment\", kind=\"line\", title=\"Emotion arc\")"
   },
   "ner": {
-    "what": "Uses named-entity tags to report people, organizations, places and other recognized categories. This desktop output aggregates tagged token forms within each document.",
-    "how": "The entity table groups token text and entity tag by document, recording counts and first/last sentence positions. A separate table filters location tags. Multiword names may appear as separate token entries.",
-    "question": "Which named people or places recur across speeches, and how accurate are those labels when you read their sentences?",
-    "interpretation": "The entity timeline describes sentence positions, not calendar dates. Location tracking is a table of mentions, not geocoding or a travel map. Review token fragments before counting whole names.",
-    "limits": "Historical names and unfamiliar spellings can be missed or mistagged. The tool does not resolve aliases or prove that two identical names identify the same person."
+    "what": "Named people, places and organisations: who and what is mentioned, in which document, and where in it.",
+    "how": "A language model labels entity mentions in the parsed text; the results are a per-document entity timeline and a location-tracking table for place names.",
+    "formula": "Model-based sequence labelling (spaCy's English NER): each token span gets a label (PERSON, GPE, ORG, ...). Counts and rates are then grouped per entity per document; positions are fractions through the text.",
+    "question": "Which places do these travelogues actually name, and do the people mentioned change after 1900? The timeline answers both.",
+    "interpretation": "Mention counts are mentions, not significance - one speech naming a person twenty times still names one person. Compare rates per 1,000 words across groups of documents, and read a few contexts before quoting a name.",
+    "limits": "Models miss fictional, historical or non-English names and mislabel org/person borders; same-named people are merged. Common nouns can slip in as 'people' (the ignore list below filters the worst of these).",
+    "settings": "ignore: a comma-separated list of words never to report as entities - names that are also everyday words (e.g. 'Bill', 'Rose') or model noise. Everything else is fixed: the model is the installed English one.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\npeople = nlp.entities(corpus)\nnlp.show(people, x=\"Entity\", y=\"Count\", kind=\"bar\", title=\"Most mentioned entities\")"
   },
   "ngram_cooccurrence": {
-    "what": "Counts unordered word pairs that co-occur within a sentence window: two words co-occur when they appear in the same sentence within the chosen window of positions, at most once per sentence pair. It is a distributional sketch of lexical company-keeping.",
-    "how": "Set the window size (default 5), the token field, and a minimum pair count. The tool walks each parsed sentence, collects token positions, and tallies every qualifying pair once. Output is a symmetric pair table ranked by count.",
-    "question": "Which terms keep the same company in this corpus? Do movement words co-occur with institutional words, or does the discourse keep them apart?",
-    "interpretation": "Higher counts mean the pair recurs across sentences; because pairs are counted once per sentence, the numbers reflect breadth of co-occurrence rather than raw repetition. Compare pairs across sub-corpora for contrast.",
-    "limits": "Unordered pairs lose linear order (use n-grams for that); windowed counts are sensitive to sentence length; function-word pairs dominate unless you filter by field choice or minimum count."
+    "what": "Which words share a neighbourhood: pairs that occur near each other within a moving window, with association scores and a network view.",
+    "how": "Within each sentence, words in a window of N tokens are counted as pairs; the strongest associations become a network where words are nodes and pair strength is the edge.",
+    "formula": "Co-occurrence counts O within the window, with expected count E from the words' independent rates; pairs are scored like collocations (PMI = log2(O/E) and companions), over lemmas or forms with min-count filtering.",
+    "question": "What vocabulary travels together in these sermons - which words are never far from 'sin' or 'grace'?",
+    "interpretation": "Dense clusters are semantic fields in this corpus; bridges between clusters are words used in two registers. Rare pairs need the count column read first, as with collocations.",
+    "limits": "Window size defines 'near': wide windows blur syntax into topic. A network layout is one of many equally good ones - trust the scores, not the picture's geometry.",
+    "settings": "window: how many tokens each side count as 'near' (default 5). field: lemma or form. min-count: drop pairs seen fewer times (default 1; raise it for cleaner networks).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nnet = nlp.run(\"ngram_cooccurrence\", corpus, window=5, min_count=2).table\nnlp.show(net, title=\"Word neighbourhoods\")"
   },
   "ngrams": {
-    "what": "Counts contiguous word sequences (n-grams) over the documents and pairs them with pointwise-mutual-information collocations. N-grams show recurring phrases as they appear; collocations surface word pairs that occur together far more than chance would predict.",
-    "how": "Pick the n-gram size (1-5), the token field (surface form or lemma), and a minimum count that filters rare pairings. The parse supplies sentence and token boundaries, so n-grams never cross sentence edges. Results rank by frequency; collocations rank by PMI.",
-    "question": "Which phrases recur across the speeches, and which word pairs are statistically tightly bound (e.g. 'fellow Americans') rather than coincidental neighbours?",
-    "interpretation": "High-count n-grams are the repeated formulas of the corpus; high-PMI pairs are distinctive couplings even at low frequency. PMI favours rare pairs, so raise the minimum count before reading too much into the top of that table.",
-    "limits": "Counts are surface-level: no lemmatization unless you choose the lemma field, no stopword removal, and n-grams ignore document structure beyond sentence boundaries. Very small corpora make PMI unstable."
+    "what": "Frequent word sequences of length n: bigrams, trigrams and beyond, with the collocation statistics for each.",
+    "how": "Every run of n consecutive tokens is counted, filtered by frequency and length, and ranked; collocation scores (PMI and companions) are attached to each phrase.",
+    "formula": "Counts of n consecutive tokens (forms or lemmas). Association columns follow the collocations measures: PMI = log2(O/E), t-score = (O-E)/sqrt(O), over the phrase's observed vs expected count.",
+    "question": "What phrases recur in these pamphlets - 'public good', 'free trade'? Start at n=2 and read the top fifty.",
+    "interpretation": "Frequency says what is said often; PMI says what is said characteristically. Multi-word terms are matched as phrases later by term_rates and search, so noting the exact wording here helps.",
+    "limits": "Tokenisation decides what an n-gram is (contractions, hyphens). The count falls steeply as n grows; rare long n-grams are almost always unique strings rather than phrases.",
+    "settings": "n: phrase length in tokens (default 2). field: form or lemma. min-count: minimum occurrences to report (default 2).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nphrases = nlp.run(\"ngrams\", corpus, n=2, field=\"lemma\", min_count=3).table\nnlp.show(phrases, x=\"N-gram\", y=\"Count\", kind=\"bar\", title=\"Most frequent bigrams\")"
   },
   "nominalization": {
-    "what": "Finds candidate nouns related to verbs, such as development and develop, using WordNet derivational relationships. This can help examine how actions are expressed as things or processes.",
-    "how": "Uses parsed text and WordNet. A suffix prefilter narrows candidates when check-ending is enabled; the optional curated list can bypass that filter for specified words.",
-    "question": "Do some speeches favour noun constructions such as implementation over more direct verbal constructions?",
-    "interpretation": "Read candidate nouns in their sentences and inspect suggested base verbs. A dictionary relationship is evidence of a possible derivation, not proof of a particular rhetorical function.",
-    "limits": "WordNet is incomplete and words have multiple senses. Not every noun with a familiar suffix is a deverbal nominalization. The analysis does not automatically prove abstraction, evasiveness or poor style."
+    "what": "Deverbal nominalizations - 'governance' from govern, 'movement' from move: the nouns that let actions be talked about as things.",
+    "how": "Nouns built from verbs by the classic suffixes are detected in the parse (optionally against a curated list) and counted per document.",
+    "formula": "Candidate nouns matched by suffix (-tion, -ment, -ness, -ance and kin) and, when check-ending is on, checked against known verb stems; the curated list adds irregular cases ('deed', 'use'). Counts are raw hits of those lemmas.",
+    "question": "Do policy documents bury more actions in nouns than speeches do? Compare nominalization rates per 1,000 words across groups.",
+    "interpretation": "A higher rate means more action-as-thing phrasing - abstract, compressed, typical of official prose. It says nothing about whether the writing is good.",
+    "limits": "Suffixes overreach ('nation' looks deverbal but is not) and underreach (irregulars need the curated list). Rates rise with topic and register, so compare like texts.",
+    "settings": "field: lemma (groups inflections) or form. check-ending: require a plausible verb stem too (fewer false alarms, a little slower). curated-list: your own CSV of extra deverbal nouns to include.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nnominals = nlp.run(\"nominalization\", corpus, check_ending=True).table\nnlp.show(nominals, x=\"Document\", y=\"Rate per 1000\", kind=\"bar\", title=\"Nominalization rate\")"
   },
   "readability": {
-    "what": "Estimates reading difficulty from surface features such as sentence length and syllable counts. The suite reports several measures, including Flesch, Fog and SMOG, rather than one universal readability score.",
-    "how": "Runs directly on imported text, producing document-level results without a language model. Compare the same column across documents; different formulas have different scales.",
-    "question": "Did the language of State of the Union speeches become easier to read across periods? Start by comparing speeches of similar length and checking a few passages yourself.",
-    "interpretation": "Higher Flesch Reading Ease generally means easier text; higher grade-level scores generally mean more demanding text. They are estimates, not measured comprehension.",
-    "limits": "Scores do not assess argument quality, factual accuracy or an actual reader's understanding. Short passages, headings, abbreviations and transcription errors can distort sentence and syllable counts."
+    "what": "Reading difficulty estimated from sentence length and syllable counts. Six formulas are reported side by side (Flesch Reading Ease, Flesch-Kincaid grade, Gunning Fog, Coleman-Liau, ARI and SMOG) rather than one magic number.",
+    "how": "Runs on each document's raw text - no parser, no model. Each formula gets its own column, because the scales differ and their agreement is itself evidence.",
+    "formula": "Flesch Reading Ease = 206.835 - 1.015 x (words/sentences) - 84.6 x (syllables/words). Flesch-Kincaid grade = 0.39 x (words/sentences) + 11.8 x (syllables/words) - 15.59. Gunning Fog = 0.4 x ((words/sentences) + 100 x (3+-syllable words/words)). Coleman-Liau = 0.0588 x L - 0.296 x S - 15.8, with L and S per 100 words. ARI = 4.71 x (characters/words) + 0.5 x (words/sentences) - 21.43. SMOG = 1.043 x sqrt(polysyllables x 30/sentences) + 3.1291 (needs 3+ sentences). Syllables come from the suite's heuristic counter, which is approximate.",
+    "question": "Did these speeches become easier to read across periods? Compare one column (say Flesch-Kincaid) across documents of similar length, then check a few passages yourself.",
+    "interpretation": "Higher Flesch Reading Ease means easier text; the grade-level scores run the other way (higher = harder). Read one formula across documents - mixing scales in one chart misleads. They are estimates of text surface, not of any real reader's experience.",
+    "limits": "Scores ignore argument quality, vocabulary rarity and an actual reader's understanding. Short passages, headings, abbreviations and OCR or transcription errors distort sentence and syllable counts badly; SMOG returns 0 for texts under three sentences.",
+    "settings": "This tool has no settings of its own - every document gets all six scores. Watch the inputs instead: texts under a few sentences should be excluded or read as unreliable.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nscores = nlp.measures(corpus, which=[\"readability\"])\nnlp.show(scores, x=\"Year\", y=\"Flesch-Kincaid Grade\", kind=\"scatter\", title=\"Reading grade over time\")"
   },
   "search": {
-    "what": "Finds matching text or parsed tokens with provenance so you can inspect language in context. A regular expression is a pattern language, rather than a literal search phrase.",
-    "how": "For this desktop workflow, use text mode for matching lines, or conll mode for matching the Lemma column in parsed token rows. CSV mode is not supported by the corpus batch adapter.",
-    "question": "Where do speeches mention education, and how is the surrounding language different across documents?",
-    "interpretation": "Text hits identify a document and line; parsed hits identify token rows. Lemmas group some inflected word forms, so a lemma match is not necessarily the exact original spelling.",
-    "limits": "This is pattern matching, not semantic search. Case sensitivity and regex settings change results. Conll mode needs a parser even though ordinary text search does not."
+    "what": "Find words or phrases anywhere in your documents - or in the parsed tokens and document columns - with plain or pattern matching.",
+    "how": "One query runs over raw text (or CSV/CoNLL views) and returns hits with their documents, so you can jump from 'where is this word' to the passage itself.",
+    "formula": "Retrieval, not statistics: exact substring matching (optionally case-sensitive) or a Python regular expression over the text, one row per hit with location and context.",
+    "question": "Where does 'crisis' appear at all - and is it always in the same document? Run the search before theorising about it.",
+    "interpretation": "Hit counts are occurrences; documents with any hits are a different and often more useful number. Read the contexts - the tool finds strings, not meanings.",
+    "limits": "Exact matching misses inflections ('crisis' vs 'crises'); regex finds patterns like '1[89][0-9]{2}' but not ideas. This is not keyness: it cannot say a word is unusually frequent anywhere.",
+    "settings": "query: the text or pattern to find. mode: search the raw text, a CSV or a CoNLL table. case-sensitive: distinguish 'March' from 'march'. regex: treat query as a regular expression.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nhits = nlp.run(\"search\", corpus, query=\"border\", case_sensitive=False).table\nnlp.show(hits, title=\"Every mention of 'border'\")"
   },
   "sentence_complexity": {
-    "what": "Measures sentence structure from dependency parses: a model's representation of how words attach to one another. It complements surface readability measures.",
-    "how": "Parses the corpus with the selected English backend and writes sentence-level complexity measures. Read the table headers and compare sentences in their source context.",
-    "question": "Which speeches contain especially deeply structured sentences, and are those sentences also long?",
-    "interpretation": "A structural score describes the parser's analysis, not a judgment that a sentence is good or bad. Compare length and structure together before drawing conclusions.",
-    "limits": "Dependency trees are not constituency trees. The bundled spaCy parser does not establish CoreNLP constituency parity. Historical language, fragments and bad punctuation can reduce parsing accuracy."
+    "what": "How intricate the syntax is: how far words sit from their heads, how deep the trees go, how much subordination there is.",
+    "how": "Measured per document from the dependency parse, one row of sentence-level syntax per document, joinable by year or author like every other measure.",
+    "formula": "Mean dependency distance = mean |token id - head id| over headed words. Depth = the longest chain of head-links from a token up to the root. Subordination = subordinate-clause markers (advcl, ccomp, xcomp and kin) counted per sentence. All three need a parse, so this is among the slower tools.",
+    "question": "Do speeches written for a second term use longer syntactic arms than first-term ones? Compare mean dependency distance at similar sentence lengths.",
+    "interpretation": "Higher distance and depth mean more layered sentences - harder to parse for readers and machines alike. Subordination per sentence is often the most stable of the three across document lengths.",
+    "limits": "Parse errors land here directly; coordinated and elliptical clauses distort distance. Translationese and poetic inversion produce high distances for readability the scores do not see. Compare within one language and register.",
+    "settings": "This tool has no settings of its own; it always reports distance, depth and subordination. It does require the English parser (see Models).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nsyntax = nlp.measures(corpus, which=[\"sentence_complexity\"])\nnlp.show(syntax, x=\"Year\", y=\"Mean Dependency Distance\", kind=\"scatter\", title=\"Syntactic complexity over time\")"
   },
   "sentiment_vader_anew": {
-    "what": "Combines VADER polarity scoring with ANEW word-rating averages for valence, arousal and dominance. These measure different aspects of lexical tone.",
-    "how": "The desktop defaults to the included VADER scorer and writes document and sentence results. Select both analyses and choose your ANEW ratings CSV to also compute lexicon-based valence, arousal and dominance. No resource download is needed for VADER.",
-    "question": "Which speeches use more positively rated vocabulary, and which passages account for the difference?",
-    "interpretation": "Compare the same measure and settings across documents; do not average unrelated scales together. Read sentence-level VADER results alongside document aggregates.",
-    "limits": "Dictionary scores are not the speaker's actual feelings or the audience's response. Negation, irony, quotations and historical vocabulary can defeat the scoring assumptions. Check lexicon coverage and diagnostics."
+    "what": "Positive and negative tone in sentences and documents. VADER (a word-list method, always available) measures valence; optionally ANEW rates text on psychological dimensions from your own lexicon file.",
+    "how": "Runs on the parsed text, one row per sentence or document. VADER ships with the suite; ANEW is only run when you provide its ratings CSV.",
+    "formula": "VADER sums valence ratings for its lexicon words with rules for negation, degree modifiers ('very'), punctuation and capitalisation, then normalises to compound in [-1, 1] plus positive/neutral/negative proportions. ANEW averages each matched lemma's valence, arousal and dominance ratings from the lexicon you supply.",
+    "question": "Does tone swing across a campaign's speeches? Chart the compound score by date and read the sentences at each peak.",
+    "interpretation": "Compound near 0 is neutral; +1 and -1 are the extremes. Compare scores within one method - VADER and ANEW answer different questions. A document-level score hides mixed sentences, so open the sentence view before concluding.",
+    "limits": "Word lists misread sarcasm, domain jargon ('unemployment' is negative in VADER regardless of context) and long negation scopes. ANEW's ratings come from its original raters and era; scores are averages over matched words only.",
+    "settings": "analysis: vader only, or both (VADER plus ANEW). anew-lexicon: your ANEW ratings CSV when analysis=both. The desktop keeps only these two settings; scripts can also choose the matching field (form or lemma).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ntone = nlp.sentiment(corpus, model=\"vader\", unit=\"document\")\nnlp.show(tone, x=\"Year\", y=\"Compound\", kind=\"line\", title=\"Tone over time\")"
   },
   "shapes": {
-    "what": "Story-shape metrics per sentence - token count plus noun and verb ratios - the deterministic core of the legacy shape-of-stories. Optionally emits a Sankey flow diagram over two chosen columns.",
-    "how": "No required parameters; the parse supplies sentences and POS. Add Sankey source/target columns (e.g. document to POS category) for the flow diagram.",
-    "question": "Do speeches follow a shape - opening with noun-heavy framing and closing with verb-heavy calls to action?",
-    "interpretation": "Rising verb ratio across sentence positions marks mobilization; noun-heavy stretches are topical exposition. The Sankey shows where categories flow between levels.",
-    "limits": "Ratios are POS-based proxies, not rhetorical categories. Sentence order is document order; no discourse parsing."
+    "what": "Story shape: the classic arcs of narrative - rise, fall, steady - drawn from the whole text, plus a Sankey view of how categories flow across sections.",
+    "how": "The text is divided into equal segments and a key feature is charted across them (the story-arc panel), or named categories are flowed from section to section (the Sankey).",
+    "formula": "Story arc: the text is split into equal-sized bins and each bin's prominence score (distinctive-term density or sentiment, standardised) is plotted in sequence - the TextArc/Gauss-Piper family of shapes. The shape_hc/shape_svd/shape_nmf tools below do the formal version: per-feature z-scores first, then clustering or decomposition.",
+    "question": "Does this novella rise toward the middle or end? Run the arc on one text and name the shape before looking at another.",
+    "interpretation": "Shapes are impressions of the whole - good for comparing several works in one glance, never for locating a scene. When comparing works, same bins and same feature are required or the shapes are not the same measurement.",
+    "limits": "Resolution is the bin count; short texts give blocky arcs. The shape says nothing about genre expectations, irony or who speaks - it is one line through a complex object.",
+    "settings": "sankey-source, sankey-target, sankey-value: column names for the Sankey view (leave empty for the story-arc panel). Everything else is fixed.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\narc = nlp.run(\"shapes\", corpus).table\nnlp.show(arc, x=\"Position\", y=\"Score\", kind=\"line\", title=\"Story shape\")"
   },
   "spellcheck": {
-    "what": "Flags words that are absent from an explicitly supplied wordlist and offers similarity-based suggestions. It is a vocabulary-list comparison, not a grammar checker.",
-    "how": "Choose a wordlist resource and a suggestion threshold. Review the suggested changes against the original text before deciding whether a word is misspelled.",
-    "question": "Which unusual spellings in historical speeches are transcription errors, and which are valid names or older spellings?",
-    "interpretation": "An unknown word means only that the selected list does not contain it. Suggestions need human review; choose a list appropriate to the language and period.",
-    "limits": "Names, specialist terms and historical variants will often be flagged incorrectly. Do not automatically replace unknown words. Imported originals remain the source of record."
+    "what": "Unfamiliar words in your documents, with spelling suggestions from a wordlist you choose. Your documents stay unchanged - this is a report, not a corrector (unless you ask).",
+    "how": "Every word is checked against the wordlist; the unknown ones are listed with their counts and contexts, and their closest known spellings.",
+    "formula": "Membership in the chosen wordlist decides 'unknown'. Suggestions are nearest neighbours by edit-distance similarity, reported when the similarity reaches threshold (default 80 on a 0-100 scale). OCR noise and archaic spellings therefore show up as unknown clusters.",
+    "question": "How much of this manuscript is OCR noise? Sort the unknowns by count and look at the top - a scan problem announces itself.",
+    "interpretation": "Names, archaic forms and technical terms are unknown by design; the interesting signal is dense clusters of near-words ('Govemment', 'Govemor') = systematic scan errors. Suggestions are candidates - read before accepting any correction.",
+    "limits": "The wordlist is the measuring stick: a small list flags normal words. Edit distance mangles names into misleading suggestions. Nothing is written back unless the correction option is deliberately used.",
+    "settings": "wordlist: your dictionary CSV (one column of known words). threshold: similarity (0-100) a suggestion must reach (default 80). correct: off by default - turn it on only to write suggested replacements back into the working copy (the originals are never touched).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nunknowns = nlp.run(\"spellcheck\", corpus, wordlist=\"my-dictionary.csv\", threshold=80).table\nnlp.show(unknowns, x=\"Word\", y=\"Count\", kind=\"bar\", title=\"Most frequent unknown words\")"
   },
   "style": {
-    "what": "Scores concreteness or iconicity using human word-rating norms. Concreteness concerns how perceptible a concept is; iconicity concerns a perceived relationship between a word's form and its meaning.",
-    "how": "Choose the analysis and provide its norm resource. The suite matches parsed forms or lemmas and creates sentence-level scores; iconicity can also produce words meeting rating and variability thresholds.",
-    "question": "Which passages use comparatively concrete vocabulary, and does that match your close reading?",
-    "interpretation": "Scores summarize rated vocabulary, not every aspect of a sentence. Compare documents with similar resource coverage and keep the norm scale in view.",
-    "limits": "Norm resources are user-supplied and may not represent historical or specialist meanings. Concreteness is not truthfulness, and iconicity is not an overall measure of literary quality."
+    "what": "Abstract or concrete? Familiar or strange? Rates documents on concreteness and iconicity from published word ratings.",
+    "how": "Each lemma (or form) is matched to a ratings lexicon; document scores are the averages over matched words, with quality filters that drop unreliable ratings.",
+    "formula": "Mean concreteness (or iconicity) rating over the document's matched types, weighted by frequency; unmatched words are skipped and the matched-word count is reported so coverage is visible. min-rating and max-rating-sd drop words whose raters disagreed or rated only extreme values.",
+    "question": "Do these poems lean on concrete nouns more than the essays do? Compare mean concreteness with the matched-word counts in view.",
+    "interpretation": "Higher concreteness = more imageable vocabulary; higher iconicity = more sound-symbolic words. Coverage (how many words matched) decides how much to trust any one document's score.",
+    "limits": "Ratings come from specific rater populations and mostly single words out of context ('bank' has one rating). Figurative language shifts real concreteness without moving the score. Low-coverage documents have noisy means.",
+    "settings": "analysis: concreteness or iconicity. field: lemma or form. concreteness-lexicon / iconicity-lexicon: your ratings CSVs when not using the built-ins. min-rating (default 5.0): drop words whose mean rating is below this reliability floor; max-rating-sd (default 2.0): drop words raters disagreed about.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nstyle = nlp.run(\"style\", corpus, analysis=\"concreteness\").table\nnlp.show(style, x=\"Document\", y=\"Mean Concreteness\", kind=\"bar\", title=\"Abstract vs concrete\")"
   },
   "svo_compare": {
-    "what": "Pairwise document comparison over subject-verb-object triples: Jaccard similarity on subjects, verbs, objects, and full triples between every document pair.",
-    "how": "Runs the shared SVO extraction over the parse, groups triples by document, and computes four Jaccard coefficients per document pair. No parameters - the parse drives everything.",
-    "question": "Which documents talk about the world in the same grammatical terms? Do allies share subject-verb frames the way they share vocabulary?",
-    "interpretation": "Triple Jaccard near 1 means near-identical clause content; verb-only Jaccard captures stylistic convergence without topic overlap. Use the full-triple column as the headline and the others for diagnosis.",
-    "limits": "Extraction is dependency-based and English-tuned; very short documents produce few triples, making Jaccard coarse. Triple sets ignore counts (a repeated triple counts once)."
+    "what": "Two groups side by side as subject-verb-object triples: which doings belong to which collection.",
+    "how": "Runs the same SVO extraction as clause_svo over two document groups, then contrasts the triples - shared ones, and the ones each group owns.",
+    "formula": "Triples extracted from the parse (see clause_svo) and counted per group; contrast columns follow the keyness logic (G2 over the two count columns) and a cosine over triple vectors gives each triple's opposite in the other group.",
+    "question": "Who acts in the novels and who acts in the speeches - literally, which subjects take which verbs?",
+    "interpretation": "Group-specific triples are phrasing habits of that group at this size; shared triples are the common ground. Rates, not raw counts, compare groups fairly.",
+    "limits": "All of clause_svo's extraction limits apply twice. Pronoun subjects stay pronouns, so 'he struck' and 'the king struck' are separate rows until coreference is run.",
+    "settings": "This tool has no settings of its own: the two groups come from the run form's group choices (a document column and two values).",
+    "example": "import nlpsuite as nlp\n\nearly = nlp.corpus({\"Year\": range(1900, 1950)})\nlate = nlp.corpus({\"Year\": range(1950, 2000)})\n# For triple-level contrast, run clause_svo on each and compare its tables:\na = nlp.run(\"clause_svo\", early).table\nb = nlp.run(\"clause_svo\", late).table\nnlp.show(a, title=\"Clause patterns, early group\")"
   },
   "table_charts": {
-    "what": "Publication-ready charts over your own CSV table: bar, line, scatter, histogram, box, heatmap, pie, sunburst, treemap, violin, radar, waffle, and calendar heatmap. The full typed chart pipeline of the suite.",
-    "how": "Upload the CSV, pick a kind and the x/y (and optionally group) columns. Duplicates per (x, group) require an aggregation choice. Export as interactive HTML or a native Excel workbook.",
-    "question": "What should the figure for the paper look like? Compare category totals, trends over years, or distributions side by side.",
-    "interpretation": "Every chart records its full preparation (aggregation, bins, normalization) in chart_data.csv, so the numbers behind the picture are auditable. Percent modes sum to 100 at the chosen level.",
-    "limits": "Excel export covers bar, line, pie, scatter and radar charts. Use HTML for other chart kinds. Negative values cannot be drawn as slices (pie/sunburst/treemap/waffle)."
+    "what": "Publication-ready charts over any CSV of yours - bar, line, scatter, histogram, box, heatmap and more - with the rate and share calculations built in.",
+    "how": "Point it at an original data CSV (not corpus text), name the columns to plot and aggregate, and it draws the figure as HTML or PNG. This is for analyst spreadsheets; corpus results already carry their own charts.",
+    "formula": "Whatever aggregation you choose (sum, mean, median or count) over the y-column per x-category (or per group series). rate-per divides by a denominator column scaled per total, group or category; normalize turns values into percentages or shares. It is arithmetic you could write yourself, minus the mistakes.",
+    "question": "Got a spreadsheet of mentions by year and newspaper? This is a chart of it in thirty seconds, share-ready.",
+    "interpretation": "The chart shows the aggregation you picked - 'mean of counts' is often not what a reader assumes. Say the aggregation in the caption; the export keeps it in the settings.",
+    "limits": "CSV garbage in, chart garbage out: mixed types and empty cells choose odd aggregations. HTML format needs no browser install; the packaged export may offer fewer formats. This tool does not analyse corpus text at all.",
+    "settings": "input: your CSV. kind: bar, line, scatter, histogram, box, heatmap, pie and friends. x and y: the columns to plot; group: the series/colour column. agg: sum, mean, median or count. normalize: none, percent or share. rate-per with denominator-column: chart a rate instead of a raw count, scaled by total, group or category. top-n keeps the N biggest categories. bins: histogram bin count. title, x-label, y-label: what the reader sees. format: html, png, svg, pdf or xlsx. The rest (width, height, wrap-labels, x-tick-angle, delimiter, encoding) tune the layout and file reading.",
+    "example": "import pandas as pd\nimport nlpsuite as nlp\n\ndata = pd.read_csv(\"mentions.csv\")  # the CSV you would choose in the form\nsummary = data.groupby(\"Year\")[\"Count\"].sum().reset_index()\nnlp.show(summary, x=\"Year\", y=\"Count\", kind=\"line\", title=\"Mentions per year\")\nnlp.save(summary, \"mentions_per_year\")"
   },
   "table_chi2": {
-    "what": "Tests association between two categorical columns by comparing observed cell counts with counts expected under independence.",
-    "how": "Select a CSV and the exact names of its two category columns. Each row should represent an observational unit, not an already aggregated frequency total disguised as one observation.",
-    "question": "Is a manually coded theme distributed differently across independent groups of speeches?",
-    "interpretation": "Inspect the contingency table and expected counts alongside the test statistic and p-value. Alpha is a decision threshold, not the probability that your hypothesis is true.",
-    "limits": "Sparse cells and dependent observations undermine the test assumptions. Statistical significance does not measure practical importance or establish causation. Repeated tests need a planned multiplicity strategy."
+    "what": "Chi-square test of association between two categorical columns of a CSV - plus residuals, so you can see which cells make the result significant.",
+    "how": "Builds the contingency table of your two columns, tests it, and reports chi-square, p, degrees of freedom and the standardised residuals that show where the association lives.",
+    "formula": "chi2 = sum((O - E)^2 / E) over the cells of the contingency table, with E = row total x column total / N; p from the chi-square distribution with (rows-1)(cols-1) degrees of freedom. Standardised residuals are (O - E)/sqrt(E), the per-cell contribution; the significance level alpha (default 0.05) is what the report is judged against.",
+    "question": "Is mentioning the economy actually associated with party, in your coding spreadsheet? The residuals name the cells to read up on.",
+    "interpretation": "A small p says the columns are associated, not why or how strongly. Residuals above about |2| mark the cells driving it; a big table with tiny cell counts can be significant for boring reasons.",
+    "limits": "Expected counts under 5 make the chi-square approximation unreliable (collapse rare categories first). Association is not causation, and a spreadsheet's coding choices are invisible to the test.",
+    "settings": "input: the original data CSV. col1, col2: the exact column headings to test. alpha: significance level strictly between 0 and 1 (default 0.05) - move it only as your discipline demands, before looking at results.",
+    "example": "import pandas as pd\nfrom scipy.stats import chi2_contingency\nimport nlpsuite as nlp\n\ndata = pd.read_csv(\"your-data.csv\")  # the same CSV you would choose in the form\ncounts = pd.crosstab(data[\"Party\"], data[\"Position\"])\nchi2, p, dof, expected = chi2_contingency(counts)\nnlp.note(f\"chi2({dof}) = {chi2:.2f}, p = {p:.4f}\")\nnlp.show(counts, kind=\"heatmap\", title=\"Observed counts\")"
   },
   "table_crosstab": {
-    "what": "Summarizes how two categorical variables overlap in a cross-tabulation of counts. It is a descriptive starting point before interpreting group differences.",
-    "how": "Select a CSV with one observation per row and specify the two category column names. Category spelling and missing values affect which observations appear in each cell.",
-    "question": "How many speeches in each period were assigned each theme by a human coder?",
-    "interpretation": "Read counts against group sizes. A larger count can simply reflect a larger group; compare appropriate denominators before making a prevalence claim.",
-    "limits": "Counts alone are not a significance test, and categories depend on your coding decisions. Do not confuse a table of pre-aggregated counts with observation-level input."
+    "what": "Cross-tabulated counts and row percentages for two categorical columns - the contingency table behind every chi-square.",
+    "how": "Counts every combination of the two columns and shows counts and row percentages side by side, so the pattern can be read before any test is run.",
+    "formula": "Cell count = number of rows with that (col1, col2) combination; row percentage = cell / row total x 100. No smoothing, no test - just the table.",
+    "question": "How is your coded material distributed across category and period? Look at the percentages before deciding there is anything to test.",
+    "interpretation": "Row percentages answer 'within this row, how is it spread'; mind which margin the percentages use. Raw counts belong beside them so a 50% share of twelve items is not read as a finding.",
+    "limits": "Sparse tables produce dramatic percentages on thin evidence. The table only reflects the coding in your CSV; category order is the file's, not the meaning's.",
+    "settings": "input: the original data CSV. col1, col2: the exact column headings to cross. No other settings - the output is always counts plus row percentages.",
+    "example": "import pandas as pd\nimport nlpsuite as nlp\n\ndata = pd.read_csv(\"your-data.csv\")\ntable = pd.crosstab(data[\"Party\"], data[\"Position\"], normalize=\"index\").round(3) * 100\nnlp.show(table, kind=\"heatmap\", title=\"Row percentages\")"
   },
   "table_keyness": {
-    "what": "Compares word-frequency columns to find vocabulary that distinguishes a focus collection from a reference collection. What is distinctive depends on the reference you choose.",
-    "how": "Provide a CSV with a word column and two frequency columns using exact headings. The frequency columns must contain counts, not TF-IDF weights or percentages.",
-    "question": "Which words distinguish one selected group of speeches from another, using comparable tokenization and collection boundaries?",
-    "interpretation": "Inspect frequency and keyness information together. Read high-ranking words in context and document which collection each frequency column represents.",
-    "limits": "Distinctive frequency is not importance, intent or causation. Incomplete frequency inventories distort corpus totals. Rare words, reference choice and multiple comparisons can dominate apparent findings."
+    "what": "Keyword comparison between two frequency columns of a CSV: log-likelihood over counts you already have, without re-counting text.",
+    "how": "Give it a word column and two count columns (two corpora, two periods, two authors); it ranks the words by how sharply each column differs from the other.",
+    "formula": "G2 log-likelihood over each word's 2x2 table of (word/not-word) x (corpus1/corpus2): G2 = 2 * sum(O * ln(O/E)), p from chi-square with 1 df; the log ratio gives effect size. This is the same keyness mathematics as the corpus tool, applied to columns.",
+    "question": "Comparing frequency lists from outside the suite? Which words does column 2 use disproportionately more - and by how much?",
+    "interpretation": "Small p + large log ratio = the words worth reading contexts for. The columns' totals matter: rates are what G2 compares under the hood.",
+    "limits": "Counts must be real counts of comparable things - two lists with different tokenisations make the test compare conventions. Rare words get large ratios from noise; use the count columns.",
+    "settings": "input: the original CSV of frequency counts. word-col: the column naming each word. freq1, freq2: the two count columns to compare.",
+    "example": "import pandas as pd\nimport numpy as np\nimport nlpsuite as nlp\n\ncounts = pd.read_csv(\"frequencies.csv\")  # columns: word, before, after\nrate1 = counts[\"before\"] / counts[\"before\"].sum()\nrate2 = counts[\"after\"] / counts[\"after\"].sum()\ncounts[\"Log Ratio\"] = np.log2((rate2 + 1e-9) / (rate1 + 1e-9))\ntop = counts.sort_values(\"Log Ratio\", ascending=False).head(20)\nnlp.show(top, x=\"word\", y=\"Log Ratio\", kind=\"bar\", title=\"Words that grew\")"
   },
   "table_kw": {
-    "what": "Kruskal–Wallis compares ranked values across independent groups. Dunn post-hoc comparisons help identify which pairs differ, with Bonferroni or Holm adjustment.",
-    "how": "Select the numerical value and group columns in an observation-level CSV, then choose the significance threshold and post-hoc correction.",
-    "question": "Do independent sets of speeches from several defined groups differ in a selected vocabulary measure?",
-    "interpretation": "The overall test does not identify the differing pairs by itself. Inspect corrected pairwise results alongside distributions and group sizes.",
-    "limits": "This is not a repeated-measures test for several tools scoring the same documents. Independence and distributional assumptions still matter. Adjusted p-values are not effect sizes or proof of causation."
+    "what": "Kruskal-Wallis test over three or more groups in a CSV, with Dunn post-hoc comparisons saying which groups actually differ.",
+    "how": "Ranks the values across all groups, tests whether at least one group differs, then compares the groups in pairs with a multiple-comparison correction.",
+    "formula": "Kruskal-Wallis H = the rank-variance statistic over all groups (chi-square distributed with k-1 df) - the non-parametric cousin of one-way ANOVA. Dunn's pairwise tests compare mean ranks between two groups; Holm (default) or Bonferroni corrects the pile of pairwise p-values so the family-wise error stays near alpha (default 0.05).",
+    "question": "Do word counts differ across four periods at all - and between which periods exactly? The post-hoc table names the pairs.",
+    "interpretation": "A significant H only says 'somewhere there is a difference'; Dunn's rows say where. Report medians beside the p-values - the test works on ranks, and ranks are about order, not distance.",
+    "limits": "Groups need enough observations for ranks to mean anything; ties (common in small integer data) weaken the approximation. Non-parametric does not mean assumption-free: independent observations are still required.",
+    "settings": "input: the original data CSV. value-col: the numeric column measured. group-col: the column naming the groups. alpha: significance level strictly between 0 and 1 (default 0.05). posthoc-method: holm (default, recommended) or bonferroni (stricter).",
+    "example": "import pandas as pd\nfrom scipy.stats import kruskal\nimport nlpsuite as nlp\n\ndata = pd.read_csv(\"your-data.csv\")\ngroups = [g[\"Count\"].values for _, g in data.groupby(\"Period\")]\nstat, p = kruskal(*groups)\nnlp.note(f\"Kruskal-Wallis H = {stat:.2f}, p = {p:.4f}\")\nnlp.show(data.groupby(\"Period\")[\"Count\"].median().reset_index(), x=\"Period\", y=\"Count\", kind=\"bar\", title=\"Median per period\")"
   },
   "table_mw": {
-    "what": "Mann–Whitney U compares the ranks of a numerical or ordinal outcome between two independent groups. It asks whether values tend to differ between groups.",
-    "how": "Choose a CSV, a numerical value column and a group column containing two groups. Each row should represent an independent observation.",
-    "question": "Do readability scores tend to differ between two independently defined sets of speeches?",
-    "interpretation": "Read the test result with group distributions and sample sizes. It is not generally a test of equal means, and a median-shift interpretation requires additional distributional assumptions.",
-    "limits": "Paired measurements of the same speeches are not independent groups. Repeated authors, temporal dependence and confounding need consideration. A significant result does not explain why groups differ."
+    "what": "Mann-Whitney comparison of two groups in a CSV: does one group's values sit higher than the other's, without assuming a normal distribution?",
+    "how": "Ranks both groups' values together and tests whether one group is systematically higher; reports the test statistic, p and both group medians.",
+    "formula": "Mann-Whitney U on the pooled ranks of the two groups (the non-parametric two-sample test); p from the normal approximation with tie correction, judged at alpha (default 0.05). Medians and counts are reported beside it because U works on order only.",
+    "question": "Are later letters longer than earlier ones in your spreadsheet? The medians and p answer it without any bell-curve hoping.",
+    "interpretation": "A small p says one group tends higher - which one the medians say. It is not a test of means; a significant result with near-equal medians usually means a shape difference in the tails.",
+    "limits": "Ties and very small groups blur the p-value; unequal spread across groups complicates the 'tends higher' reading. Two columns coded from different sources can differ for reasons the test cannot see.",
+    "settings": "input: the original data CSV. value-col: the numeric column measured. group-col: the column with exactly two group values. alpha: significance level strictly between 0 and 1 (default 0.05).",
+    "example": "import pandas as pd\nfrom scipy.stats import mannwhitneyu\nimport nlpsuite as nlp\n\ndata = pd.read_csv(\"your-data.csv\")\na = data.loc[data[\"Period\"] == \"early\", \"Count\"]\nb = data.loc[data[\"Period\"] == \"late\", \"Count\"]\nstat, p = mannwhitneyu(a, b)\nnlp.note(f\"U = {stat:.0f}, p = {p:.4f}; medians {a.median():.0f} vs {b.median():.0f}\")"
   },
   "table_rankcorr": {
-    "what": "Measures monotonic association between two numerical or ordered variables using Spearman's rho or Kendall's tau. Positive values indicate rankings that tend to move together; negative values indicate opposite rankings.",
-    "how": "Select two numerical columns in a CSV, with both values on each row belonging to the same observation. Choose the correlation method explicitly.",
-    "question": "Do longer speeches tend to have higher or lower scores on a particular readability measure?",
-    "interpretation": "Coefficients range from −1 to 1. A value near zero means little rank association, not necessarily no relationship of any kind. Read the result alongside a scatterplot.",
-    "limits": "Correlation does not establish causation or quantify the slope of a relationship. Constant columns, ties, missing values and dependent observations need scrutiny; rho and tau are not interchangeable scales."
+    "what": "Rank correlation between two numeric columns of a CSV: Spearman's rho or Kendall's tau, with the p-value.",
+    "how": "Ranks both columns and measures their agreement - the test to use when the relationship is monotonic but not linear, or the columns are ordinal scores.",
+    "formula": "Spearman rho = Pearson correlation of the ranks; Kendall tau = (concordant pairs - discordant pairs) / total pairs. Both run 1 (perfect agreement in order) through 0 to -1 (perfect reversal); p tests rho/tau = 0.",
+    "question": "Does a document's readability score track its year in your export? Rho answers it even if the relationship is a curve rather than a line.",
+    "interpretation": "Rho/tau near +/-1 means the two columns order the rows almost identically. Tau is the better-behaved choice for small samples and many ties; rho magnitudes read larger by construction, so do not compare them directly.",
+    "limits": "Monotonic only: a U-shaped relationship gives rho near 0 despite a perfect pattern. Ties deflate both measures. Correlation of two columns is not evidence that one causes the other.",
+    "settings": "input: the original data CSV. col-x, col-y: the two numeric columns. method: spearman (default) or kendall.",
+    "example": "import pandas as pd\nfrom scipy.stats import spearmanr\nimport nlpsuite as nlp\n\ndata = pd.read_csv(\"your-data.csv\")\nrho, p = spearmanr(data[\"Year\"], data[\"Words\"])\nnlp.note(f\"Spearman rho = {rho:.3f}, p = {p:.4f}\")"
   },
   "table_search": {
-    "what": "Searches the parsed CoNLL table with a single predicate over any column: exact, contains, prefix, suffix, or regex - the programmatic find-in-parsetable.",
-    "how": "Choose a CoNLL column (Form, Lemma, POS, NER, DepRel...), a value, a match operation, and optional case-sensitivity or negation. Output preserves the full matching rows with provenance.",
-    "question": "Where exactly does 'freedom' appear as a plain noun versus inside named entities? Which tokens carry a given dependency relation?",
-    "interpretation": "Rows keep Document/Sentence IDs, so results link back to the text. Negation flips the predicate; regex anchors are your job (^ and $).",
-    "limits": "Use one search condition per run. Very common values produce large tables; narrow the value or choose a more specific field."
+    "what": "Find rows in a parsed token table by column conditions - the CoNLL equivalent of 'select rows where', with AND/OR logic.",
+    "how": "Filters the parsed tokens of your corpus by one or more column tests (equals, contains, starts/ends with, regex), returning the matching rows and their context columns.",
+    "formula": "Row-wise boolean tests over the chosen token columns, joined with AND or OR: each test is equality, substring, prefix, suffix or a Python regex. Negate flips the selection. No scoring - it is a filtered view of the parse.",
+    "question": "Show me every noun tagged after a preposition in these documents - the filter is the analysis, the table is your evidence.",
+    "interpretation": "The rows are your population for whatever follows (counts by hand, reading, a chart). Rates over filtered rows need the corpus's totals as denominator, which the run's other tables carry.",
+    "limits": "Depends entirely on parse accuracy and the tagset's column values; a typo in value yields an empty table with no error. Regex over Form is surface-only.",
+    "settings": "field: which token column to test (e.g. Form, Lemma, POS, DepRel - empty means all text columns). value: the value or pattern to look for. op: eq, contains, starts_with, ends_with or regex. logic: AND or OR across conditions. case-sensitive: distinguish case. negate: invert the selection.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nrows = nlp.run(\"table_search\", corpus, field=\"POS\", value=\"NOUN\", op=\"eq\").table\nnlp.show(rows, title=\"Every noun token\")"
   },
   "table_trend": {
-    "what": "Mann–Kendall tests for a monotonic pattern: values tending upward or downward in time order. It does not require the trend to be a straight line.",
-    "how": "Supply a CSV with a date column and numerical value column. Ensure dates identify the intended observation time and inspect the chronological series before testing.",
-    "question": "Do document-level readability measures tend to increase or decrease across the speech dates?",
-    "interpretation": "Interpret direction and significance alongside a plot and the underlying values. An absence of monotonic trend does not rule out a rise followed by a fall.",
-    "limits": "Autocorrelation, repeated observations and changes in corpus composition can undermine inference. This is not automatic seasonality adjustment, forecasting or evidence that time itself caused a change."
+    "what": "Mann-Kendall trend test and Sen's slope over dated observations in a CSV: is the series going up, down or nowhere?",
+    "how": "Works on ranks of consecutive observations - robust to outliers and to non-normal noise - and reports the direction, significance and the slope in units per observation.",
+    "formula": "Mann-Kendall S = (concordant - discordant pairs over time) with variance corrected for ties; the p-value tests S = 0 (no monotonic trend). Sen's slope = the median of all pairwise slopes (y_j - y_i)/(j - i) between observations, which is the trend's size in value-units per step.",
+    "question": "Is vocabulary diversity really declining across these decades in your exports? The slope says how much per observation.",
+    "interpretation": "Significant S says monotonic direction; Sen's slope says how steeply, in the value's own units per step. A flat slope with tiny p can happen with many observations - report both.",
+    "limits": "Serial correlation (year-to-year autocorrelation) inflates significance badly - smooth or block first for annual series. Monotonic trends only: rise-then-fall gives S near 0. Uneven date spacing treats steps as equal.",
+    "settings": "input: the original data CSV. date-col: the ordering column (dates or years). value-col: the measured column. The observations are sorted by date internally; duplicates in date are kept in file order.",
+    "example": "import pandas as pd\nimport numpy as np\nimport nlpsuite as nlp\n\ndata = pd.read_csv(\"series.csv\").sort_values(\"Year\")\nx = data[\"Year\"].to_numpy()\ny = data[\"Score\"].to_numpy()\nslopes = [(y[j] - y[i]) / (x[j] - x[i]) for i in range(len(x)) for j in range(i + 1, len(x))]\nsen = float(np.median(slopes))\nnlp.note(f\"Sen slope = {sen:.3f} per year\")\nnlp.show(data, x=\"Year\", y=\"Score\", kind=\"line\", title=\"The series\")"
   },
   "table_wordcloud_gephi": {
-    "what": "Wordclouds (interactive HTML and optional raster PNG, including the butterfly shape) and Gephi GEXF network files over a word/weight CSV - the visualization layer of the legacy wordcloud and network tools.",
-    "how": "Wordcloud mode: choose the word column and the weight column, set max words and an optional title; tick image for a PNG (with the butterfly shape option). GEXF mode needs source and target columns for the edge list.",
-    "question": "Which words dominate the discourse, and how do terms connect when co-occurrence is drawn as a network?",
-    "interpretation": "Font size scales with weight; the PNG is seeded so reruns are byte-identical. The GEXF opens in Gephi for network exploration.",
-    "limits": "Weights must be numeric and positive; the wordcloud is display, not statistics. Shape masks need Pillow (installed with the suite)."
+    "what": "Word clouds and Gephi-ready network files from any CSV: frequency clouds in one click, or an edge list for Gephi in the next.",
+    "how": "Point it at a CSV with a word column and a weight column (or source/target columns for network mode); it draws the cloud or writes a .gexf graph file for Gephi.",
+    "formula": "Word cloud: font size scales with the chosen weight (count or rate), down to max-words. Gexf mode: each row becomes an edge (source-col to target-col) with weight-col as its weight, written as GEXF XML - no statistics, a file format.",
+    "question": "Have a frequency list from anywhere and want a figure in a minute - or a network to open in Gephi? Both modes are one form.",
+    "interpretation": "Cloud sizes are the weights you supplied (garbage in, garbage out); the PNG/HTML is a figure, not evidence on its own. For Gexf, weights decide Gephi's layout as much as structure does.",
+    "limits": "Clouds distort perception of differences (area is not linear in value) and are weak for close frequencies. Gexf needs source and target columns to be real node names; isolated nodes come from rows you did not include.",
+    "settings": "input: the original CSV. mode: wordcloud or gexf. word-col and weight-col: for clouds; source-col, target-col for networks. max-words: cloud vocabulary size (default 100). image: also render a raster PNG. title: what the figure says. mask and shape: optional silhouette for the cloud; group-col and colors colour by category; colormap, background, width, height and seed tune the drawing (seed fixes the layout between runs).",
+    "example": "import pandas as pd\nimport nlpsuite as nlp\n\nfreq = pd.read_csv(\"frequencies.csv\")  # columns: word, count\ntop = freq.nlargest(50, \"count\")\nnlp.show(top, x=\"word\", y=\"count\", kind=\"bar\", title=\"Top 50 words\")\n# The cloud itself comes from the table tool on the Analyze page; the\n# notebook keeps the same numbers in a chart that reads more precisely."
   },
   "text_statistics": {
-    "what": "Per-document surface summary: sentence count, token count, type count, average sentence length, average word length, and syllable estimates. The legacy compute_corpus_statistics table, derived from the parse.",
-    "how": "No parameters. Every document with tokens gets one row; documents with no alphabetic tokens still appear so joins stay aligned.",
-    "question": "How do sentence length and word length profile across the corpus? Which documents are the longest and densest?",
-    "interpretation": "Avg Sentence Length is the classic readability driver; Avg Syllables per Word proxies lexical complexity. Watch both together - long sentences with short words read differently than short sentences with long words.",
-    "limits": "Syllable counts are heuristic (English orthography rules), not dictionary-based. The parse, not raw text, defines tokens and sentences."
+    "what": "The classic counts of linguistic form: word and sentence lengths, type-token ratios, POS mix, Yule's K and companions, per document.",
+    "how": "Derived from the parsed token table, one row per document with a band of structural measures - the fast overview before any heavier tool.",
+    "formula": "Means of sentence length (tokens per sentence) and word length (characters per token); TTR = types/tokens; Yule's K = 10^4 * (sum(i^2 * V_i) / N^2 - 1/N) over the frequency spectrum V_i (words seen i times) - higher K means more repetition. POS columns are counts per tag family; ratios over them describe sentence make-up.",
+    "question": "Does the register shift between the letters and the sermons? Read the POS mix and Yule's K side by side before touching sentiment.",
+    "interpretation": "This is a fingerprint of form, not meaning. Big moves in Yule's K mean repetition changed; POS shifts (more pronouns, fewer nouns) are the structural story of a corpus.",
+    "limits": "Length-sensitive measures (TTR especially) punish long documents - see lexical diversity before comparing across lengths. Parse tagging errors land in the POS columns. Corpus conventions (word counting) make small differences across tools normal.",
+    "settings": "field: form (surface tokens) or lemma (dictionary forms merged). Everything else is computed the same way every time.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nstats = nlp.measures(corpus, which=[\"text_statistics\"])\nnlp.show(stats, x=\"Year\", y=\"Yule's K\", kind=\"scatter\", title=\"Repetition over time\")"
   },
   "tfidf": {
-    "what": "Ranks the terms that make each document distinctive, by weighting how often a term appears here against how rare it is across the rest of the corpus.",
-    "how": "Raise the minimum document frequency to drop one-off noise, and lower the maximum document ratio to suppress words that appear nearly everywhere. Sublinear term frequency dampens heavy repetition.",
-    "question": "What is this document about, compared with the others? Which words would I use to label it, or to find it again in a search?",
-    "interpretation": "Read the top-ranked terms per document as a candidate label, then confirm by reading the document. Weights are comparable across documents only while L2 normalization stays on.",
-    "limits": "With no stopword filtering, common function words can still rank highly on a small corpus, because rarity is judged only against the documents you supplied. A single document makes every IDF identical, reducing the ranking to plain term frequency."
+    "what": "Which words are weighted as distinctive in each document - the classic term-frequency/inverse-document-frequency score behind search engines and document comparison.",
+    "how": "Every document's vocabulary is weighted: frequent in this document, rare across the corpus, tops the list. The output is a per-document ranking of its most characteristic terms.",
+    "formula": "weight = tf * idf. idf = ln((1 + N) / (1 + df)) + 1 (the smoothed 'sklearn' convention: a term in every document gets idf 1, not 0). tf is raw count by default; sublinear-tf replaces it with 1 + ln(tf). max-df-ratio (default 0.5) drops terms appearing in more than half the documents first - boilerplate words die here.",
+    "question": "What single word distinguishes this document from the rest of the collection? The top rows answer exactly that.",
+    "interpretation": "High-weight terms are distinctive here, not important overall - cross-read with keyness for the group question. The heat map of top terms across documents shows a collection's structure at a glance.",
+    "limits": "IDF is collection-relative: add documents and old weights move. One-word tokens only (no phrases - use ngrams first). Very short documents produce noisy tops; min-df and min-length are the guards.",
+    "settings": "field: lemma or form. top-n: terms kept per document (default 20). min-df / max-df-ratio: drop terms appearing in fewer than N documents / more than this share of documents (0.5 default). min-length: drop short tokens. sublinear-tf: log-scale the term counts (often better for long documents). no-normalize: keep raw tf * idf without the usual vector normalisation.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nweights = nlp.run(\"tfidf\", corpus, top_n=10, min_df=2).table\nnlp.show(weights, title=\"Most distinctive words per document\")"
   },
   "lexicon_series": {
-    "what": "Counts word groups you define yourself and reports them along an axis such as year, decade or speaker, as a rate per 1,000 words alongside the raw counts.",
-    "how": "Write your groups as 'Name: word, word; Other name: word, word'. Phrases are allowed and match as phrases, so 'civil rights' does not count every mention of rights. Choose what to count along: year and decade come from dates in the file names, pattern takes a regex whose first group names the axis value (for example _([a-z. ]+)_sotu to count by speaker). 'Only inside sentences about' takes a second set of groups and restricts counting to the sentences matching it.",
-    "question": "How did attention to a topic change over time? Which speaker returns to it most? When they talked about one subject, what vocabulary came with it?",
-    "interpretation": "Read Per 1000 rather than Occurrences when comparing across the axis: documents differ in length, so raw counts largely track how much was said. Sentence Percent is the share of sentences touching the group, which is steadier than occurrences when one passage repeats a word. A zero is a measurement, not a gap.",
-    "limits": "A word group is a list you chose, so it measures your list and not the concept behind it; keep it inspectable and say what is in it. Counting is on tokens, so a word welded to its neighbour by a bad character in the source is not found. Lemma is the dictionary form, so 'immigrants' is 'immigrant'; switch the field to Form to match exactly what was written. Documents that cannot be placed on the axis are reported and left out rather than grouped together."
+    "what": "How often a word list you define appears over time (or by any grouping) - rates per 1,000 words, ready to chart.",
+    "how": "Name a word group (or several), pick the grouping (year, decade, document, order, or a pattern over names), and get a rate series plus a heat map of the groups.",
+    "formula": "Count of each group's words (lemma, form or exact-lowercase matching) per grouping unit, divided by that unit's words and scaled by `per` (default 1,000). Group totals sum the member words; within= restricts counting to matching documents.",
+    "question": "Does 'opportunity' rise while 'duty' falls? Define both groups and read the two lines on one chart.",
+    "interpretation": "Rates, not counts - always. A rising line means denser usage, not more speeches about it. Group sizes differ; the pooled-by-period line smooths what the per-document dots show honestly.",
+    "limits": "The word list is the theory: inflections must be listed for exact-lowercase; lemma matching needs the parser and a dictionary form. Sparse periods make jagged rates; order grouping needs ordered documents (books, chapters).",
+    "settings": "terms: your word groups ('Name: word, word; Other: word' or a lexicon CSV). by: year, decade, document, order, period or a group-pattern (a regex over document names). field: lemma or form (match='exact-lowercase' is available in scripts for hand-counted runs). within: only count in documents whose name matches this pattern. group-pattern: the regex defining custom groups.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nseries = nlp.term_rates(\n    corpus,\n    {\"duty\": [\"duty\", \"duties\"], \"opportunity\": [\"opportunity\", \"opportunities\"]},\n    per=1000,\n    by=\"year\",\n    match=\"exact-lowercase\",\n)\nnlp.show(series, x=\"Year\", y=[\"duty per 1000\", \"opportunity per 1000\"], kind=\"line\", title=\"Two vocabularies over time\")"
   },
   "lda_gensim": {
-    "what": "Fits a topic model to patterns of word co-occurrence. Topics are weighted word collections; documents can mix several topics rather than belonging to a single theme. Separated from the MALLET workflow so the two LDA backends can be compared.",
-    "how": "Uses parsed tokens and the selected modeling settings, including topic count and seed. Inspect topic words alongside the document-topic output. Filtering nouns or stopwords changes what the model can see.",
-    "question": "What recurring vocabulary clusters occur in the speeches, and which documents help explain each cluster?",
-    "interpretation": "You name and interpret the topics after reading their words and representative documents. Repeat with different topic counts to check whether your interpretation is stable.",
-    "limits": "A topic number is an arbitrary identifier, not a historical category. Statistical clusters are not discovered ground truth. Small corpora, rare words and preprocessing can make topics unstable."
+    "what": "Topic model: k clusters of co-occurring words, each document's mix of them, built on the parsed text with gensim's LDA.",
+    "how": "The corpus is turned into a bag of lemmas (or forms), LDA fits k topics of weighted words, and the tables show each topic's terms, each document's dominant topic and the full mix.",
+    "formula": "Latent Dirichlet Allocation (Blei, Ng & Jordan 2003): each document is a mixture of topics, each topic a distribution over words, fitted by variational Bayes (gensim). The relevance column uses lambda (default 0.6) to rank terms: lambda * log p(term|topic) + (1-lambda) * log lift (Sievert & Shirley's relevance).",
+    "question": "What themes does this archive hold without me naming any? Ask for 5 topics and read the top words before trusting any label.",
+    "interpretation": "Topics are word-distribution patterns, not themes with names - label them only after reading their top terms and a document or two. Different seeds can give different models; lda_stability tests that.",
+    "limits": "Bag-of-words ignores syntax and negation; k is a guess you impose. Rare words and stopwords steer the fit (the options below control both). LDA finds what is lexically clustered, which need not be what a reader calls a theme.",
+    "settings": "field: lemma (default) or form. topics: how many to fit (default 3 - try several). top-n: words shown per topic. seed: fitting start (same seed = same result). nouns-only: restrict to nouns. keep-stopwords: keep function words (off by default). lambda: term-relevance trade-off (0.6 default; 1.0 = within-topic probability, 0.0 = distinctiveness).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.topics(corpus, k=5, seed=100)\nprint(result.tables)  # the tables the model produced\nnlp.show(result.table, title=\"Topics\")"
   },
   "lda_mallet": {
-    "what": "Finds recurring themes with MALLET's LDA, alongside the Gensim workflow so the two backends can be compared: which reads your corpus better?",
-    "how": "Needs the MALLET Java binary on your PATH. Choose the number of topics and a random seed; run it as a recorded job over the whole corpus.",
-    "question": "Does MALLET see the same themes in this corpus that Gensim does?",
-    "interpretation": "Topic keys are the words MALLET weighs most heavily per topic; the dominant table says which topic each document leans on. Two backends agreeing is evidence; two disagreeing is a finding about the corpus or the settings, not an error.",
-    "limits": "Without the MALLET binary the tool refuses to run rather than substituting another backend. Topics are estimated and can shift between runs; the seed makes a run repeatable, not correct. Few documents mean unstable topics."
+    "what": "Topic model with MALLET's LDA - the classic Java implementation, on raw text rather than parsed tokens.",
+    "how": "Available on the Analyze page when the MALLET toolkit is installed beside the app; it trains on the documents and returns topics and document-topic mixtures like the gensim version.",
+    "formula": "LDA as implemented by MALLET (McCallum et al.), Gibbs-sampled rather than variational: the same document-mixture/word-distribution model as lda_gensim with a different optimiser, which often gives crisper topics on longer texts.",
+    "question": "Does MALLET's sampling separate these themes where gensim blurred them? Same corpus, same k, compare the top terms.",
+    "interpretation": "Read exactly as lda_gensim: labels come after the evidence. Gibbs sampling is stochastic across runs; the seed parameter exists so a run can be repeated.",
+    "limits": "Needs the separately installed MALLET toolkit - without it the run fails with a message rather than results. Not available in notebooks (no nlp.run name); the gensim model covers notebook use. Same bag-of-words limits as any LDA.",
+    "settings": "topics: how many to fit (default 10). seed: sampling start. Both live on the Analyze page form; there is no notebook entry point for this tool.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\n# MALLET runs from the Analyze page (it needs the separate install).\n# In a notebook the included LDA is the one to use:\nresult = nlp.topics(corpus, k=5, seed=100)\nnlp.show(result.table, title=\"Topics (gensim LDA)\")"
   },
   "gender_annotator": {
-    "what": "Classifies person names found in the parsed corpus as male, female, both or unknown by looking each name up in a chosen name dictionary: US census, Carnegie Mellon, NLTK or US Social Security. Names come from NER PERSON spans or PROPN tokens, whichever source you pick.",
-    "how": "Choose which of the four dictionaries to consult and point names-dir at the folder holding its male.txt and female.txt lists. Choose source to take names from NER PERSON spans or from PROPN tokens; every looked-up name gets a gender label and a hit count from that dictionary.",
-    "question": "Does the cast read as mostly male or female, and does that change when a different dictionary is asked?",
-    "interpretation": "Counts are dictionary lookups over name strings, not a census of people. A name listed in both lists becomes both; a name in neither becomes unknown. Compare the same corpus across dictionaries before treating any one run as the answer.",
-    "limits": "Names are not people: initials, titles, surnames used alone and non-English names fall through as unknown, and one name can stand for several people. Coverage differs sharply across the four dictionaries, so compare them on one corpus rather than trusting a single run."
+    "what": "Which characters are named as female or male in the text, by first-name dictionaries - a character census, not a guess at the author.",
+    "how": "First names of entity mentions (or proper nouns) are matched against a name dictionary; per document you get counts and a mentions-over-time view of who is named.",
+    "formula": "Name lookup: a PERSON's first token is checked against the chosen dictionary (census, Carnegie Mellon, NLTK names, or social security data), which carries gender labels from its source. Counts are mentions per document; no probability, no inference from pronouns.",
+    "question": "Whose names does this collection actually name - and does it change across periods? The counts say who is mentioned, the timeline says when.",
+    "interpretation": "Mentions of names labelled in a dictionary, counted - that is all. The dictionaries' labels come from administrative data and get names like 'James' wrong across eras and cultures; treat the three-way split as approximate.",
+    "limits": "Initials, surnames used alone, nicknames and non-Western names are unmatched or mislabelled. The dictionary's gender labels are its authors' categories, not the text's; unknown names are simply absent from the counts.",
+    "settings": "dictionary: census, carnegie_mellon, nltk or social_security (each with its own coverage and era). names-dir: your own dictionary folder to use instead. source: ner (PERSON entities from the model) or propn (every proper noun). Field choices (form/lemma) apply to the name tokens.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"gender_annotator\", corpus, dictionary=\"census\", source=\"ner\")\nnlp.show(result.table, title=\"Whose names appear\")"
   },
   "date_annotator": {
-    "what": "Finds date expressions in raw text and normalizes them to one ISO date: March 5 2020, 5 March 2020 and 03/05/2020 all become the same value. The Type column records how much of a date was actually given.",
-    "how": "Set min-year and max-year to the plausible range of your corpus; numbers outside it are left alone, which keeps stray figures such as 1,500 soldiers from becoming years. Type distinguishes a full date from month_year, bare year and decade.",
-    "question": "When do these documents speak of events, and which periods dominate the mentions - as distinct from when were the documents themselves written?",
-    "interpretation": "One normalized date per expression makes mentions sortable and comparable, but Type says how strong each one is: a decade is a coarse bucket and a full date pins one day. Read the original phrase beside every normalized value on a sample before counting.",
-    "limits": "Numeric dates are read in US month/day order, so a day/month corpus is systematically misread - check a sample first. Bare years and decades are weak evidence of when a document is FROM; they usually mark discussed events, not authorship dates."
+    "what": "Dates and periods mentioned in the text, pulled out and placed on a timeline - when the documents say things happened.",
+    "how": "Recognises explicit years, full dates and period names in raw text (no parser needed) and collects them per document with their kind and context.",
+    "formula": "Pattern-based recognition of year and date forms within the min-year/max-year bounds (defaults 1000-2100), plus named periods. Bare numbers count as years only when a date word ('year', 'century', 'in') stands nearby or the number sits alone in a heading line - so '1500 soldiers' is a count, not a year. Every classification is recorded in the run's diagnostics.",
+    "question": "Which decades do these letters actually talk about, whatever their own date? The timeline is the map of their historical attention.",
+    "interpretation": "These are mentioned dates, not document dates - the timeline shows what the texts refer to. Counts of years are mentions; a single memoir can dominate them.",
+    "limits": "Implicit and relative dates ('last Tuesday', 'a decade ago') are missed by design. Archival spellings and OCR errors break patterns. The bare-number rule is conservative: some real years without context will be skipped rather than guessed.",
+    "settings": "min-year and max-year: the range of plausible years (1000-2100 by default) - narrow them if numbers like measurements keep landing near the edges. No parser required.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ndates = nlp.run(\"date_annotator\", corpus, min_year=1500, max_year=2000).table\nnlp.show(dates, x=\"Year\", y=\"Count\", kind=\"bar\", title=\"Years the texts mention\")"
   },
   "quote_annotator": {
-    "what": "Extracts double-quoted spans and attaches a speaker with a transparent two-stage sieve: a reporting verb such as said, asked or replied beside a name first, else the nearest named person. The Cue column records which stage fired.",
-    "how": "Runs over the parsed corpus with no parameters. Each quote row keeps the quoted text, the candidate speaker, and the Cue value (reporting-verb match or nearest-name fallback), so the attribution decision stays inspectable.",
-    "question": "Who is quoted in this corpus, on what topics, and does the reporting frame give some voices more room than others?",
-    "interpretation": "Cue is the honest column: reporting-verb matches are stronger attributions than nearest-name fallbacks. Read the sentence around each quote before counting speakers, and treat the speaker column as a candidate list, not testimony.",
-    "limits": "It is a lightweight sieve, not a quote-attribution research model - pronouns and narrators can be named as speakers when no name is near. Nested quotes and scare quotes can split spans, and single quotes are not treated as quotation marks."
+    "what": "Reported speech and quotations, with their speakers: who is quoted, how much, and at what length.",
+    "how": "Quotation spans are detected in the parsed text and attributed to the nearest plausible speaker mention; results are a speakers table and quote rates per document.",
+    "formula": "Quote boundaries from quotation marks and reporting clauses in the parse; attribution attaches a quote to the nearest PERSON mention in the same sentence or the one before (a heuristic, flagged where ambiguous). Pronouns ('he said') are kept as (pronoun) rather than being guessed into a name.",
+    "question": "How much of this report is quotation rather than narration - and whose voices? The rate and speakers tables answer together.",
+    "interpretation": "Quote rate is the share of text inside quotation marks; speaker counts are attributions the heuristic managed. Reads of 'who speaks' need a pass over the quote contexts.",
+    "limits": "Single quotes, nested quotes and unmarked speech defeat the boundary detection. Attribution is nearest-mention and gets long dialogues wrong; (pronoun) rows are honest non-answers. Dramatic texts with turn-taking (no reporting verbs) attribute poorly.",
+    "settings": "min-length: the shortest span in characters to count as a quote (default 1). Everything else is the heuristic as described; attribution quality is a property of the text's style.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"quote_annotator\", corpus, min_length=2)\nnlp.show(result.table, title=\"Who is quoted\")"
   },
   "gender_guess": {
-    "what": "Guesses the gender of the writing style from weak words - pronouns, prepositions, articles and other function words - scored on a formal axis and an informal axis after the GenderGuesser METHOD (Koppel and Argamon style categories) with our own small documented lexicon.",
-    "how": "Counts the weak-word features per document and maps the totals to the two axis scores and category labels (male, female, neutral or unknown). The lexicon ships with the suite and is documented; scripts/run_gender_guesser.py runs the original tool for comparison evidence.",
-    "question": "Does the function-word profile of these documents lean male or female on the formal and informal axes, and do the two axes agree?",
-    "interpretation": "The two axes can disagree, and that disagreement is information: formal and informal prose draw on different weak words. Read the scores as a stylistic profile of the text in front of you, then check the underlying counts before quoting a label.",
-    "limits": "Labels are predictions about writing style, not ground truth about authors - speeches are collaborative, quotations carry another voice. Documents under fifty words are labelled unknown. These are our own categories, not the proprietary GenderGuesser dictionaries; scripts/run_gender_guesser.py runs the original for evidence."
+    "what": "Writing style features associated with author gender in the classic stylometric studies - formal features, informal ones, or both.",
+    "how": "Counts the function-word and marker lists from the tradition (Rayson et al.'s log-likelihood studies of male/female correspondence) per document and rates them per 1000 words.",
+    "formula": "Frequency rates of two marker sets: formal markers (articles, prepositions, long words and kin) and informal ones (pronouns, emotion words, hedges, abbreviations). The tool reports the rates; any comparison of groups is left to you (the lists' provenance is in the references of the original studies).",
+    "question": "Do these letters use the hedging and pronoun markers of the informal set more than those memoirs? Compare rates - and read the studies' own caveats first.",
+    "interpretation": "Higher rates mean denser use of those markers - period and genre move them as much as authorship does. A group difference is a difference in this corpus's style lists, not a test of anyone's gender.",
+    "limits": "The gender framing is historical baggage of the source studies; the markers really measure register. Author gender is unknowable from these counts and is not inferred here. Genre and era confound every comparison.",
+    "settings": "mode: formal (the formal marker set), informal (the informal set) or both (default). The lists are fixed; scripts get the same rates via nlp.run.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nstyle = nlp.run(\"gender_guess\", corpus, mode=\"both\").table\nnlp.show(style, x=\"Document\", y=\"Rate per 1000\", kind=\"bar\", title=\"Marker densities\")"
   },
   "verb_analysis": {
-    "what": "Classifies every verb by tense (past, present, future, gerund), voice (active or passive) and modality (ability, possibility, obligation), and records the governing modal word alongside.",
-    "how": "Reads the parse for each verb token and fills the tense, voice and modality columns plus a Modal column naming the auxiliary or modal involved. When UD morphology is missing it falls back to POS tags and word endings and says so in the output.",
-    "question": "Which tenses and voices dominate, and where do obligation or possibility modals cluster - what stance does the corpus take toward the events it describes?",
-    "interpretation": "Passive voice marks where the actor is backgrounded, not where the writer is evasive. The modality columns describe grammatical mood; read Modal beside Modality because the same surface word can carry different readings.",
-    "limits": "Without UD morphology the tool falls back to POS tags and word endings (and warns when it does), so tense labels on irregular verbs can be wrong. The modal may can mean possibility OR permission and one column cannot separate them - always read Modal beside Modality."
+    "what": "The verbs of the corpus in aggregate: tense mix, voice mix (active vs passive), and modality - the machinery of assertion.",
+    "how": "Every verb group in the parse is classified along three axes and counted per document, giving each document a profile of how it states things.",
+    "formula": "From the parse's morphological features and auxiliaries: tense from VerbForm/Tense tags (past, present, future via 'will/shall'), voice from passive auxiliaries + nsubj:pass, modality from modal auxiliaries (can, must, should...) grouped as possibility/necessity/knowledge. Counts per document, rates per 1,000 words in the panels.",
+    "question": "Does this legislation commit ('shall') more than it suggests ('may')? The modality mix is one chart answering it.",
+    "interpretation": "Passive density means receivers outnumber named agents in the syntax - a fact about presentation, not responsibility. Modal counts tell you how obligations are worded, not how binding they are.",
+    "limits": "Tagging errors land here; English 'be + -ed' ambiguity moves passive counts. Modal uses with ellipsis or idiom are misgrouped. Cross-language comparison is out of scope for the English parse.",
+    "settings": "analysis: all (default), modality, tense or voice - pick one axis to run alone. The classification itself has no tunable parameters.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"verb_analysis\", corpus, analysis=\"voice\")\nnlp.show(result.table, x=\"Document\", y=\"Passive share\", kind=\"bar\", title=\"Active vs passive\")"
   },
   "ngram_viewer": {
-    "what": "Counts your words and phrases year by year and charts the series: culturomics over your own corpus. Years come from document filenames such as 1934_address.txt, not from document text.",
-    "how": "Give queries as a comma-separated list of one to three words each, and set case-sensitive and smooth (the moving-average window in years). Each query becomes a line on the chart and a year-by-year table behind it.",
-    "question": "How does this curve differ from the Google Ngram Viewer over Google Books? What does frequency over time look like when the corpus is yours and the years are exact?",
-    "interpretation": "Peaks and dips are counts in your corpus for those years, sized by what you collected: a gap can mean no documents that year, not silence about the topic. Compare curves within one run rather than against published Google curves.",
-    "limits": "Without dates in filenames there is no time series and the run fails with instructions - that is exactly why the co-occurrence viewer works on undated corpora and this one cannot. Filename years are not checked against document content, and sparse years make smooth windows lumpy."
+    "what": "The familiar word-frequency-over-time chart for several phrases at once, with smoothing - a mini Ngram Viewer for your own corpus.",
+    "how": "Each query's matches are counted per period and drawn as a rate series (per 1,000 words), optionally smoothed into a trend, several queries overlaid.",
+    "formula": "Per-period counts divided by that period's words and scaled per 1,000. Smoothing is a moving average of window `smooth` periods (default 1 = no smoothing) - the same trick the public Ngram viewers use to quiet small-sample noise.",
+    "question": "Do 'liberty' and 'equality' cross in this collection around 1900? Overlay the two series and read the crossing point, then check raw counts there.",
+    "interpretation": "Rates make periods comparable; smoothing shows trend at the cost of detail (a spike of one speech disappears at smooth=5). The scale is 'per 1,000 words of this corpus', nothing larger.",
+    "limits": "Rare phrases in short periods give wild rates even smoothed. Case-sensitive matching splits 'March/march'; inflections need listing (or lemma matching in scripts). This counts text, not topics - synonym series will not sum to 'the idea'.",
+    "settings": "queries: your search terms (the same forms the search tool uses). case-sensitive: distinguish case. smooth: moving-average window in periods (default 1 = raw). Grouping is by the period the run form chooses.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nseries = nlp.term_rates(\n    corpus,\n    {\"liberty\": [\"liberty\"], \"equality\": [\"equality\"]},\n    per=1000,\n    by=\"decade\",\n    match=\"exact-lowercase\",\n)\nnlp.show(series, x=\"Decade\", y=[\"liberty per 1000\", \"equality per 1000\"], kind=\"line\", title=\"Two words over time\")"
   },
   "sentiment_neural_bert": {
-    "what": "Sentence-by-sentence sentiment from a Hugging Face BERT classifier. The signed Compound column is what the story-shape tools consume, so keep it in view when building an arc.",
-    "how": "Splits the corpus into sentences and scores each with the transformer classifier, writing one row per sentence with document provenance and the signed Compound score. No lexicon is involved; the model weights do the work.",
-    "question": "Where does the emotional tone of this document rise and fall, sentence by sentence?",
-    "interpretation": "Compound is a signed score: read its direction and relative height across a document rather than treating one value as an absolute feeling. The arc is only as good as the sentence scores under it, so spot-check the sentences at the peaks.",
-    "limits": "The model is DistilBERT fine-tuned on SST-2 (film reviews), and it has two classes only: positive and negative, with no neutral. A flat or mixed sentence gets a probability near 0.5, so its Compound lands near 0 - read near-zero scores as 'the model is unsure', not as 'neutral'. Long sentences are truncated at 256 words (and said so in the output). The model ships with the app and runs offline."
+    "what": "Tone per sentence and document from a small neural classifier - DistilBERT fine-tuned on movie reviews (SST-2) - the modern counterpart to VADER.",
+    "how": "Each sentence runs through the ONNX model (shipped with the app) and gets a positive/negative probability; documents average their sentences, with per-sentence and per-document panels.",
+    "formula": "DistilBERT (a distilled BERT encoder) with a classification head fine-tuned on SST-2: softmax over {negative, positive} per sentence. Document score = mean of its sentences' positive probabilities (shown also as a -1..1 rescaling of 2p-1 for comparability with VADER's compound).",
+    "question": "Does the neural model see the same turning points in these speeches as VADER does? Chart both and read where they diverge - the divergence is informative.",
+    "interpretation": "Scores are probabilities of the positive class out of the training distribution (film reviews): 0.9 is confident positive in that sense. Averaging smooths mixed documents; open the sentence view before judging one.",
+    "limits": "The model's world is 21st-century review English; archaic, technical or ceremonial text gets noisier. Binary sentiment only - no emotion categories, no targets/aspects. Short sentences and fragments classify shakily.",
+    "settings": "model: distilbert-sst2 (the shipped one). Everything else is fixed - the model file is the measurement. Scripts can also choose unit=document or sentence and pick this model through nlp.sentiment.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ntone = nlp.sentiment(corpus, model=\"distilbert-sst2\", unit=\"document\")\nnlp.show(tone, x=\"Year\", y=\"Score\", kind=\"line\", title=\"Neural tone over time\")"
   },
   "sentiment_neural_spacy": {
-    "what": "Sentence-by-sentence sentiment from a spaCy pipeline's textcat head, one of four neural annotators to compare side by side on the same corpus.",
-    "how": "Runs your configured spaCy pipeline over each sentence and reads its textcat scores into the standard sentiment table. It expects a pipeline trained with textcat; it does not train one for you.",
-    "question": "Does this annotator agree with the BERT, Stanza and CoreNLP readings of the same sentences, and where does it diverge?",
-    "interpretation": "Agreement across backends is evidence about the corpus; disagreement is evidence about the models or the text. Compare the same sentences across all four tables before trusting any one arc.",
-    "limits": "Vanilla spaCy models (en_core_web_sm) ship NO sentiment head, so this tool fails loudly with an install pointer rather than inventing a score or falling back to a lexicon - you need a pipeline trained with textcat before it will run."
+    "what": "Tone per sentence and document through spaCy's sentiment model pipeline - the same neural measurement as the BERT tool, hosted by spaCy.",
+    "how": "Runs the installed spaCy model's text-classification component over each sentence and aggregates to documents; same panels as the other sentiment tools so the scores can be compared directly.",
+    "formula": "spaCy's textcat component (a neural classifier) produces positive/negative probabilities per sentence; document score is the sentence mean, as in the BERT variant. Which architecture you get depends on the installed spaCy package version and model.",
+    "question": "Does the choice of engine move the tone curve at all? Run it beside the BERT tool on the same corpus and compare the two lines.",
+    "interpretation": "Read exactly as sentiment_neural_bert - probability of positive in the model's training sense. Differences between engines on the same text are model differences, not findings about the text.",
+    "limits": "Needs the spaCy model installed (see Models). Same domain sensitivity as any review-trained classifier. Sentences are classified independently of their neighbours, so quoted irony reads straight.",
+    "settings": "model: the spaCy pipeline name (en_core_web_sm is the default and what the suite installs). No other options; swap models only between runs and say so in your notes.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"sentiment_neural_spacy\", corpus)\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
   },
   "sentiment_neural_stanza": {
-    "what": "Sentence-by-sentence sentiment from Stanza's own sentiment processor, one of four neural annotators to compare on the same corpus.",
-    "how": "Splits the text into Stanza sentences, runs the sentiment processor on each, and writes the standard sentiment table with document provenance. Install the language package that carries sentiment before running.",
-    "question": "Does the Stanza reading match the other three backends, and does its coarse scale smooth away the peaks the others see?",
-    "interpretation": "Scores land on -1/0/+1, so an arc drawn from them is stepped, not smooth: a flat stretch means every sentence landed in the same hard class, not that nothing happened. Use the classes for coarse shape and a finer backend for detail.",
-    "limits": "It is a three-way HARD class (negative/neutral/positive), so scores land on -1/0/+1 rather than a smooth confidence. The sentiment processor ships with some language packages only; other languages parse in Stanza but do not score sentiment here."
+    "what": "Tone per sentence and document through Stanza's neural pipeline - the third engine on the same question, for triangulation.",
+    "how": "Each sentence is classified by the installed Stanza sentiment model; results aggregate to documents and appear in the same panel family as the other engines.",
+    "formula": "Stanza's sentiment classifier (a neural model over word and character features) scores each sentence; documents average their sentences. The scales are the model's own, so compare shapes across engines, not raw values.",
+    "question": "Three engines, one corpus - do all three see the same peaks? Agreement is the finding; write up the disagreement if not.",
+    "interpretation": "As the other neural tools: per-sentence probabilities averaged to documents. The panel family keeps the columns aligned so a side-by-side chart is honest.",
+    "limits": "Needs the Stanza models downloaded (see Models); the first run is slow while they load. Same training-domain caveats - Stanza's sentiment data is also modern and mostly review-adjacent.",
+    "settings": "language: the pipeline language ('en' default). No other options; the model package is the measurement.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"sentiment_neural_stanza\", corpus, language=\"en\")\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
   },
   "sentiment_neural_corenlp": {
-    "what": "Sentence-by-sentence sentiment from Stanford CoreNLP's sentiment annotator (the RNTN) through a running Java server, one of four neural annotators to compare on the same corpus.",
-    "how": "Points at a live CoreNLP server; CoreNLP does its own sentence splitting on the server before scoring. Output is the standard sentiment table, but the row counts follow CoreNLP's sentences, not the suite's.",
-    "question": "Run the same corpus through all four sentiment backends and compare: which one tells the clearest story, and does the shape-of-stories result follow it?",
-    "interpretation": "The better shape-of-stories result follows from the better sentiment scores, so judge the sentence tables first and the arcs second. Compare all four backends on the same corpus; agreement is evidence and disagreement is a finding about the models or the splitter.",
-    "limits": "Needs the CoreNLP server and its models jar running (the start command is in the error when it is not); without it the tool refuses to run rather than substituting another backend. CoreNLP splits sentences on the server, so the four backends' tables are parallel in columns but not in row counts - the splitter is part of what you are comparing."
+    "what": "Tone per sentence and document via Stanford CoreNLP's sentiment system - the classic recursive neural sentiment model, if you run the CoreNLP server.",
+    "how": "Text is sent to a CoreNLP server you have running locally (default http://localhost:9000); its sentiment classes per sentence are collected and aggregated like the other engines'.",
+    "formula": "CoreNLP's sentiment annotator (Socher et al.'s recursive neural tensor network over parse trees): each sentence gets a 0-4 class (very negative to very positive), mapped to the common score scale in the panels. Tree-based, so it sees compositional structure the flat classifiers do not.",
+    "question": "Does the tree-structured model disagree with the flat ones on your most ambiguous texts? That is the one question this engine answers uniquely.",
+    "interpretation": "Scores are class values mapped to the shared scale - read shapes, and cross-check the panels' raw columns before quoting a number. The server's model version belongs in your notes.",
+    "limits": "Requires a separately installed and running CoreNLP server - the tool fails cleanly if it cannot reach it. Network round-trips make it the slowest of the four. The model is the oldest of the family and its training domain is movie reviews.",
+    "settings": "server: the CoreNLP URL (default http://localhost:9000). Nothing else - the annotator configuration is fixed in the suite.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"sentiment_neural_corenlp\", corpus, server=\"http://localhost:9000\")\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
   },
   "shape_hc": {
-    "what": "Hierarchical clustering of story-shape trajectories with a dendrogram: which documents tell similarly shaped stories, arranged as a tree of merge heights. A natural question is Vonnegut's: do these patterns follow Kurt Vonnegut's shapes?",
-    "how": "Each document becomes a trajectory of sentence-level shape metrics (from the shapes tool), trajectories are compared pairwise, and the dendrogram records at what height each pair or group merges. Read the tree from the leaves up.",
-    "question": "Do these patterns follow Kurt Vonnegut's shapes? Which documents tell similarly shaped stories, and where does the tree split them?",
-    "interpretation": "A low merge height means the two trajectories stayed close through the document; a high merge means only their broad outlines matched. A cluster is a family of shapes - name the shared arc by reading the member trajectories, not the height alone.",
-    "limits": "It groups trajectories it can see (sentence length and noun/verb ratios), not plot or character - two documents in one cluster are alike in shape only. Clustering is unsupervised and will draw a tree even when no real groups exist."
+    "what": "Story shapes by clustering: groups whole documents (or segments) into eras by their structural profile, and draws the cluster tree.",
+    "how": "Each unit becomes a feature vector of story-shape measures, standardised per feature, then hierarchically clustered - the dendrogram is the output, and the era panel shows each cluster's shape.",
+    "formula": "Feature standardisation first (per-feature z-scores across the units, so sentence length cannot drown everything - shape components follow units, not raw features). Then agglomerative hierarchical clustering with Ward (default), average, complete or single linkage over the standardised features; resampling (32 draws) tests how stable each split is.",
+    "question": "Are there really three kinds of arc in this collection, or two? The dendrogram's stable splits say how many shapes there are before you name them.",
+    "interpretation": "Clusters are groups with similar profiles under these features; the tree shows nesting (a big split into two, one of which splits again). Stability scores tell you which branches survive resampling - only those deserve names.",
+    "limits": "Standardisation means components are relative to this corpus: add documents and old shapes shift. Linkage choice changes the tree in the middle ranks. Clusters of few units are unstable by construction.",
+    "settings": "method: ward (default), average, complete or single - Ward for compact clusters, single for chaining effects you may want to see. n-clusters: how many groups to cut from the tree (default 2). resample: how many resampling draws for stability (default 32).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"shape_hc\", corpus, method=\"ward\", n_clusters=3)\nnlp.show(result.table, title=\"Document clusters by shape\")"
   },
   "shape_svd": {
-    "what": "SVD shape components: the orthogonal axes along which your stories' shapes vary, each with its share of variance. A way to ask what dimensions of shape this corpus actually uses.",
-    "how": "The sentence-shape feature matrix is decomposed; each component is returned with its variance share and the document weights along it. Read a component as a direction in shape-space and the share as how much of the corpus moves along it.",
-    "question": "What are the dominant axes of shape variation in this corpus - is one arc doing most of the work, or several?",
-    "interpretation": "A component is a shape (up early, down late is one arc) and the variance share says how much of the corpus it accounts for. Inspect the sign pattern along the sentences to see the arc, then read documents with extreme weights to see who uses it.",
-    "limits": "Components are mathematical axes of variation, not named plot types - the labels Vonnegut gave his shapes are yours to argue, not the SVD's. Signs are arbitrary (a component and its negative describe the same axis), and small corpora yield unstable components."
+    "what": "Story shapes by decomposition: the few latent axes along which documents' shapes vary, with each document's position on them.",
+    "how": "Standardised shape features are reduced by SVD (the algebra behind PCA) to n components: the loadings say what each axis means, the document panel where each text sits.",
+    "formula": "Per-feature z-scores first, then singular value decomposition of the units-by-features matrix; component 1 is the largest axis of variation in shapes (currently dominated by overall pacing/extremity), component 2 the largest remaining, and so on. Resampling (32 draws) scores how stable each component's direction is.",
+    "question": "What is the biggest way these stories differ in shape - and does a genre or period sit at one end of it? The loadings and document positions answer in two panels.",
+    "interpretation": "Loadings say which features make an axis (read the top positive and negative rows together). Documents at opposite ends of an axis differ along exactly those features. Explained-variance share says how much of the variety each axis holds.",
+    "limits": "Standardised to this corpus (see shape_hc). Components beyond the first couple hold small variance and unstable directions; two runs on different corpora have different axes to compare. Sign of a component is arbitrary - read both ends.",
+    "settings": "n-components: how many axes to keep (default 2). seed: resampling start. resample: stability draws (default 32).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"shape_svd\", corpus, n_components=2)\nnlp.show(result.table, x=\"Component 1\", y=\"Component 2\", kind=\"scatter\", title=\"Documents in shape space\")"
   },
   "shape_nmf": {
-    "what": "NMF non-negative shape parts: additive building blocks of story shapes, produced by non-negative matrix factorization of the sentence-shape features.",
-    "how": "Each feature column is shifted up by its own minimum before the fit so no value is negative (NMF cannot see negative numbers), and the shift is not undone. Parts and the document weights over them are reported for the shifted matrix.",
-    "question": "Which reusable shape-ingredients does this corpus combine - is a story here built from a rise, a fall and a plateau?",
-    "interpretation": "Parts add up, which is why they read as ingredients rather than axes: a document's shape is a weighted sum of parts. Name an ingredient by reading its profile and the documents that load heavily on it.",
-    "limits": "NMF cannot see negative numbers, so each feature column is shifted up by its own minimum before the fit and the shift is not undone - the parts are non-negative contributions and the reconstruction is of the shifted matrix, not of the original features. Part counts are a setting you choose, and parts can split or merge between runs."
+    "what": "Story shapes as additive parts: non-negative matrix factorisation splits shape profiles into n building blocks each document mixes in its own proportions.",
+    "how": "Standardised shape features are factored into parts and per-document weights - an additive reading ('this story is part steady-rise, part late-crisis') where SVD gives a subtractive axis reading.",
+    "formula": "Per-feature z-scores first (shifting to non-negativity for NMF), then non-negative matrix factorisation: units-by-features ~ weights x parts, fitted to minimise the Frobenius reconstruction error (Lee & Seung's multiplicative updates, up to max-iter). Parts are additive components; each document's row of weights is its composition. Resampled stability as in shape_svd.",
+    "question": "Which recurring building blocks of shape does this genre use, and in what proportion per story? The composition panel is the answer.",
+    "interpretation": "Each part is a feature profile (read its loadings); a document's weights are 'how much of each block'. Unlike SVD axes, parts can all be high at once - mixtures, not oppositions.",
+    "limits": "The z-score shift to non-negativity moves zero from 'average' to 'the minimum observed' - read loadings accordingly. NMF parts are not unique between runs at different seeds; stability helps but comparison across corpora stays shaky.",
+    "settings": "n-components: how many parts (default 2). seed: fitting and resampling start. resample: stability draws (default 32). max-iter: fitting iterations (default 200) - raise it if reconstruction error is still falling in the output.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"shape_nmf\", corpus, n_components=3, seed=42)\nnlp.show(result.table, kind=\"heatmap\", title=\"Shape composition per document\")"
   },
   "geocode": {
-    "what": "Turns the places named in your corpus into map coordinates. Three providers: offline (a small built-in gazetteer, no network), Google (needs GOOGLE_MAPS_KEY) and Nominatim (no key, rate-limited).",
-    "how": "Choose a provider and run over the extracted place names; every place comes back with a Status, coordinates when found, and the provider that answered. For the GIS pipeline, run the CoreNLP NER extractor first so the geocoder is handed places rather than every capitalized word.",
-    "question": "Which different ways do you have to improve geocoding? Why do you need to run the CoreNLP NER extractor in the GIS pipeline?",
-    "interpretation": "Coordinates are a lookup result, not a verified location: read Status and the provider column beside every row. The GIS pipeline needs to know WHICH words are places first - that is what the CoreNLP NER extractor supplies, and geocoding without it spends lookups on words that were never places.",
-    "limits": "The offline gazetteer knows only a handful of world cities and misses almost everything else. Unknown places come back Status=UNKNOWN rather than silently dropped. Google needs GOOGLE_MAPS_KEY; Nominatim is rate-limited and slow on large corpora."
+    "what": "Place names in the text become coordinates: which locations these documents mention, ready for a map.",
+    "how": "Locations from the named-entity tool are matched against a gazetteer (offline by default) and returned with latitude, longitude and mention counts; the map view plots them.",
+    "formula": "Gazetteer lookup of each location string: exact and normalised name matching against the offline gazetteer (or the Google/ Nominatim APIs if you choose them). Counts are mentions; coordinates are the gazetteer's best entry. min-count and limit filter the result list.",
+    "question": "Where do these travel writings point? Geocode them and read the map's empty regions as loudly as its clusters.",
+    "interpretation": "A dot is a matched name, not a verified visit - the text mentions the place. Clusters show the corpus's geography of attention; unmatched names are the honest gap list to read by hand.",
+    "limits": "Names that are also words ('Reading', 'Springfield') mis-match; translated and historical place names need the gazetteer to know them. The offline gazetteer has fixed coverage - its misses are not your documents' misses. Mentions are not locations of events.",
+    "settings": "provider: offline (default, no network), google or nominatim (both send the place names to their services - use knowingly). limit: how many places to resolve (default 200). min-count: only geocode places mentioned at least this often (default 1).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nplaces = nlp.run(\"geocode\", corpus, provider=\"offline\", min_count=2).table\nnlp.show(places, x=\"Place\", y=\"Count\", kind=\"bar\", title=\"Most mentioned places\")"
   },
   "svo_map": {
-    "what": "Maps where narrative EVENTS happen: every subject-verb-object triple placed by its document's geocoded location, rendered as pins, heat and a Google Earth KML file.",
-    "how": "Joins each document's triples to that document's geocoded places and emits (triple, place) pairs with verb weights for the heat layer. The KML opens in Google Earth Pro; the pin and heat views cover the same data in the desktop.",
-    "question": "What does the Google Earth Pro of SVOs tell you? How does the map differ from the map produced by the GIS pipeline?",
-    "interpretation": "The SVO map is a map of actions (verb-weighted), not just of place mentions: pins mark where the narrative does things, so a verb-heavy document burns hotter than one that only names locations. Compare it with the GIS pipeline's mention map to see event against setting.",
-    "limits": "A triple with no geography in its document cannot be placed and is reported unplaced, not guessed onto the map. When a document names several places every (triple, place) pair is emitted, so counts are event-place pairs, not events - a speech naming five cities contributes five pins per triple."
+    "what": "Who does what, where: subject-verb-object triples whose place names are geocoded and mapped.",
+    "how": "Combines the SVO extraction with gazetteer coordinates - triples involving named locations become points (or arcs) on the map of the corpus's actions.",
+    "formula": "clause_svo's triple extraction (verb with nominal subject and object) plus geocode's gazetteer lookup on the triple's location mentions. Counts and rates as in the SVO tables; coordinates from the same providers as geocode.",
+    "question": "Where do the memoirs locate their actions? The mapped triples show the corpus's geography of doing rather than of mentioning.",
+    "interpretation": "Each point is a triple with a resolvable place - read the table beside the map. Shared verbs across sites are often the interesting pattern (everything 'signed' in one city).",
+    "limits": "Both parents' limits apply: missed clauses, unresolved names, ambiguous toponyms. If the SVO extraction is noisy the map is noisy - check the triples table first.",
+    "settings": "provider: offline (default), google or nominatim (names leave the machine). limit: how many places to resolve (default 200). The SVO extraction itself is fixed.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"svo_map\", corpus, provider=\"offline\", limit=100)\nnlp.show(result.table, title=\"Actions by place\")"
   },
   "word2vec_bert": {
-    "what": "Word2Vec via BERT: what your corpus's words mean in BERT's reading. Figures show the vocabulary in themes, where words fall between two ideas you name (war ... peace), a word's neighbourhood and, for a dated corpus, the company a word kept in each decade. Its tables match the Gensim tool's, so the two can be compared fairly.",
-    "how": "Runs the pretrained BERT model over your corpus, splits words into subword pieces, averages the contextual embeddings of each word's own pieces in every sentence it appears in, and returns the neighbour and vocabulary tables in the Gensim tool's format. With the lemma field, each use is read at its surface form ('was' for 'be'). BERT ships with the app and runs offline.",
-    "question": "Of the two Word2Vec approaches - BERT, Gensim - which gives better results on this corpus, and what does better mean here?",
-    "interpretation": "Read each figure back to the sentences: click a word to see it used. On the State of the Union, war ... peace puts soldier toward war and trade toward peace, and energy moves from strength and spirit (1940s) to fuel and oil (1970s on). A lean or a change says the company differs, not why; the sentences say why.",
-    "limits": "BERT is a PRETRAINED model reading your corpus (it splits words into subword pieces and averages contextual embeddings), NOT a model trained on your corpus the way the Gensim tool trains - so it never learns your corpus-specific senses. Sentences longer than BERT's 512-piece window are cut, and the run says how many."
+    "what": "Meaning as neighbourhoods from contextual embeddings: which words and passages stand near a query word in this corpus's usage.",
+    "how": "Words (or sentences) are embedded by a small transformer, and the nearest neighbours of a query are listed - meaning as the company a word keeps here, not in a general corpus.",
+    "formula": "Token embeddings from BERT-base's subword outputs (averaged per word), cosine similarity between vectors defines neighbourhoods; neighbours = highest cosine to the query vector. min-count filters hapaxes before embedding. The saved vectors are cacheable across runs (the model's work is reused when nothing changed).",
+    "question": "What does 'liberty' mean in this collection specifically? Its nearest neighbours here compared with word2vec_gensim's is the whole method.",
+    "interpretation": "Neighbours are the corpus's usage pattern: closer cosine = more interchangeable contexts here. The meaning-axis and meaning-group panels read semantic dimensions from the neighbour structure - treat them as descriptive, not psychological.",
+    "limits": "Subword averaging mangles rare names; context is per sentence, so polysemous words blur ('bank' averages its senses). Small corpora give thin training signal - this is embedding of usage, not a trained lexical resource.",
+    "settings": "field: lemma or form. model: bert-base-uncased (the shipped encoder). min-count: embed only words seen at least this often (default 2). query: the word whose neighbours you want. top-n: neighbours listed (default 5). seed: for any sampling in the panels.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word2vec_bert\", corpus, query=\"liberty\", top_n=10)\nnlp.show(result.table, x=\"Neighbour\", y=\"Cosine\", kind=\"bar\", title=\"Words near 'liberty'\")"
   },
   "word2vec_gensim": {
-    "what": "Trains Gensim Word2Vec on your corpus, placing words in a numerical space based on surrounding vocabulary. Figures show themes, where words fall between two ideas you name, and a word's neighbourhood; neighbours share learned contexts and need not be synonyms.",
-    "how": "Uses parsed tokens and Gensim. Set minimum count, vector dimensions, context window, epochs and seed; optionally choose a query word for neighbours. Outputs include vectors, neighbours and a t-SNE projection.",
-    "question": "Which words occur in contexts similar to freedom or security in this collection?",
-    "interpretation": "Inspect neighbours in original sentences. Minimum count can exclude rare query words. A two-dimensional t-SNE plot is an exploratory view of higher-dimensional vectors.",
-    "limits": "Corpus size and uneven word frequencies limit reliability. Nearby words need not mean the same thing, and plot distances can be misleading. Separately trained spaces are not automatically comparable across periods. (Compare with Word2Vec via BERT on the same corpus.)"
+    "what": "Meaning as neighbourhoods, trained the classic way: word2vec (skip-gram or CBOW) over the corpus itself.",
+    "how": "A word2vec model is trained on the parsed text and queried for neighbours, analogy results and saved vectors - the transparent, tunable counterpart to the BERT tool.",
+    "formula": "word2vec (Mikolov et al. 2013): sg=1 trains skip-gram (predict context from word), sg=0 CBOW - over windows of `window` tokens, `vector-size` dimensions, `epochs` passes, words under min-count dropped. Neighbours by cosine; the t-SNE panel projects vectors to 2 dimensions for viewing.",
+    "question": "Does the trained-on-this-collection model place 'liberty' with political or economic company? Compare with the BERT neighbours - agreement is evidence.",
+    "interpretation": "Neighbours reflect the training corpus at these settings; window=5 catches topical rather than syntactic company. Analogy moves ('king - man + woman') are stable only on large corpora - read them as sketches.",
+    "limits": "Needs enough text to train meaningfully - tiny corpora give noise (min-count and vector-size are guards, not cures). Rare words and names are unreliable. Two runs at different seeds differ in details.",
+    "settings": "field: lemma or form. min-count: minimum occurrences to get a vector (default 2). vector-size: dimensions (default 100). window: context size in tokens (default 5). epochs: training passes (default 20). sg: 1 = skip-gram (default), 0 = CBOW. seed: training start. remove-stopwords: drop function words before training. query and top-n: which word's neighbours to show (default 5).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word2vec_gensim\", corpus, window=5, query=\"liberty\", top_n=10)\nnlp.show(result.table, x=\"Neighbour\", y=\"Cosine\", kind=\"bar\", title=\"Words near 'liberty'\")"
   },
   "lda_stability": {
-    "what": "Fits the same topic model several times with different random seeds and matches each run's topics to a reference run by their top words, so you can see which topics come back and which were one run's accident.",
-    "how": "Choose the number of topics, how many seeds to try, and the overlap (Jaccard of top words) a topic must reach to count as stable. The match table pairs each reference topic with its closest topic under every other seed.",
-    "question": "Which of these topics would I still find if I ran the model again, and which should I not build an argument on?",
-    "interpretation": "A topic that matches closely under every seed is one the corpus supports. A topic that falls apart under a different seed is an artefact of that run; treat its words as noise rather than as a theme.",
-    "limits": "Stability is not correctness: a topic can come back every time and still be a stopword cluster or a formula of the genre. The check covers only the seeds tried, and top-word overlap ignores how the topic spreads over documents."
+    "what": "Whether your topic model is real: LDA refitted at several seeds, with matched topics across runs and a stability score.",
+    "how": "Fits the same model at every seed in the list, pairs up topics between runs by their word overlap, and reports which topics survive the refits - the honesty check before quoting any topic model.",
+    "formula": "For each seed: gensim LDA at k topics. Topics are matched across consecutive runs by maximum Jaccard overlap of their top words; a topic is stable at stable-at (default 0.5) when its matched overlap reaches that share. The matched-topics panel shows the chains of the same topic across seeds.",
+    "question": "Are these five themes the model found - or the seed's accident? Run five seeds and quote only the stable chains.",
+    "interpretation": "Stable topics (long chains, high overlap) are patterns in the corpus; one-seed wonders are fitting noise. Stable-at is the bar you set for 'same topic' - 0.5 is half the top words shared.",
+    "limits": "Overlap matching can chain-hop between similar topics; k is still imposed by you. Stability says reproducible, not true - a stable model can still be a poor description. Cost is roughly n-seeds times one LDA fit.",
+    "settings": "topics: k per fit (default 3). seeds: comma-separated seed list (default 100,101,102). top-n: words per topic used for matching (default 10). passes: training passes per fit (default 10). stable-at: overlap share for 'same topic' (default 0.5). nouns-only: restrict vocabulary to nouns.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"lda_stability\", corpus, topics=3, seeds=\"100,101,102,103\")\nnlp.show(result.table, title=\"Topics that survive refitting\")"
   },
   "word_sense_induction": {
-    "what": "Asks, for every content word used in at least two sentences, whether its uses fall into two readings - 'bank' of a river against 'bank' that lends money - by how BERT reads each use. Figures list the clearest splits, each labelled by its two senses' context words, with the sentences behind each.",
-    "how": "Each use of a word is embedded in its sentence with BERT. The uses of each word are clustered in two, and the split is kept only when the two groups separate clearly and neither is just one or two odd sentences; otherwise every use is sense 1. Sense 1 is the more frequent reading. The vectors table holds every use.",
-    "question": "Which words in this corpus are used in more than one sense, and does the second sense belong to particular documents or years?",
-    "interpretation": "A split is a hypothesis to check, not a dictionary entry: read sentences from each sense before naming it. On the State of the Union, World splits into World War and World Bank; some splits are only grammatical, which the sentences show at once. A one-sense word may still have second uses too rare to separate.",
-    "limits": "Two senses at most, by design. Function words are left out (they split by position in the sentence, not by meaning). Needs a word used in at least four sentences to test for two senses, and BERT's reading is general English: a specialised sense your corpus uses may not separate."
+    "what": "The separate senses of a word in your corpus: occurrences grouped into usages, so 'bank' splits into its river and money senses here.",
+    "how": "Every occurrence is embedded in its sentence context (BERT), clustered, and each cluster is a proposed sense with its example sentences - induced from the corpus, no dictionary involved.",
+    "formula": "Contextual embeddings of the target word's occurrences (BERT-base over the sentence, target-token vector); k-means over those vectors into senses, sized by the split-words panel's silhouette evidence. Each sense's exemplars are the occurrences nearest its centroid.",
+    "question": "How many senses of 'state' does this archive actually use? Ask for a few clusters and read the example sentences of each.",
+    "interpretation": "Clusters are usage-senses in this corpus: read the exemplars before naming one. The clean-split words panel names words whose occurrences cluster most clearly - the safe cases to write about.",
+    "limits": "Clusters are as many as you ask for; embeddings blur rare senses into common ones. Induced senses are corpus-relative ('the river sense here') and need not match a dictionary's divisions.",
+    "settings": "field: form (default) or lemma to group occurrences. model: bert-base-uncased (the shipped encoder). The split-words and senses panels carry the cluster count and examples.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word_sense_induction\", corpus, field=\"form\")\nnlp.show(result.table, title=\"Induced senses and their examples\")"
   },
   "bert_extract": {
-    "what": "An extractive summary of each document: the sentences closest in meaning to the document as a whole, kept in their original order. Nothing is rewritten; every summary sentence is a sentence of the document.",
-    "how": "Every sentence is turned into a vector by the chosen model (BERT, or a sentence model such as Granite from the Models page), the document's centre is the mean of those vectors, and the sentences nearest to it are kept. Choose how many sentences each summary has.",
-    "question": "What does each document say most centrally, and do the summaries of different documents differ in what they keep?",
-    "interpretation": "The picked sentences are the most typical of the document, not necessarily the most important or the most quoted: a speech's memorable line can be unlike the rest and so left out.",
-    "limits": "Centrality favours sentences that repeat the document's main vocabulary, so long, general sentences win over short vivid ones. Summaries are extractive only. A sentence model reads meaning better than BERT's averaged word pieces; try both."
+    "what": "Extractive summary: the handful of sentences that best stand for each document, chosen by a transformer reading.",
+    "how": "Sentences are embedded (BERT or a sentence-embedding model), and the ones most central to the document's meaning are selected in order of position - a TL;DR assembled from the text's own words.",
+    "formula": "Sentence embeddings (mean of the model's token vectors); centrality = mean cosine of each sentence to all others in the document (or to the document's mean vector); the top `sentences` by centrality are returned in their original order.",
+    "question": "What would a two-sentence abstract of this report be, drawn only from it? Read the extract beside the opening paragraph and compare.",
+    "interpretation": "The extract is the document's own central sentences - a map of its focus, not a paraphrase. Central sentences are often thesis statements and repetitions; their order preserves the text's sequence.",
+    "limits": "Extracts cannot state anything the document does not; irony and negation pass through unchanged. Centrality favours generic-but-universal sentences on short documents. The model choice moves the selection.",
+    "settings": "sentences: how many to extract (default 3). model: bert-base-uncased (default), granite-embedding-english-r2 or qwen3-embedding-0.6b - the embedding models installed under Models; larger models give smoother centrality at a speed cost.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"bert_extract\", corpus, sentences=3)\nnlp.show(result.table, title=\"Three central sentences per document\")"
   },
   "bert_topics": {
-    "what": "Groups the documents that read alike into topics, by meaning rather than by shared word counts, and names each group by the words that set it apart from the others.",
-    "how": "Each document becomes the mean of its sentence vectors (BERT, or a sentence model such as Granite from the Models page); seeded k-means groups the documents into the number of topics you choose. A topic's words are frequent in its documents and rarer in the rest.",
-    "question": "Do these meaning-based groups match the themes the word-count topic model (LDA) finds on the same corpus? Where they disagree, which reading is closer to yours?",
-    "interpretation": "Each document belongs to one topic here (unlike LDA, where a document mixes topics). Read the documents in a group before accepting its label; the distance column shows which ones sit at its edge.",
-    "limits": "k-means always makes the number of groups you ask for, whether or not the corpus has them. Documents are averaged sentence by sentence, so a document that changes subject lands near the middle. Results depend on the seed and the model."
+    "what": "Topics from sentence embeddings: documents (or sentences) clustered by transformer meaning, with each cluster's most typical words.",
+    "how": "Embeds the units, clusters them into k groups, and labels each group by its highest-weight vocabulary - topics as dense regions of meaning-space rather than word co-occurrence.",
+    "formula": "Unit embeddings from the chosen transformer (see doc_embeddings), standardised across units, then clustering into `topics` groups; cluster labels come from the most distinctive terms of the units in each cluster. The eras panel charts cluster shares over position or time.",
+    "question": "Do these chapters form meaning-clusters the bag-of-words model missed? Compare the k=3 clustering with LDA's on the same corpus.",
+    "interpretation": "Clusters group semantically similar units - naming one is reading its typical words and a few members. Share-over-time movement is the interesting pattern for a collection with dates.",
+    "limits": "k is imposed; embedding models have their own blind spots (see doc_embeddings). Sentence-level runs on long corpora cost; document-level blurs mixed documents into one vector. Two models need not find the same clusters.",
+    "settings": "topics: number of clusters (default 3). top-n: typical words listed per topic (default 5). seed: clustering start (default 42). model: bert-base-uncased (default), granite-embedding-english-r2 or qwen3-embedding-0.6b.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"bert_topics\", corpus, topics=3, seed=42)\nnlp.show(result.table, title=\"Meaning clusters\")"
   },
   "doc_embeddings": {
-    "what": "Reads every document with a sentence model - Granite by default, or Qwen3 Embedding from the Models page - and asks which documents mean alike. The similarity table has the same shape as Document similarity's, so shared meaning and shared words can be compared on the same heatmap.",
-    "how": "Each document is read in passages of whole sentences (about 200 words, inside the model's window) and its vector is the word-weighted mean of its passages. Pairs, nearest neighbours and a 2-D map with clusters (k chosen by silhouette) follow from those vectors. Choose the sentence unit to map sentences instead, and give a query to rank the corpus's sentences by how close they are in meaning to it.",
-    "question": "Do the documents that share vocabulary (Document similarity) also share meaning here? Which documents move together only by meaning, and what do they have in common?",
-    "interpretation": "Cosines between documents from a sentence model sit high (most pairs are 70-95%): read the order and the gaps, not the raw number. A cluster is a neighbourhood on the map; name it by reading its members. Search results are ranked by meaning, so the best match may share no word with the query.",
-    "limits": "The model is general English; a corpus's own technical senses may not separate. Long documents are averaged passage by passage, so a document that changes subject lands between its subjects. The map's distances come from t-SNE and only neighbourhoods are meaningful, not distances across the map."
+    "what": "Documents as points in meaning-space: similarity, neighbours and a map by transformer embeddings, plus search-by-meaning across the corpus.",
+    "how": "Every document (or sentence) is embedded by a small transformer; outputs are a similarity heat map, each unit's nearest neighbours, a 2-D map and a search panel answering 'what is closest to this sentence'.",
+    "formula": "Embeddings from the chosen model (mean-pooled token vectors over the unit; sentence or document unit). Similarity = cosine between vectors, shown as the heat map and neighbour lists. The map panel projects with t-SNE; search_results ranks units by cosine to the query's embedding. Vectors are cached across runs keyed by model, model file and item texts - a second run over unchanged documents recomputes nothing.",
+    "question": "What in this archive is closest in meaning to 'a promise of freedom'? Search-by-meaning finds passages TF-IDF synonyms would miss.",
+    "interpretation": "Cosine near 1 means near-interchangeable contexts to the model, not agreement or quotation. The map's geometry is a projection - distances between far clusters are less meaningful than within them.",
+    "limits": "Transformers blur nuance and carry their training biases; negation and irony get flattened. Unit choice matters: a mixed document's mean vector is a compromise. t-SNE maps are non-deterministic between runs at the details level.",
+    "settings": "model: bert-base-uncased, granite-embedding-english-r2 (default) or qwen3-embedding-0.6b. unit: document (default) or sentence. top-n: neighbours listed (default 5). query: the sentence or phrase to search by meaning. seed: projection/clustering start (default 42).",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.similar(corpus, \"a promise of freedom\", unit=\"sentence\")\nnlp.show(result, x=\"Document\", y=\"Similarity\", kind=\"bar\", title=\"Passages closest to the query\")"
   }
 }

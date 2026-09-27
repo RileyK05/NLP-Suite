@@ -69,6 +69,15 @@ class TestAttribution:
         assert row["Speaker"] == "John"
         assert row["Cue"] == "said"
 
+    def test_a_pronoun_is_marked_not_named(self) -> None:
+        """Plan 5.5.3: "he said" cannot name "he"; the marker is hidden by the figures."""
+        frame = _tokens([[("He", "O"), ("said", "O"), ('"', "O"), ("Hello", "O"), ('"', "O"), (".", "O")]])
+        result = annotate_quotes(frame)
+        assert result.ok, result.diagnostics
+        row = result.unwrap().iloc[0]
+        assert row["Speaker"] == "(pronoun)"
+        assert row["Cue"] == "said"
+
     def test_said_to_x_has_its_own_cue(self) -> None:
         frame = _tokens([[('"', "O"), ("Hello", "O"), ('"', "O"), ("said", "O"), ("to", "O"), ("Mary", "PERSON")]])
         result = annotate_quotes(frame)

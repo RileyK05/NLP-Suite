@@ -251,10 +251,26 @@ export function groupColors(groups: string[]): Map<string, string> {
       colors.set(group, REMAINDER);
       continue;
     }
+    if (summaryOf(group, ordered) !== null) continue;
     colors.set(group, OKABE_ITO[index % OKABE_ITO.length]);
     index += 1;
   }
+  // A summary ("Alice: rolling median") shares its group's colour, so each
+  // book's median reads as that book's (`static/style.SUMMARY_SUFFIX`).
+  for (const group of ordered) {
+    const parent = summaryOf(group, ordered);
+    if (parent !== null) colors.set(group, colors.get(parent)!);
+  }
   return colors;
+}
+
+export const SUMMARY_SUFFIX = ": rolling median";
+
+/** The declared group `group` summarises, or null. */
+export function summaryOf(group: string, groups: string[]): string | null {
+  if (!group.endsWith(SUMMARY_SUFFIX)) return null;
+  const parent = group.slice(0, -SUMMARY_SUFFIX.length);
+  return groups.includes(parent) ? parent : null;
 }
 
 const REMAINDER = "#9aa39a";

@@ -23,7 +23,7 @@ Three deliberate departures from the legacy suite:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 import hashlib
@@ -73,6 +73,18 @@ class Document:
     # path-based behaviour.
     source_id: str = ""
     label: str = ""
+    #: The document's details (Speaker, Kind, Chapter ...) as ``(name, value)``
+    #: pairs: a tuple so the document stays frozen and hashable. ``date`` above
+    #: is already the effective Date. Not part of :func:`corpus_fingerprint`:
+    #: details say what a text is, not what it says, so they never change a parse.
+    fields: tuple[tuple[str, str], ...] = ()
+    #: Owning project for project-backed sources; empty for ordinary file corpora.
+    source_project_id: str = ""
+
+    @property
+    def details(self) -> dict[str, str]:
+        """The details as a dict (a copy)."""
+        return dict(self.fields)
 
     @property
     def name(self) -> str:
@@ -303,6 +315,34 @@ def corpus_fingerprint(docs: tuple[Document, ...]) -> str:
         return f"{location}:{doc.sha256}"
 
     payload = "\n".join(sorted(identity(doc) for doc in docs))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def details_fingerprint(docs: Sequence[Document] | Mapping[str, Mapping[str, str]], axis: str = "") -> str:
+    """A hash over the documents' details and the axis, for caches that read them.
+
+    :func:`corpus_fingerprint` is only about what the text says, so details
+    never change a parse. But summaries, comparisons and scripts answer with
+    the details ("which party speaks most"), and they must know when a detail
+    or the axis changed. *docs* is either documents or an identity -> field ->
+    value mapping (what the store's details look like); *axis* names the
+    project's axis choice, "kind:noun" or any stable string.
+    """
+    if isinstance(docs, Mapping):
+        items: Sequence[tuple[str, Mapping[str, str]]] = list(docs.items())
+    else:
+        items = [
+            (
+                doc.name,
+                {
+                    **dict(doc.fields),
+                    **({"_source_project_id": doc.source_project_id} if doc.source_project_id else {}),
+                },
+            )
+            for doc in docs
+        ]
+    rows = [f"{identity}\t{key}\t{value}" for identity, fields in items for key, value in sorted(fields.items())]
+    payload = "\n".join(sorted(rows)) + f"\naxis\t{axis}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

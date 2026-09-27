@@ -16,11 +16,19 @@
  *   printed "income · private · sector" through "high · priority".
  */
 
-/** Ticks at round numbers between `min` and `max`, zero exactly zero. */
-export function niceTicks(min: number, max: number, count = 5): number[] {
+/** Ticks at round numbers between `min` and `max`, zero exactly zero.
+ *  `integer` keeps an order axis on whole steps ("Ch. 5", never "Ch. 2.5"). */
+export function niceTicks(
+  min: number,
+  max: number,
+  count = 5,
+  options: { integer?: boolean } = {},
+): number[] {
   if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
   if (min === max) return [clean(min, Math.abs(min) || 1)];
-  const step = niceStep(min, max, count);
+  const step = options.integer
+    ? Math.max(1, Math.round(niceStep(min, max, count)))
+    : niceStep(min, max, count);
   const ticks: number[] = [];
   for (
     let at = Math.ceil(min / step - 1e-9) * step;
@@ -61,17 +69,54 @@ function decimalsOf(value: number): number {
 }
 
 /**
+ * The abbreviations a tick label uses ("Ch. 5"); anything else is shortened
+ * by `shortNoun`'s own rule. Kept beside the Python copy in
+ * `core/viz/static/text.py` (`SHORT_NOUNS`); `tests/test_panel_parity.py`
+ * reads both so neither side can drift.
+ */
+export const SHORT_NOUNS: Record<string, string> = {
+  act: "Act",
+  book: "Bk.",
+  chapter: "Ch.",
+  document: "Doc.",
+  episode: "Ep.",
+  order: "Ord.",
+  part: "Pt.",
+  scene: "Sc.",
+  section: "Sec.",
+  session: "Ses.",
+  volume: "Vol.",
+};
+
+/** What a tick label calls one step of an order axis ("Chapter" -> "Ch."). */
+export function shortNoun(noun: string): string {
+  const word = (noun || "").trim().split(" ", 1)[0];
+  if (!word) return "Doc.";
+  const known = SHORT_NOUNS[word.toLowerCase()];
+  if (known) return known;
+  return word.length <= 4 ? word : `${word.slice(0, 2)}.`;
+}
+
+/** Labels for an order axis's ticks: whole steps named ("Ch. 5"). */
+export function orderTickLabels(ticks: number[], noun: string): string[] {
+  const short = shortNoun(noun);
+  return ticks.map((tick) => `${short} ${positiveZero(tick)}`);
+}
+
+/**
  * Labels for one axis's ticks, all at the same precision.
  *
  * `plain` keeps whole numbers ungrouped (a year axis reads 1990, never
  * "1,990"). Large values share one suffix: an axis reaching a million reads
- * 0, 0.5M, 1M rather than mixing "500k" and "1.0M".
+ * 0, 0.5M, 1M rather than mixing "500k" and "1.0M". `noun` marks an order
+ * axis, whose ticks are whole steps ("Ch. 5") regardless of precision.
  */
 export function tickLabels(
   ticks: number[],
-  options: { plain?: boolean } = {},
+  options: { plain?: boolean; noun?: string } = {},
 ): string[] {
   if (!ticks.length) return [];
+  if (options.noun) return orderTickLabels(ticks, options.noun);
   const largest = Math.max(...ticks.map((tick) => Math.abs(tick)));
   const step =
     ticks.length > 1
@@ -169,9 +214,9 @@ export function axisTicks(
   min: number,
   max: number,
   count = 5,
-  options: { plain?: boolean } = {},
+  options: { plain?: boolean; integer?: boolean; noun?: string } = {},
 ): { value: number; label: string }[] {
-  const ticks = niceTicks(min, max, count);
+  const ticks = niceTicks(min, max, count, { integer: options.integer });
   const labels = tickLabels(ticks, options);
   return ticks.map((value, index) => ({ value, label: labels[index] }));
 }

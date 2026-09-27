@@ -26,6 +26,7 @@ from core.result import Diagnostic, Result
 __all__ = [
     "KruskalResult",
     "MannWhitneyResult",
+    "cliff_band",
     "dunn",
     "kruskal_wallis",
     "mann_whitney",
@@ -97,7 +98,8 @@ def _prepare(
     return sub, display_labels, keys
 
 
-def _cliff_interp(abs_delta: float) -> str:
+def cliff_band(abs_delta: float) -> str:
+    """Romano et al.'s words for a Cliff's delta size: negligible, small, medium, large."""
     for threshold, label in _CLIFF_BANDS:
         if abs_delta < threshold:
             return label
@@ -166,7 +168,7 @@ def mann_whitney(
                 round(float(stat_u), 4),
                 round(float(p_value), 6),
                 round(cliffs_delta, 4),
-                _cliff_interp(abs(cliffs_delta)),
+                cliff_band(abs(cliffs_delta)),
                 "Yes" if p_value < alpha else "No",
                 str(display_labels[0]),
                 n1,

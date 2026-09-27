@@ -46,7 +46,7 @@ from typing import Any
 import pandas as pd
 
 from core.result import Diagnostic, Result
-from core.viz.panel_helpers import document_labels, is_function_word
+from core.viz.panel_helpers import document_labels, is_function_word, positioned
 from core.viz.panelspec import (
     Evidence,
     PanelDefinition,
@@ -748,9 +748,12 @@ def _nrc_emotion_heatmap(
     for emotion in _NRC_EIGHT:
         working[emotion] = pd.to_numeric(working[emotion], errors="coerce").fillna(0.0)
 
-    working = working.sort_values(_DOC, key=lambda col: col.map(_document_position), kind="stable").reset_index(
-        drop=True
+    places, _ = positioned(working)
+    fallback = working[_DOC].map(_document_position)
+    working = working.assign(
+        _place=[float(at) if pd.notna(at) else float(fb) for at, fb in zip(places, fallback, strict=True)]
     )
+    working = working.sort_values("_place", kind="stable").drop(columns=["_place"]).reset_index(drop=True)
     labels = document_labels(working[_DOC].tolist())
     y_categories = tuple(labels[name] for name in working[_DOC])
 
@@ -787,7 +790,7 @@ def _nrc_emotion_heatmap(
         subtitle=f"{len(working)} document(s) x {len(_NRC_EIGHT)} emotions -- value = share of each document's hits",
         marks=tuple(marks),
         x_label="Emotion",
-        y_label="Document (dated order where the file name carries a date)",
+        y_label="Document (in order)",
         provenance=provenance,
         data=working,
         x_categories=_NRC_EIGHT,
@@ -801,8 +804,8 @@ def _nrc_emotion_heatmap(
             "It is not a per-1,000-token rate: a document with very few lexicon hits can still show a large "
             "share for one emotion, so read a lone bright cell in a low-Tokens row cautiously.",
             "Positive/negative valence is scored separately by NRC and is not one of the eight columns here.",
-            "Rows are ordered by the date parsed from the file name (YYYY or YYYY-MM-DD); a document whose "
-            "name carries no such date sorts to the bottom, not into the timeline.",
+            "Rows are ordered by the corpus's own axis when the run carries one, else by the date parsed from "
+            "the file name (YYYY or YYYY-MM-DD); a document with no place sorts to the bottom, not into the sequence.",
         ),
     )
     return Result.success(prepared)
@@ -835,7 +838,7 @@ _DATE = "Date"
 _YEAR = "Year"
 
 
-def _corpus_wide_terms(frame: pd.DataFrame) -> list[Diagnostic]:
+def _corpus_wide_terms(frame: pd.DataFrame, provenance: Provenance) -> list[Diagnostic]:
     """A warning when most of the table's top terms occur in every document.
 
     Smoothed IDF gives a word found everywhere an IDF of 1, not 0, so with
@@ -844,9 +847,13 @@ def _corpus_wide_terms(frame: pd.DataFrame) -> list[Diagnostic]:
     fix is in the run, not the figure -- the table holds only each
     document's top N, so the distinctive terms were never kept. With
     max-df-ratio 0.5 the same corpus gives 1934 "industrial, restoration,
-    recovery" and 2024 "gaza, roe, predecessor".
+    recovery" and 2024 "gaza, roe, predecessor". Only a run that kept
+    everything (max-df-ratio 1) is told so: 0.5 is the default since 0.5.0.
     """
     if "Document Frequency" not in frame.columns or _DOC not in frame.columns:
+        return []
+    used = provenance.settings.get("max-df-ratio")
+    if used is not None and isinstance(used, (int, float)) and used < 1.0:
         return []
     documents = frame[_DOC].nunique()
     df = pd.to_numeric(frame["Document Frequency"], errors="coerce")
@@ -857,8 +864,8 @@ def _corpus_wide_terms(frame: pd.DataFrame) -> list[Diagnostic]:
         Diagnostic.warning(
             "PANEL_CORPUS_WIDE_TERMS",
             f"{share:.0%} of this table's top terms appear in every document, so TF-IDF here is ranking raw "
-            "frequency ('the', 'of'). Re-run tfidf with max-df-ratio below 1 (0.5 drops words found in more "
-            "than half the documents) to see what distinguishes each document.",
+            "frequency ('the', 'of'). Re-run tfidf with max-df-ratio 0.5 (its default since 0.5.0; this run "
+            "used 1.0) to see what distinguishes each document.",
             share=round(share, 3),
         )
     ]
@@ -869,7 +876,7 @@ def _tfidf_top_terms(frame: pd.DataFrame, params: Mapping[str, Any], provenance:
     working[_TFIDF] = pd.to_numeric(working[_TFIDF], errors="coerce")
     working[_COUNT] = pd.to_numeric(working.get(_COUNT, 0), errors="coerce").fillna(0)
     working["IDF"] = pd.to_numeric(working.get("IDF", 0), errors="coerce").fillna(0)
-    diagnostics: list[Diagnostic] = _corpus_wide_terms(working)
+    diagnostics: list[Diagnostic] = _corpus_wide_terms(working, provenance)
 
     requested = str(params.get("document", "") or "").strip()
     by_doc = working[[_DOC, _DATE]].drop_duplicates(subset=[_DOC]) if _DATE in working.columns else None
@@ -992,7 +999,7 @@ def _tfidf_heatmap(frame: pd.DataFrame, params: Mapping[str, Any], provenance: P
     top_k = int(params.get("top-k", 25))
     totals = working.groupby(_TERM, sort=False)[_TFIDF].sum().sort_values(ascending=False)
     terms = tuple(str(term) for term in totals.head(top_k).index)
-    diagnostics: list[Diagnostic] = _corpus_wide_terms(working)
+    diagnostics: list[Diagnostic] = _corpus_wide_terms(working, provenance)
     if len(totals) > top_k:
         diagnostics.append(
             Diagnostic.info(
@@ -1004,8 +1011,14 @@ def _tfidf_heatmap(frame: pd.DataFrame, params: Mapping[str, Any], provenance: P
             )
         )
 
+    places, _ = positioned(working)
+    place_of: dict[str, float] = {}
+    for name, at in zip(working[_DOC].astype(str), places, strict=True):
+        place_of.setdefault(name, float(at) if pd.notna(at) else float("inf"))
     by_doc = working[[_DOC, _DATE]].drop_duplicates(subset=[_DOC]) if _DATE in working.columns else None
-    if by_doc is not None and not by_doc.empty:
+    if any(value != float("inf") for value in place_of.values()):
+        ordered_docs = sorted(place_of, key=lambda name: (place_of[name], name))
+    elif by_doc is not None and not by_doc.empty:
         ordered_docs = by_doc.sort_values(_DATE, kind="stable")[_DOC].astype(str).tolist()
     else:
         ordered_docs = sorted(working[_DOC].astype(str).unique())
@@ -1062,7 +1075,7 @@ def _tfidf_heatmap(frame: pd.DataFrame, params: Mapping[str, Any], provenance: P
         subtitle=f"{len(ordered_docs)} document(s) x {len(terms)} term(s), by summed TF-IDF",
         marks=tuple(marks),
         x_label="Term",
-        y_label="Document (dated order)",
+        y_label="Document (in order)",
         provenance=provenance,
         data=cell.reset_index(drop=True),
         x_categories=terms,
@@ -1089,7 +1102,7 @@ TFIDF_HEATMAP = PanelDefinition(
     question="Which distinctive terms recur across documents, and which are unique to one?",
     tool="tfidf",
     shape="heatmap",
-    summary="Documents (dated) x the corpus's overall top TF-IDF terms; value is TF-IDF.",
+    summary="Documents (in order) x the corpus's overall top TF-IDF terms; value is TF-IDF.",
     requires=(_DOC_ID, _DOC, _TERM, _TFIDF),
     params=(
         PanelParam(

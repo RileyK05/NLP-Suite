@@ -1,11 +1,10 @@
 # System Design — NLP Suite NG (working title)
 
 > Architectural overview of the NLP Suite rebuild.
-> Read this alongside the defect review (why the old design failed),
-> `class_build_order.md` (what's needed when), and the runbook (how work is
-> executed and verified). Decisions here are the current *agreed* ones.
+> Read this alongside the replacement roadmap and ledger. Decisions here are
+> the current *agreed* ones.
 >
-> Status: the 52-chunk scaffold (`docs/CHUNK_LEDGER.md`) is implemented and
+> Status: the 52-chunk scaffold is implemented and
 > green; every diagram below describes that scaffold as built. Remaining
 > feature parity, product, and release work is tracked in
 > `docs/FULL_REPLACEMENT_PLAN.md` and `docs/REPLACEMENT_LEDGER.md`.

@@ -15,11 +15,12 @@ from collect_desktop_release import release_files
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install-in-ci", action="store_true")
+    parser.add_argument("--stage", type=Path, help="fresh directory for the payload check")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     release = root / "desktop/src-tauri/target/release"
     version = json.loads((root / "desktop/package.json").read_text(encoding="utf-8"))["version"]
-    stage = root / "out/installed-payload-check"
+    stage = args.stage or root / "out/installed-payload-check"
     stage.mkdir(parents=True, exist_ok=False)
     executable = release / ("nlp-suite-desktop.exe" if sys.platform == "win32" else "nlp-suite-desktop")
     if sys.platform == "win32" and args.install_in_ci:

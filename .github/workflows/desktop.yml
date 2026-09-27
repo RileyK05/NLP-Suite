@@ -211,7 +211,7 @@ jobs:
     # A failed platform does not hold back the others: the draft lists what
     # was attached and what was not, and nothing is public until a maintainer
     # presses Publish.
-    if: ${{ !cancelled() && !inputs.from_dev && (startsWith(github.ref, 'refs/tags/v') || inputs.release) }}
+    if: ${{ always() && !cancelled() && needs.package.result != 'cancelled' && !inputs.from_dev && (startsWith(github.ref, 'refs/tags/v') || inputs.release) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

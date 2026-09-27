@@ -82,7 +82,7 @@ class TestSurfaces:
         assert list(frame["Normalized"]) == ["1934", "1938"]
 
     def test_dates_get_sequential_ids(self) -> None:
-        result = annotate_dates("1934 then 1936 .", document="a.txt", document_id="1", date_id_start=5)
+        result = annotate_dates("in 1934 and in 1936 .", document="a.txt", document_id="1", date_id_start=5)
         frame = result.unwrap()
         assert list(frame["Date ID"]) == [5, 6]
 
@@ -106,13 +106,32 @@ class TestRejection:
         assert result.unwrap().empty
         assert not any(d.code == "DATE_YEAR_SKIPPED" for d in result.diagnostics)
 
+    def test_a_bare_count_is_not_a_year(self) -> None:
+        """ "1500 soldiers" (plan 5.5.2): in range, but nothing dates it."""
+        result = annotate_dates("The 1500 soldiers advanced on the hill.")
+        assert result.ok
+        assert result.unwrap().empty
+        diag = next(d for d in result.diagnostics if d.code == "DATE_YEAR_NO_CONTEXT")
+        assert diag.context["skipped"] == 1
+
+    def test_a_bare_year_is_kept_beside_its_date_word(self) -> None:
+        for text in ("in 1500", "since 1500", "the year 1500", "until 1500", "the spring of 1500"):
+            frame = annotate_dates(text).unwrap()
+            assert list(frame["Normalized"]) == ["1500"], text
+        month = annotate_dates("March 1500").unwrap()
+        assert list(month["Type"]) == ["month_year"], "a month name dates it, as a month and year"
+
+    def test_a_heading_that_is_just_the_year_counts_by_its_position(self) -> None:
+        frame = annotate_dates("1934. The nation rose.").unwrap()
+        assert list(frame["Type"]) == ["year"]
+
     def test_range_applies_to_every_date_type(self) -> None:
         result = annotate_dates("March 5, 1492 and the 1490s .", min_year=1800, max_year=2100)
         assert result.unwrap().empty
         assert next(d for d in result.diagnostics if d.code == "DATE_YEAR_SKIPPED").context["skipped"] == 2
 
     def test_accepted_dates_are_not_counted_as_skipped(self) -> None:
-        result = annotate_dates("1934 and 1500 .", min_year=1900, max_year=2100)
+        result = annotate_dates("in 1934 and in 1500 .", min_year=1900, max_year=2100)
         frame = result.unwrap()
         assert list(frame["Normalized"]) == ["1934"]
         assert next(d for d in result.diagnostics if d.code == "DATE_YEAR_SKIPPED").context["skipped"] == 1
@@ -165,8 +184,8 @@ class TestLoudFailures:
 class TestCorpus:
     def test_ids_continue_across_documents(self) -> None:
         docs = [
-            ("a.txt", "1", "1934 ."),
-            ("b.txt", "2", "1936 and 1938 ."),
+            ("a.txt", "1", "in 1934 ."),
+            ("b.txt", "2", "since 1936 and 1938 ."),
         ]
         result = annotate_corpus(docs)
         assert result.ok, result.diagnostics
@@ -189,10 +208,40 @@ class TestCorpus:
 
 class TestSummary:
     def test_spread_of_dates_per_document(self) -> None:
-        result = annotate_dates("1934 , 1936 , 1934 .", document="a.txt", document_id="1")
+        result = annotate_dates("in 1934 , in 1936 , in 1934 .", document="a.txt", document_id="1")
         summary = summarize_dates(result.unwrap())
         row = summary.unwrap().iloc[0]
         assert row["Dates"] == 3
         assert row["Distinct"] == 2
         assert row["Earliest"] == "1934"
         assert row["Latest"] == "1936"
+
+
+class TestBareNumberClass:
+    """Plan 5.5.2's class: every bare 4-digit number, counted or dated.
+
+    Walked whole, not by one noticed example: the text mixes speech-style
+    counts ("1,500 soldiers", "5000 miles") with years ("in 1917", "the year
+    1934"), and the annotator must keep exactly the dated ones.
+    """
+
+    TEXT = (
+        "We sent 1500 soldiers and 2000 rifles to the front in 1917. "
+        "The fleet covered 5000 miles since 1914. "
+        "The year 1934 brought relief to 1200 families. "
+        "1941. The nation rose as one. "
+        "About 3000 workers built 400 bridges by hand."
+    )
+
+    def test_every_kept_bare_year_has_its_date_word(self) -> None:
+        frame = annotate_dates(self.TEXT).unwrap()
+        bare = frame[frame["Type"] == "year"]
+        assert list(bare["Normalized"]) == ["1917", "1914", "1934", "1941"]
+
+    def test_every_count_is_left_out_and_said_so(self) -> None:
+        result = annotate_dates(self.TEXT)
+        assert result.ok
+        surfaces = set(result.unwrap()["Surface"])
+        for count in ("1500", "2000", "5000", "1200", "3000", "400"):
+            assert count not in surfaces, count
+        assert any(d.code == "DATE_YEAR_NO_CONTEXT" for d in result.diagnostics)

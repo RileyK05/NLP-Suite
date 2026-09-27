@@ -36,6 +36,7 @@ import pandas as pd
 
 from core.analysis.contextual import EmbeddingBackend, default_backend, truncation_note
 from core.conll.schema import Col, validate_columns
+from core.corpus_axis import period_key
 from core.result import Diagnostic, Result
 
 __all__ = ["TrainedBert", "distances", "neighbours", "project_tsne", "train_bert", "vectors"]
@@ -291,7 +292,7 @@ def _period_means(
         mean = totals[position] / n
         norm = float(np.linalg.norm(mean)) or 1.0
         out.append((str(word), str(period), n, tuple(float(v) for v in mean / norm)))
-    out.sort(key=lambda row: (row[0], row[1]))
+    out.sort(key=lambda row: (row[0], period_key(row[1])))
     return tuple(out)
 
 

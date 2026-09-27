@@ -49,7 +49,9 @@ DOCUMENTS = [
 
 class TestWeights:
     def test_idf_is_the_smoothed_definition(self) -> None:
-        frame = tfidf(_table(DOCUMENTS), top_n=50, normalize=False).unwrap()
+        # max_df_ratio 1.0 keeps every term, so the formula is measured over
+        # all four; the default 0.5 would drop the two in two of three docs.
+        frame = tfidf(_table(DOCUMENTS), top_n=50, normalize=False, max_df_ratio=1.0).unwrap()
         total = 3
         for term, df in (("alpha", 2), ("bravo", 2), ("delta", 1), ("echo", 1)):
             expected = math.log((1 + total) / (1 + df)) + 1
@@ -69,7 +71,7 @@ class TestWeights:
         )
         matrix = vectorizer.fit_transform(DOCUMENTS).toarray()
         terms = list(vectorizer.get_feature_names_out())
-        frame = tfidf(_table(DOCUMENTS), top_n=50).unwrap()
+        frame = tfidf(_table(DOCUMENTS), top_n=50, max_df_ratio=1.0).unwrap()
         assert not frame.empty
         for _, row in frame.iterrows():
             document = int(row["Document ID"]) - 1
@@ -92,8 +94,9 @@ class TestWeights:
             assert norm == pytest.approx(1.0, abs=1e-5)
 
     def test_a_term_in_every_document_is_downweighted_not_deleted(self) -> None:
-        """Smooth idf gives a universal term idf 1, not 0."""
-        frame = tfidf(_table(["alpha bravo", "alpha charlie"]), top_n=50, normalize=False).unwrap()
+        """Smooth idf gives a universal term idf 1, not 0 (kept by max_df_ratio 1.0;
+        the default 0.5 drops it earlier, in TestFiltering)."""
+        frame = tfidf(_table(["alpha bravo", "alpha charlie"]), top_n=50, normalize=False, max_df_ratio=1.0).unwrap()
         alpha = frame.loc[frame["Term"] == "alpha", "IDF"].iloc[0]
         bravo = frame.loc[frame["Term"] == "bravo", "IDF"].iloc[0]
         assert alpha == pytest.approx(1.0)
@@ -102,13 +105,25 @@ class TestWeights:
 
 class TestFiltering:
     def test_min_df_drops_rare_terms(self) -> None:
-        frame = tfidf(_table(DOCUMENTS), top_n=50, min_df=2).unwrap()
+        frame = tfidf(_table(DOCUMENTS), top_n=50, min_df=2, max_df_ratio=1.0).unwrap()
         assert set(frame["Term"]) <= {"alpha", "bravo"}
 
     def test_max_df_ratio_drops_ubiquitous_terms(self) -> None:
         documents = ["common alpha", "common bravo", "common charlie"]
         frame = tfidf(_table(documents), top_n=50, max_df_ratio=0.9).unwrap()
         assert "common" not in set(frame["Term"])
+
+    def test_the_default_drops_words_found_in_more_than_half_the_documents(self) -> None:
+        """D8 (Riley, 2026-09-25): 1.0 returned function words; 0.5 is informative."""
+        documents = ["common alpha", "common bravo", "common charlie"]
+        frame = tfidf(_table(documents), top_n=50).unwrap()
+        assert "common" not in set(frame["Term"])
+        assert {"alpha", "bravo", "charlie"} <= set(frame["Term"])
+
+    def test_a_corpus_of_one_keeps_its_terms_and_says_idf_is_constant(self) -> None:
+        """Every term is "everywhere" in one document: an empty table would say nothing."""
+        frame = tfidf(_table(["alpha bravo"])).unwrap()
+        assert {"alpha", "bravo"} <= set(frame["Term"])
 
     def test_min_length_drops_short_tokens(self) -> None:
         frame = tfidf(_table(["a alpha bravo"]), top_n=50, min_length=2).unwrap()

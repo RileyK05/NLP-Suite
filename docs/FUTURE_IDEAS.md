@@ -6,19 +6,12 @@ do not do yet. Discuss before promoting anything into a real roadmap item.
 
 ## Housekeeping
 
-- ~~**A 0-byte file named `None` at the repo root** was committed in `f6abb8d`~~
-  — deleted. Consider a CI check for stray root-level files.
-- ~~`docs/CHUNK_LEDGER.md` C32 "topic_model" stale note~~ — truth-up done
-  alongside the LDA split.
+- Consider a CI check for stray root-level files.
 
 ## Contract / architecture
 
-- ~~**AbortController on the wire**~~ — done as R-C8
-  (`DELETE /live/analyse/{request_id}`): a question cancelled before it starts
-  is never computed, one cancelled mid-flight has its answer discarded. Kept
-  honestly as "discard the answer", not "stop the CPU" — gensim/sklearn fits
-  are not interruptible. If someone ever wants real interruption, thread a
-  cancel token into the adapters.
+- True interruption of long model fits would require a cancellation token in
+  the adapters. Current cancellation discards a mid-flight answer.
 - **Streamed progress for long fits.** A 30 s topic model currently shows a
   ticking elapsed counter and nothing else. Server-sent events or chunked
   polling of an `analyse/{id}` status endpoint could report stages
@@ -42,24 +35,9 @@ do not do yet. Discuss before promoting anything into a real roadmap item.
   R-C1 as written. If it is ever wanted, it needs a contract amendment and
   the same single-flight/lost-request handling the explicit path has — not a
   second, older code path.
-- ~~**Run keyboard shortcut.**~~ — done: Ctrl/Cmd+Enter runs the bench and
-  submits the run dialog (the dialog marks the keystroke handled so the two
-  never both fire).
 
 ## Tools / syllabus
 
-- ~~**P4 syllabus gap tools**~~ — landed as one batch (see
-  `docs/REPLACEMENT_LEDGER.md` "Syllabus gap tools (P4)" and the manifest):
-  annotators (gender/date/quote), gender_guess, verb_analysis, ngram_viewer,
-  four neural sentiments, shape_hc/svd/nmf, geocode/gis_map/svo_map, and
-  word2vec_bert. The manifest's gap ledger is now empty; every syllabus line
-  resolves to a registered tool.
-- ~~**Embeddings split half done.**~~ — done: `word2vec_bert` exists and the
-  naming-symmetric renames landed (`word_embeddings` → `word2vec_gensim`,
-  `contextual` → `word_sense_induction`). Engine module names
-  (`core/analysis/word_embeddings.py`, `core/analysis/contextual.py`) were
-  left alone — module names are not tool names (see `lda_mallet` ←
-  `core/analysis/mallet.py`).
 - **pyLDAvis artifact as an optional extra.** Gensim LDA's Intertopic Distance
   Map and λ-relevance terms are implemented natively. If a class ever wants the
   real pyLDAvis interactive HTML, add it behind an optional extra rather than
@@ -69,15 +47,10 @@ do not do yet. Discuss before promoting anything into a real roadmap item.
   (`wordcloud_gephi`); worth a pass against the legacy GUI's option list to
   confirm every graded option is reachable from the desktop. (Not done: the
   legacy GUI's option list is not in this repo.)
-- ~~**N-gram viewer and undated corpora.**~~ — done: `ngram_viewer`'s failure
-  teaches the answer rather than just saying "no dates found"
-  (`NG_VIEWER_NO_DATES` names why the co-occurrence viewer can run undated and
-  this one cannot).
-- ~~**Comparative runs for graded comparisons.**~~ — done: `POST
-  /projects/{id}/compare` over `core/compare.compare_runs`, with a "Compare
-  with another run…" action on each finished run. Two identical runs agreeing
-  is the control test. (Still worth a side-by-side *table* view someday; the
-  diff table answers "where do they differ", not "show me both".)
+- **Side-by-side comparison tables.** The existing comparison diff shows where
+  two runs differ; a paired table could show both full results together.
+- **Three-class sentiment.** Check the candidate model's redistribution licence
+  before adding a neutral class to the released models.
 
 ## Visuals
 
@@ -102,17 +75,3 @@ do not do yet. Discuss before promoting anything into a real roadmap item.
   override in the root conftest lives at `%TEMP%/nlp-tmp` for exactly this
   reason: a workspace-local scratch dir pushed run paths over the limit and
   failed them as FileNotFoundError).
-
-## From the 2026-09-21 contract / taxonomy / LDA session
-
-- ~~**Embeddings split is half done.**~~ — finished in the P4 batch (see above).
-- **pyLDAvis as an optional extra** was deliberately not taken; the Intertopic
-  Distance Map and lambda relevance are native (`core/analysis/lda.py`). If a
-  class wants the real pyLDAvis HTML, add it as an extra that renders the same
-  numbers rather than as the source of them.
-- ~~**This machine's pytest `tmp_path` is broken**~~ — fixed in the root
-  `conftest.py` (tempfile redirected to `%TEMP%/nlp-tmp`, which also bypasses
-  the poisoned `pytest-of-<user>` directory). New tests still prefer
-  `tests/fixtures/` files where a fixture is the clearer oracle.
-- ~~**Server-side abort for lost live requests**~~ — done as R-C8.
-- ~~**Side-by-side run comparison**~~ — done (`POST /projects/{id}/compare`).

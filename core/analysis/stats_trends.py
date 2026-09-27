@@ -153,15 +153,18 @@ def _mann_kendall_stats(values: np.ndarray, alpha: float) -> dict[str, float | s
 def mann_kendall(
     frame: pd.DataFrame, date_col: str, value_col: str, *, alpha: float = 0.05
 ) -> Result[MannKendallResult]:
-    """Mann-Kendall trend test over a date column (sorted ascending first).
+    """Mann-Kendall trend test over a date or order column (sorted ascending first).
 
-    C6-6: alpha is validated and drives BOTH the significance flag and the
-    trend label (never "increasing" while "not significant"). Dates: rows
-    that fail to parse are DROPPED with counts + MK_DROPPED_DATES (never
-    silently included or excluded); duplicate dates are kept and treated as
-    separate observations by the S statistic (documented). Sen's slope is
-    per OBSERVATION INDEX — stated in the summary; the trend line uses the
-    same x-axis semantics.
+    The test is about ORDER, so the column may be dates (as before) or plain
+    numbers: chapter numbers, session ids, ranks. Numeric columns are read as
+    positions, never coerced through the calendar (``to_datetime`` turns a
+    chapter number into a nanosecond of 1970). C6-6: alpha is validated and
+    drives BOTH the significance flag and the trend label (never "increasing"
+    while "not significant"). Dates: rows that fail to parse are DROPPED with
+    counts + MK_DROPPED_DATES (never silently included or excluded);
+    duplicate values are kept and treated as separate observations by the S
+    statistic (documented). Sen's slope is per OBSERVATION INDEX — stated in
+    the summary; the trend line uses the same x-axis semantics.
     """
     if not 0 < alpha < 1:
         return Result.failure(Diagnostic.error("STATS_BAD_ALPHA", f"alpha must be in (0, 1), got {alpha}", alpha=alpha))
@@ -189,13 +192,28 @@ def mann_kendall(
         return Result.failure(Diagnostic.error("STATS_NO_NUMERIC", f"{value_col!r} has no numeric values"))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        # C6-6: per-element parse so PARTIALLY invalid date columns hit the
-        # drop-with-warning path instead of failing wholesale.
-        parsed = pd.to_datetime(sub[date_col], errors="coerce")
-    if parsed is None or bool(parsed.isna().all()):
-        return Result.failure(
-            Diagnostic.error("MK_BAD_DATES", f"could not parse dates in {date_col!r}", column=date_col)
-        )
+        numbers = pd.to_numeric(sub[date_col], errors="coerce")
+    numeric_order = not bool(numbers.isna().any())
+    if numeric_order:
+        parsed: pd.Series = numbers
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            # C6-6: per-element parse so PARTIALLY invalid date columns hit the
+            # drop-with-warning path instead of failing wholesale.
+            dates = pd.to_datetime(sub[date_col], errors="coerce")
+        if dates is None or bool(dates.isna().all()):
+            # A partially numeric order column: keep the numbers, drop the rest.
+            if bool(numbers.isna().all()):
+                return Result.failure(
+                    Diagnostic.error(
+                        "MK_BAD_DATES", f"could not parse dates or order numbers in {date_col!r}", column=date_col
+                    )
+                )
+            numeric_order = True
+            parsed = numbers
+        else:
+            parsed = dates
     dropped = int(parsed.isna().sum())
     if dropped:
         sub = sub[~parsed.isna()]
@@ -260,7 +278,9 @@ def mann_kendall(
     trend_line = np.round(intercept + slope * np.arange(len(sub)), 4)
     trend = pd.DataFrame(
         {
-            date_col: sub[date_col].dt.strftime("%Y-%m-%d"),
+            # Dates print as dates; an order column keeps its numbers, so the
+            # trend line can be drawn against chapters rather than a calendar.
+            date_col: sub[date_col].astype(float) if numeric_order else sub[date_col].dt.strftime("%Y-%m-%d"),
             value_col: sub[value_col].values,
             "Trend Line": trend_line,
         }

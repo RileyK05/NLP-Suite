@@ -30,6 +30,7 @@ DYNAMIC_CLASSES = {
     "family-",  # ToolCard: one per tool family
     "viz-origin-",  # VisualizationCatalog: one per provenance
     "status-",  # Models: one per model status (.model-status.status-ready ...)
+    "source-",  # CorpusDetails: one per detail source (.detail-cell.source-user ...)
     "lucide",  # icon library's own class
 }
 

@@ -56,6 +56,30 @@ def test_subset_is_frozen_and_published_with_scope_metadata(tmp_path: Path, monk
         runner.close()
 
 
+def test_the_input_manifest_says_which_detail_narrowed_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan 1.10: filter by a detail before a run, and the run's manifest lists the details and the filter."""
+    workspace = Workspace(tmp_path / "workspace")
+    project_id = workspace.create("Kinds")["id"]
+    # Three names: the file-name detector never reads a pattern off two.
+    workspace.import_document(project_id, "1946-01-21_harry s truman_sotu.txt", b"The state of the union is strong.")
+    workspace.import_document(project_id, "1953-02-02_dwight d eisenhower_sotu.txt", b"The union holds.")
+    kept = workspace.import_document(project_id, "1949-01-20_harry s truman_ina.txt", b"We take this oath today.")
+    runner = Runner(workspace)
+    try:
+        monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
+        job = runner.submit(project_id, "readability", {}, "spacy", selection=CorpusSelection(fields={"Kind": ["ina"]}))
+        assert run_job(workspace.root, job["id"]) == 0
+        directory, _envelope = workspace.artifacts(project_id, job["id"])
+        with (directory / "desktop_inputs.csv").open(newline="", encoding="utf-8-sig") as handle:
+            rows = list(csv.DictReader(handle))
+        assert [row["id"] for row in rows] == [kept["id"]]
+        assert rows[0]["detail_filter"] == "Kind = ina"
+        assert (rows[0]["Speaker"], rows[0]["Kind"]) == ("Harry S Truman", "ina")
+        assert rows[0]["order_from"] == ""
+    finally:
+        runner.close()
+
+
 def test_get_documents_exposes_filename_date_provenance(tmp_path: Path) -> None:
     workspace = Workspace(tmp_path / "workspace")
     project_id = workspace.create("Metadata")["id"]
@@ -164,6 +188,8 @@ def test_public_job_scope_contains_only_safe_selection_fields(tmp_path: Path, mo
                     "date_from": "2020-01-01",
                     "date_to": "2020-12-31",
                     "include_undated": True,
+                    "order_to": 5,
+                    "include_unordered": True,
                 },
             },
         )
@@ -174,6 +200,10 @@ def test_public_job_scope_contains_only_safe_selection_fields(tmp_path: Path, mo
             "date_to",
             "explicit_documents",
             "include_undated",
+            "order_from",
+            "order_to",
+            "include_unordered",
+            "fields",
         }
         assert response.json()["scope"] == {
             "document_count": 1,
@@ -181,6 +211,10 @@ def test_public_job_scope_contains_only_safe_selection_fields(tmp_path: Path, mo
             "date_to": "2020-12-31",
             "explicit_documents": True,
             "include_undated": True,
+            "order_from": None,
+            "order_to": 5.0,
+            "include_unordered": True,
+            "fields": None,
         }
     finally:
         client.close()

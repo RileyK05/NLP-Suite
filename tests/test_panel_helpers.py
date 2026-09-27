@@ -8,13 +8,16 @@ from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from core.viz.panel_helpers import (
     decimal_year,
+    detail_columns,
     document_labels,
     force_layout,
     group_of,
+    groupings,
     is_function_word,
     per_10k,
     rolling_median,
@@ -67,6 +70,56 @@ class TestDates:
         assert group_of("notes.txt", None, "speaker") == "(speaker not in file name)"
         with pytest.raises(ValueError, match="grouping"):
             group_of(FDR, None, "century")
+
+
+class TestDetailGroupings:
+    """A grouping may name a document detail: "group by Party" reads the table."""
+
+    def _frame(self) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {"Document ID": [1, 2], "Date": ["1934-01-03", "1949-01-20"], "Party": ["Democratic", "Democratic"]}
+        )
+        frame.attrs["details"] = ["Party"]
+        return frame
+
+    def test_the_table_lists_its_details_beside_the_axis_groupings(self) -> None:
+        assert groupings(self._frame()) == ("none", "year", "decade", "speaker", "Party")
+        undated = self._frame().drop(columns=["Date"])
+        assert "decade" not in groupings(undated)
+
+    def test_a_detail_grouping_reads_the_row(self) -> None:
+        frame = self._frame()
+        assert group_of(FDR, "1934-01-03", "Party", frame.iloc[0]) == "Democratic"
+
+    def test_a_renamed_detail_is_grouped_by_its_plain_name(self) -> None:
+        frame = pd.DataFrame({"Document ID": [1], "Detail: Tokens": ["heavy"]})
+        assert detail_columns(frame) == ["Tokens"]
+        assert group_of(FDR, None, "Tokens", frame.iloc[0]) == "heavy"
+
+    def test_a_blank_detail_is_named_not_dropped(self) -> None:
+        frame = self._frame()
+        frame.loc[0, "Party"] = None
+        assert group_of(FDR, None, "Party", frame.iloc[0]) == "(no party)"
+
+    def test_speaker_prefers_the_detail_and_falls_back_to_the_file_name(self) -> None:
+        frame = self._frame()
+        frame["Speaker"] = ["Harry S Truman", None]
+        assert group_of(FDR, "1934-01-03", "speaker", frame.iloc[0]) == "Harry S Truman"
+        assert group_of(FDR, "1934-01-03", "speaker", frame.iloc[1]) == "Franklin D Roosevelt"
+
+    def test_a_detail_is_never_listed_beside_the_same_name_twice(self) -> None:
+        frame = self._frame()
+        frame["Speaker"] = ["Harry S Truman", "Dwight D Eisenhower"]
+        listed = groupings(frame)
+        assert "Speaker" not in listed and "speaker" in listed
+
+    def test_every_grouping_offered_can_be_grouped_by(self) -> None:
+        """A choice the table lists must never raise when a figure groups by it."""
+        frame = self._frame()
+        frame["Position"] = [1.0, 2.0]
+        frame["Detail: Tokens"] = ["heavy", "light"]
+        for by in groupings(frame):
+            assert isinstance(group_of(FDR, "1934-01-03", by, frame.iloc[0]), str), by
 
 
 class TestRates:

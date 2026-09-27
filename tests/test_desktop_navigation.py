@@ -119,6 +119,31 @@ def test_the_research_pages_read_in_the_order_the_work_happens() -> None:
     assert positions == sorted(positions), f"sidebar reads {order}"
 
 
+def sidebar_sections() -> dict[str, str]:
+    """Each navigation key's section heading."""
+    text = source()
+    start = text.index("const navigation = [")
+    body = text[start : text.index("] as const;", start)]
+    return dict(re.findall(r'key:\s*"([a-z]+)",[^}]*?section:\s*"([A-Z]+)"', body, flags=re.S))
+
+
+def test_scripts_has_its_own_group_below_models() -> None:
+    """Asked for directly (docs/PLAN_0.5.0.md D2): Scripts and Compare get their own group below Models.
+
+    RESEARCH keeps what it had; the workshop pages are where the researcher
+    builds something of their own, and they come after the pages that run
+    the suite's tools as they are.
+    """
+    order = sidebar_order()
+    sections = sidebar_sections()
+    assert sections.get("scripts") == "WORKSHOP", sections
+    assert sections.get("compare") == "WORKSHOP", sections
+    assert sections.get("models") == "RESEARCH", sections
+    assert order.index("models") < order.index("scripts") < order.index("compare") < order.index("learn"), order
+    assert 'page === "scripts"' in source() and "<Scripts" in source()
+    assert 'page === "compare"' in source() and "<Compare" in source()
+
+
 def test_analysis_and_visualization_are_one_page() -> None:
     """They were two pages for one action, which is the clutter complaint.
 

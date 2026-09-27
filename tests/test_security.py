@@ -30,6 +30,15 @@ ALLOWLIST: dict[str, tuple[str, str]] = {
     "publish_snapshot": ("S603-subprocess", "fixed git ls-files argv on a local checkout, no shell"),
     "smoke_desktop": ("S603-subprocess S310-urlopen", "explicit test executable, local engine handshake, no shell"),
     "runner": ("S603-subprocess", "fixed local worker entrypoint and job UUID, no shell"),
+    # Smart scripts (docs/PLAN_0.5.0.md 4.4). The ONLY module allowed exec/eval:
+    # it runs the user's own notebook cells, in a separate kernel process that
+    # is never given the server's token, with a scratch working directory;
+    # results reach the project only through the nlpsuite library. Python
+    # cannot be sandboxed from inside Python, so the control is the process
+    # boundary, not a pretend sandbox (docs/SECURITY.md, Smart scripts).
+    "kernel": ("S102-exec", "user's own notebook cells, separate process, no token, scratch cwd"),
+    # Starts those kernels: fixed engine argv (--script-kernel), list, no shell.
+    "kernels": ("S603-subprocess", "fixed local kernel entrypoint and project id, argv list, no shell"),
     "server": ("socket", "binds only 127.0.0.1; bearer token, Origin and Host checks"),
     # Spawns the analyst's chosen tool CLI; argv list, shell=False.
     "jobs": ("S603-subprocess", "subprocess.Popen with a list argv and shell=False"),
@@ -126,11 +135,18 @@ class TestSecurityShapes:
     def test_no_dynamic_code_execution(self) -> None:
         offenders = []
         for path in _files():
+            if "S102-exec" in ALLOWLIST.get(path.stem, ("", ""))[0]:
+                continue
             tree = _parse(path)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):
                     offenders.append(f"{path}:{node.lineno}")
         assert not offenders, f"eval/exec calls: {offenders}"
+
+    def test_only_one_module_may_run_code(self) -> None:
+        """Widening the exec allowlist has to be a decision someone sees, not a line in a diff."""
+        allowed = sorted(stem for stem, (rule, _) in ALLOWLIST.items() if "S102-exec" in rule)
+        assert allowed == ["kernel"]
 
     def test_network_confined_to_allowlist(self) -> None:
         offenders = []
@@ -172,3 +188,5 @@ class TestSecurityShapes:
                 assert any("subprocess" in p.read_text(encoding="utf-8") for p in matches), stem
             if "urlopen" in rule:
                 assert any("urlopen" in p.read_text(encoding="utf-8") for p in matches), stem
+            if "S102-exec" in rule:
+                assert any("exec(" in p.read_text(encoding="utf-8") for p in matches), stem

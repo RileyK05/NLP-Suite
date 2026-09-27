@@ -1,5 +1,25 @@
 # NLP Suite desktop beta
 
+## 0.5.0 source candidate
+
+The Corpus page detects and edits document details, imports them from a
+spreadsheet, and selects a date or order axis. Split book previews chapters or
+transcript turns and stores each selected section as a derived document; the
+original moves to Trash by default. Runs can filter by detail or order window,
+and book figures use chapter positions. A project backup carries the details
+and derivation records.
+
+The Workshop group has **Compare** for multiple document sets, including
+alignment by a shared detail or period, and **Scripts** for local notebooks
+that call the suite library. Both save ordinary runs that Past runs and Explore
+can open. Imported or pasted notebook code is marked for review before it
+runs; see [Security](SECURITY.md) for its file and network access. Settings can
+clear recomputable parse and vector caches without removing documents or runs.
+
+This describes the current source. The 0.5.0 acceptance checks and installer
+build are still open in [the release plan](PLAN_0.5.0.md); do not describe an
+older installed app as containing these features.
+
 ## End-user hardening — 2026-09-16
 
 The source and frozen Windows engine have a restricted desktop catalog, simpler
@@ -11,9 +31,22 @@ new installer before distributing these changes.
 ## Artifact viewer update — 2026-09-15
 
 The source viewer now isolates HTML charts from the main application's CSP.
-See [artifact preview design and testing](ARTIFACT_PREVIEWS.md) for restart
-instructions, security boundaries and the outstanding installer/visual checks.
-The older installer described below does not include this fix.
+HTML charts use a dedicated `nlp-viz` protocol in the native app and a
+five-minute, single-artifact ticket in the browser preview. Neither frame URL
+contains the backend bearer token. Frames permit chart scripts under a separate
+CSP, block network loads, and keep an opaque-origin sandbox. HTML must be
+self-contained and no larger than 32 MiB; use Download if a PDF cannot display.
+
+To check the source viewer, fully restart `npm run desktop` from `desktop/`
+(a frontend refresh cannot update the native protocol). For browser preview,
+run `npm run build`, restart `python scripts/desktop_preview.py`, and open an
+existing HTML chart and wordcloud. Check hover, resize, reopen, PNG switching,
+and Download. These checks do not require rerunning analysis jobs. Native chart
+rendering on macOS/Linux still needs manual verification.
+
+The September 10 installer predates this fix. Rebuild the Python runtime and
+Tauri installer with visualization dependencies, then check charts on a clean
+machine before distributing the updated viewer.
 
 ## Release hardening — 0.3.0 (2026-09-09)
 
@@ -348,7 +381,7 @@ is not included in the installer.
 Before calling the project a full replacement, finish the remaining engine and
 GUI capability rows in `REPLACEMENT_LEDGER.md`, validate scientific outputs
 against the approved specifications, complete clean-machine/native usability
-acceptance, and settle the original-code license and distribution review.
+acceptance, and review the generated third-party notices for distribution.
 No verified ledger counts were advanced merely because the desktop builds.
 
 ## Saving a way of looking

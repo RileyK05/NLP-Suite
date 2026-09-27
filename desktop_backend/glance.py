@@ -4,8 +4,9 @@ The recipe and the sentences are :mod:`core.insight.glance`. Here: a glance
 is one job (tool ``corpus_glance``) that parses once, runs the recipe as a
 batch, and publishes each tool as a child run with its figures. The job is
 its own cache: :func:`status` finds the newest glance of this project, and
-says ``stale`` when the documents have changed since (the key is the
-documents' contents, so a rename is not a change). Uploading a document
+says ``stale`` when the documents or their details have changed since (the
+key is the documents' contents, so a rename alone is not a change; a detail
+or an axis change is, because the sentences read them). Uploading a document
 never starts one; only the button does.
 """
 
@@ -18,9 +19,11 @@ from typing import Any
 import pandas as pd
 
 from core.insight.glance import GLANCE_FIGURES, RECIPE, glance_key, summarize
+from core.io.reader import details_fingerprint
 from core.profiler.labels import tool_label
 from core.profiler.plan import Plan, build_plan
 from core.result import Result
+from desktop_backend import fields as project_fields
 from desktop_backend.store import Workspace
 
 __all__ = ["GLANCE_TOOL", "figure_file", "glance_plan", "status"]
@@ -33,7 +36,18 @@ def glance_plan() -> Result[Plan]:
 
 
 def current_key(workspace: Workspace, project_id: str) -> str:
-    return glance_key([str(document["sha256"]) for document in workspace.documents(project_id)])
+    """What a fresh glance would read: the texts' contents, the details, the axis, the recipe."""
+    documents = workspace.documents(project_id)
+    found = project_fields.details(workspace, project_id, documents)
+    axis = project_fields.resolved_axis(workspace, project_id, documents, found)
+    details = {
+        str(doc["id"]): {name: item["value"] for name, item in found.get(str(doc["id"]), {}).items()}
+        for doc in documents
+    }
+    return glance_key(
+        [str(document["sha256"]) for document in documents],
+        details_fingerprint(details, f"{axis['kind']}:{axis['noun']}"),
+    )
 
 
 def _children(run_dir: Path) -> list[dict[str, Any]]:
@@ -98,11 +112,24 @@ def status(workspace: Workspace, project_id: str) -> dict[str, Any]:
                     }
                 )
                 break
-    answer["summary"] = summarize(tables)
+    answer["summary"] = summarize(tables, *_axis_words(workspace, project_id, tables))
     answer["figures"] = figures
     if not stale:
         answer["state"] = "ready"
     return answer
+
+
+def _axis_words(workspace: Workspace, project_id: str, tables: dict[str, dict[str, pd.DataFrame]]) -> tuple[str, str]:
+    """``(kind, noun)`` for the summary's wording: the project's resolved axis, or what the tables show."""
+    documents = workspace.documents(project_id)
+    found = project_fields.details(workspace, project_id, documents)
+    axis = project_fields.resolved_axis(workspace, project_id, documents, found)
+    if axis["kind"] in ("time", "order"):
+        return str(axis["kind"]), str(axis["noun"])
+    stats = tables.get("text_statistics", {}).get("text_statistics.csv")
+    if stats is not None and "Position" in stats.columns:
+        return "order", "Document"
+    return "", ""
 
 
 def figure_file(workspace: Workspace, project_id: str, relative: str) -> Path:

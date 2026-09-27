@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { ResourceField } from "./ResourceField";
 import { desktopParams, type Param, type Tool } from "./api";
+import { loadDetails, type ProjectDetails } from "./details";
 
 /**
  * A tool's parameters as controls, from the registry's own description of them.
@@ -53,12 +55,76 @@ export function defaultParams(tool: Tool): Params {
   return params;
 }
 
+/** Parameters that name a document detail, and those that name one of its values. */
+const DETAIL_NAME_PARAMS = new Set(["group-field"]);
+const DETAIL_VALUE_PARAMS: Record<string, string> = {
+  "group-a": "group-field",
+  "group-b": "group-field",
+};
+
+/** The prefix a parameter value uses to name a detail ("field:Party"): one
+ *  spelling with `core/io/document_fields.FIELD_VALUE_PREFIX`. */
+export const FIELD_VALUE_PREFIX = "field:";
+
+/**
+ * A detail-taking choice's options: the declared choices plus one
+ * `field:<name>` per project detail, labelled with the detail's name. So
+ * "the axis to count along" can say `field:Party` without this file knowing
+ * which details a corpus has. Date is left out: year and decade already
+ * count along it.
+ */
+export function detailChoiceValues(
+  param: Pick<Param, "choices" | "choice_labels" | "details">,
+  details: Pick<ProjectDetails, "names"> | null,
+): { value: string; label: string }[] {
+  const options = param.choices.map((choice) => ({
+    value: String(choice),
+    label: param.choice_labels?.[String(choice)] ?? String(choice),
+  }));
+  if (!param.details || !details) return options;
+  const seen = new Set(options.map((option) => option.value.toLowerCase()));
+  for (const item of details.names) {
+    const value = `${FIELD_VALUE_PREFIX}${item.name}`;
+    if (item.name.toLowerCase() === "date" || seen.has(value.toLowerCase()))
+      continue;
+    options.push({ value, label: item.name });
+  }
+  return options;
+}
+
+/**
+ * What to offer in each detail parameter's box: the project's detail names,
+ * and the values of the detail already chosen. Typing a detail that exists
+ * beats remembering how it was spelled.
+ */
+export function detailSuggestions(
+  details: Pick<ProjectDetails, "names" | "documents"> | null,
+  params: Params,
+): Record<string, string[]> {
+  if (!details) return {};
+  const found: Record<string, string[]> = {};
+  const names = details.names
+    .map((item) => item.name)
+    .filter((name) => name.toLowerCase() !== "date");
+  for (const param of DETAIL_NAME_PARAMS) found[param] = names;
+  for (const [param, of] of Object.entries(DETAIL_VALUE_PARAMS)) {
+    const chosen = String(params[of] ?? "").toLowerCase();
+    const values = new Set<string>();
+    for (const perDocument of Object.values(details.documents))
+      for (const [name, item] of Object.entries(perDocument))
+        if (name.toLowerCase() === chosen) values.add(item.value);
+    found[param] = [...values].sort((a, b) => a.localeCompare(b));
+  }
+  return found;
+}
+
 export function ParamFields({
   tool,
   params,
   onChange,
   onBusyChange,
   disabled,
+  projectId,
 }: {
   tool: Tool;
   params: Params;
@@ -66,9 +132,29 @@ export function ParamFields({
   /** Called while a resource file is uploading, so callers can block Run. */
   onBusyChange?: (uploading: boolean) => void;
   disabled?: boolean;
+  /** The project whose document details the detail parameters can offer. */
+  projectId?: string;
 }) {
   const set = (name: string, value: unknown) =>
     onChange({ ...params, [name]: value });
+  const wantsDetails = desktopParams(tool).some(
+    (param) =>
+      DETAIL_NAME_PARAMS.has(param.name) ||
+      param.name in DETAIL_VALUE_PARAMS ||
+      param.details,
+  );
+  const [details, setDetails] = useState<ProjectDetails | null>(null);
+  useEffect(() => {
+    if (!projectId || !wantsDetails) return;
+    let alive = true;
+    loadDetails(projectId)
+      .then((found) => alive && setDetails(found))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [projectId, wantsDetails]);
+  const suggestions = detailSuggestions(details, params);
 
   return (
     <>
@@ -101,30 +187,44 @@ export function ParamFields({
                 )
               }
             >
-              {param.choices.map((choice) => (
-                <option key={choice} value={choice}>
-                  {param.choice_labels?.[String(choice)] ?? choice}
+              {detailChoiceValues(param, details).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
           ) : (
-            <input
-              type={NUMERIC.has(param.type) ? "number" : "text"}
-              step={param.type === "int" ? "1" : "any"}
-              required={param.required}
-              disabled={disabled}
-              min={param.minimum ?? undefined}
-              max={param.maximum ?? undefined}
-              value={String(params[param.name] ?? "")}
-              onChange={(event) =>
-                set(
-                  param.name,
-                  NUMERIC.has(param.type) && event.target.value !== ""
-                    ? Number(event.target.value)
-                    : event.target.value,
-                )
-              }
-            />
+            <>
+              <input
+                type={NUMERIC.has(param.type) ? "number" : "text"}
+                step={param.type === "int" ? "1" : "any"}
+                required={param.required}
+                disabled={disabled}
+                min={param.minimum ?? undefined}
+                max={param.maximum ?? undefined}
+                list={
+                  suggestions[param.name]?.length
+                    ? `suggest-${tool.name}-${param.name}`
+                    : undefined
+                }
+                value={String(params[param.name] ?? "")}
+                onChange={(event) =>
+                  set(
+                    param.name,
+                    NUMERIC.has(param.type) && event.target.value !== ""
+                      ? Number(event.target.value)
+                      : event.target.value,
+                  )
+                }
+              />
+              {!!suggestions[param.name]?.length && (
+                <datalist id={`suggest-${tool.name}-${param.name}`}>
+                  {suggestions[param.name].map((value) => (
+                    <option key={value} value={value} />
+                  ))}
+                </datalist>
+              )}
+            </>
           )}
           <small>{param.help}</small>
         </label>

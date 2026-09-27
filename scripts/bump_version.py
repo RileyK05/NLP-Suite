@@ -4,11 +4,11 @@ The engine and the desktop app ship in one installer under one version, and
 that version is spelled out in eight files. Editing them by hand is how
 pyproject once drifted to 0.1.0. Usage, from the repository root:
 
-    python scripts/bump_version.py 0.3.1
-    git commit -am "Release 0.3.1" && git tag v0.3.1 && git push origin main v0.3.1
+    python scripts/bump_version.py 0.5.0
 
-Pushing the tag runs the desktop workflow, which builds every platform and
-drafts a GitHub Release with the installers attached.
+Commit and push the version change to dev main, then use the public repository's
+"Publish dev to public" workflow. It mirrors dev and drafts platform builds;
+the public release workflow publishes after its assets and notes are checked.
 """
 
 from __future__ import annotations
@@ -80,9 +80,7 @@ def main() -> None:
     print(f"Version {args.version}: updated {len(changed)} file(s)")
     for name in changed:
         print(f"  {name}")
-    print(
-        f'Next: git commit -am "Release {args.version}" && git tag v{args.version} && git push origin main v{args.version}'
-    )
+    print("Next: commit and push dev main, then run Publish dev to public on the public repository")
 
 
 if __name__ == "__main__":

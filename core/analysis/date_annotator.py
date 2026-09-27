@@ -84,6 +84,85 @@ def _month_number(name: str) -> int:
     return _MONTHS[name.strip().lower()]
 
 
+#: Words that make a bare 4-digit number read as a year ("in 1500", "the year
+#: 1934", "March 2020"). A number without one is a count ("1500 soldiers") --
+#: so common words like "the", "of", "to" and "about" are deliberately absent:
+#: "the 1500 soldiers" is a count.
+_DATE_CUES: frozenset[str] = frozenset(
+    {
+        "after",
+        "before",
+        "by",
+        "circa",
+        "decade",
+        "decades",
+        "during",
+        "early",
+        "from",
+        "late",
+        "mid",
+        "in",
+        "since",
+        "through",
+        "throughout",
+        "till",
+        "until",
+        "year",
+        "years",
+        "ad",
+        "bc",
+        "bce",
+        "ce",
+        "era",
+        "spring",
+        "summer",
+        "fall",
+        "autumn",
+        "winter",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "sept",
+        "oct",
+        "nov",
+        "dec",
+    }
+)
+_WORD_RE = re.compile(r"[a-z]+")
+
+
+def _dated_context(text: str, start: int, end: int) -> bool:
+    """A bare number reads as a year only beside a date word, or alone in its line.
+
+    "1,500 soldiers" is a count; "in 1500" is a year. A heading-like line
+    that is just the year ("1934.") is a date by its position (plan 5.5.2).
+    """
+    before = _WORD_RE.findall(text[max(0, start - 48) : start].casefold())[-2:]
+    after = _WORD_RE.findall(text[end : end + 48].casefold())[:2]
+    if any(word in _DATE_CUES for word in [*before, *after]):
+        return True
+    left = text[:start].rstrip()
+    right = text[end:].lstrip()
+    return (not left or left[-1] in ".!?\n") and (not right or right[0] in ".!?,;\n")
+
+
 def _parse_match(match: re.Match[str]) -> tuple[str, str, int] | None:
     """(Normalized, Type, year) for one regex hit, or None when it is not a date.
 
@@ -156,14 +235,19 @@ def annotate_dates(
         )
     rows: list[dict[str, object]] = []
     skipped = 0
+    contextless = 0
+    source = text or ""
     next_id = date_id_start
-    for match in _DATE_RE.finditer(text or ""):
+    for match in _DATE_RE.finditer(source):
         parsed = _parse_match(match)
         if parsed is None:
             continue
         normalized, kind, year = parsed
         if not min_year <= year <= max_year:
             skipped += 1
+            continue
+        if kind == "year" and not _dated_context(source, match.start(), match.end()):
+            contextless += 1
             continue
         rows.append(
             {
@@ -176,9 +260,9 @@ def annotate_dates(
             }
         )
         next_id += 1
-    diags: tuple[Diagnostic, ...] = ()
+    diags: list[Diagnostic] = []
     if skipped:
-        diags = (
+        diags.append(
             Diagnostic.warning(
                 "DATE_YEAR_SKIPPED",
                 f"skipped {skipped} date-like candidate(s) outside {min_year}..{max_year}",
@@ -187,7 +271,18 @@ def annotate_dates(
                 skipped=skipped,
                 min_year=min_year,
                 max_year=max_year,
-            ),
+            )
+        )
+    if contextless:
+        diags.append(
+            Diagnostic.info(
+                "DATE_YEAR_NO_CONTEXT",
+                f"left out {contextless} bare number(s) with no date word beside them "
+                "('1500 soldiers' is a count, not a year)",
+                document=document,
+                document_id=document_id,
+                skipped=contextless,
+            )
         )
     return Result.success(pd.DataFrame(rows, columns=_COLUMNS), *diags)
 

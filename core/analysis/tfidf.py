@@ -79,7 +79,7 @@ def tfidf(
     field: Col = Col.LEMMA,
     top_n: int = 20,
     min_df: int = 1,
-    max_df_ratio: float = 1.0,
+    max_df_ratio: float = 0.5,
     min_length: int = 1,
     sublinear_tf: bool = False,
     normalize: bool = True,
@@ -117,7 +117,10 @@ def tfidf(
     for counts in per_document.values():
         document_frequency.update(counts.keys())
 
-    max_df = max_df_ratio * total_documents
+    # The ceiling is at least one document: on a corpus of one every term is
+    # "everywhere", and a table with no term surviving tells a reader nothing.
+    # The single document keeps its terms and the constant-idf warning instead.
+    max_df = max(max_df_ratio * total_documents, 1.0)
     vocabulary = {term: df for term, df in document_frequency.items() if df >= min_df and df <= max_df}
     if not vocabulary:
         return Result.success(

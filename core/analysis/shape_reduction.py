@@ -11,6 +11,9 @@ The matrix is the deterministic story shape of :mod:`core.viz.shapes`
 (Tokens / Noun Ratio / Verb Ratio per sentence), resampled per document to a
 fixed length exactly as :mod:`core.viz.shape_clusters` does for KMeans, so
 these three reductions sit beside that clustering on identical inputs.
+SVD and NMF standardize each feature first (Riley, D7, 2026-09-25), so
+sentence length is no longer the first component; the matrix itself is
+published unstandardized.
 
 What each one means, in the plainest terms the guides repeat:
 
@@ -108,6 +111,22 @@ def _resample(values: np.ndarray, resample: int) -> np.ndarray:
     x = np.linspace(0.0, 1.0, num=resample)
     xp = np.linspace(0.0, 1.0, num=len(values))
     return np.asarray(np.interp(x, xp, values), dtype=np.float64)
+
+
+def _standardize(values: np.ndarray) -> np.ndarray:
+    """Per-feature z-scores, so sentence length stops being the first component.
+
+    Token counts run in the tens and the noun and verb ratios below 1:
+    unstandardized, SVD's first component is the size of the sentences and
+    the ratios' shapes never show (on the 87-speech run component 1's largest
+    token loading was about 100 times its largest ratio loading). Approved by
+    Riley (D7, 2026-09-25): new runs give different shapes from 0.4.0's. A
+    feature that does not vary becomes zeros rather than dividing by zero.
+    """
+    centered = values - values.mean(axis=0)
+    scale = values.std(axis=0)
+    scale[scale == 0.0] = 1.0
+    return np.asarray(centered / scale, dtype=np.float64)
 
 
 def build_shape_matrix(sentences: pd.DataFrame, *, resample: int = _DEFAULT_RESAMPLE) -> Result[ShapeMatrix]:
@@ -312,8 +331,10 @@ def svd_reduce(
 ) -> Result[ReductionResult]:
     """Orthogonal axes of variation, each with its share of the variance.
 
-    ``TruncatedSVD``'s randomized algorithm is seeded, so the same seed and
-    the same matrix give back the same axes.
+    The features are standardized first (:func:`_standardize`), so the axes
+    describe shape rather than sentence length. ``TruncatedSVD``'s randomized
+    algorithm is seeded, so the same seed and the same matrix give back the
+    same axes.
     """
     guard = _too_small(shape, 2)
     if guard is not None:
@@ -330,8 +351,9 @@ def svd_reduce(
         )
     from sklearn.decomposition import TruncatedSVD
 
+    matrix = _standardize(shape.values)
     model = TruncatedSVD(n_components=n_components, random_state=seed)
-    scores = model.fit_transform(shape.values)
+    scores = model.fit_transform(matrix)
     shares = [float(v) for v in model.explained_variance_ratio_]
     total = sum(shares) or 1.0
     normalized = [share / total for share in shares]
@@ -343,7 +365,11 @@ def svd_reduce(
             method="svd",
             n_components=n_components,
             seed=seed,
-        )
+        ),
+        Diagnostic.info(
+            "SHAPE_STANDARDIZED",
+            "SVD was fit on per-feature z-scores, so its components describe shape rather than sentence length",
+        ),
     )
 
 
@@ -356,10 +382,12 @@ def nmf_reduce(
 ) -> Result[ReductionResult]:
     """Additive non-negative parts of the story trajectories.
 
-    Each FEATURE column is shifted up by its own minimum so nothing is
-    negative, and the shift is deliberately not undone: the parts are
-    interpretable as non-negative contributions, and the reconstruction is of
-    the shifted matrix. ``shift`` reports the largest single column shift.
+    The features are standardized first (:func:`_standardize`), so the parts
+    describe shape rather than sentence length. Each FEATURE column is then
+    shifted up by its own minimum so nothing is negative, and the shift is
+    deliberately not undone: the parts are interpretable as non-negative
+    contributions, and the reconstruction is of the shifted matrix. ``shift``
+    reports the largest single column shift.
     """
     guard = _too_small(shape, 2)
     if guard is not None:
@@ -378,9 +406,13 @@ def nmf_reduce(
         )
     from sklearn.decomposition import NMF
 
-    column_mins = shape.values.min(axis=0)
-    shifted = shape.values - column_mins
-    shift = float(column_mins.max()) if len(column_mins) else 0.0
+    matrix = _standardize(shape.values)
+    column_mins = matrix.min(axis=0)
+    shifted = matrix - column_mins
+    # How far the worst column was lifted to reach zero: the largest shift
+    # any column saw, which is what the reader is told about.
+    lowest = float(column_mins.min()) if len(column_mins) else 0.0
+    shift = max(0.0, -lowest)
     init = "nndsvda" if n_components <= min(shifted.shape) else "random"
     model = NMF(n_components=n_components, init=init, random_state=seed, max_iter=max_iter)
     scores = model.fit_transform(shifted)
@@ -390,10 +422,14 @@ def nmf_reduce(
     share_label = "Share of mass"
     diags = [
         Diagnostic.info(
+            "SHAPE_STANDARDIZED",
+            "NMF was fit on per-feature z-scores, so its parts describe shape rather than sentence length",
+        ),
+        Diagnostic.info(
             "SHAPE_NMF_SHIFT",
             f"NMF saw values shifted up by up to {shift:.4f} (non-negative input)",
             shift=round(shift, 4),
-        )
+        ),
     ]
     # Shares stay in component order (not sorted): row i of the table is
     # component i's share, so the table can be read against the score and

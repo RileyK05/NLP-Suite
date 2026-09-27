@@ -377,3 +377,37 @@ class TestC617Hardening:
         result = compare_runs(golden, evil)
         assert result.value is None
         assert any(d.code == "COMPARE_ARTIFACT_ESCAPE" for d in result.diagnostics)
+
+
+def _with_figure(path: Path, caption: str) -> Path:
+    """A run whose figure's caption says when it was drawn, as every published figure's does."""
+    run = _make_run(path)
+    (run / "figures").mkdir()
+    (run / "figures" / "README.md").write_text(f"Drawn from `out.csv` · {caption}\n", encoding="utf-8")
+    env = Envelope.read(run).unwrap()
+    extended = Envelope(
+        tool=env.tool,
+        params=env.params,
+        inputs=env.inputs,
+        artifacts=(*env.artifacts, Artifact(kind="figure", path="figures/README.md")),
+        diagnostics=env.diagnostics,
+        corpus_sha256=env.corpus_sha256,
+    )
+    assert extended.write(run).ok
+    return run
+
+
+class TestFigures:
+    def test_runs_drawn_a_second_apart_still_match(self, tmp_path: Path) -> None:
+        """Two identical runs differed in one caption's timestamp, and "compare two runs" called them different."""
+        first = _with_figure(tmp_path / "a", "2026-09-26T09:39:06+00:00")
+        second = _with_figure(tmp_path / "b", "2026-09-26T09:39:07+00:00")
+        result = compare_runs(first, second)
+        assert result.ok and result.unwrap().passed, [str(d) for d in result.diagnostics]
+
+    def test_a_figure_one_run_lacks_is_still_a_difference(self, tmp_path: Path) -> None:
+        first = _with_figure(tmp_path / "a", "2026-09-26T09:39:06+00:00")
+        second = _make_run(tmp_path / "b")
+        report = compare_runs(first, second).unwrap()
+        assert not report.passed
+        assert "figures/README.md" in set(report.diff["Row"])

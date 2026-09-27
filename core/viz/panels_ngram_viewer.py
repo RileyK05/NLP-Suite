@@ -8,13 +8,18 @@ from typing import Any
 
 import pandas as pd
 
+from core.corpus_axis import along, plural
 from core.result import Diagnostic, Result
-from core.viz.panelspec import Evidence, PanelDefinition, PanelMark, PanelParam, PreparedPanel, Provenance
+from core.viz.panelspec import AXIS, Evidence, PanelDefinition, PanelMark, PanelParam, PreparedPanel, Provenance
 
 __all__ = ["NGRAM_FREQUENCY_OVER_TIME", "ngram_frequency_over_time"]
 
 NGRAM = "N-gram"
 YEAR = "Year"
+#: On a corpus lined up by chapter or session the tool counts per step, not per
+#: year (core/profiler/executor.py _adapt_ngram_viewer).
+POSITION = "Position"
+POSITION_LABEL = "Position label"
 COUNT = "Count"
 PER_MILLION = "Per Million"
 SHARE = "Share of Documents"
@@ -33,11 +38,15 @@ def ngram_frequency_over_time(
         return Result.failure(Diagnostic.error("PANEL_BAD_PARAM", f"unsupported n-gram metric {metric!r}"))
 
     working = frame.copy()
-    working[YEAR] = pd.to_numeric(working[YEAR], errors="coerce")
+    step = YEAR if YEAR in working.columns else POSITION
+    labels = working[POSITION_LABEL].dropna().astype(str) if POSITION_LABEL in working.columns else pd.Series(dtype=str)
+    noun = labels.iloc[0].rsplit(" ", 1)[0] if step == POSITION and not labels.empty else "Order"
+    unit = "year" if step == YEAR else noun.lower()
+    working[step] = pd.to_numeric(working[step], errors="coerce")
     working[metric] = pd.to_numeric(working[metric], errors="coerce")
-    valid = working[YEAR].notna() & working[metric].notna() & working[NGRAM].notna()
+    valid = working[step].notna() & working[metric].notna() & working[NGRAM].notna()
     dropped = int((~valid).sum())
-    working = working.loc[valid].sort_values([NGRAM, YEAR], kind="stable")
+    working = working.loc[valid].sort_values([NGRAM, step], kind="stable")
     diagnostics: list[Diagnostic] = []
     if dropped:
         diagnostics.append(
@@ -66,7 +75,7 @@ def ngram_frequency_over_time(
     marks: list[PanelMark] = []
     for _, row in working.iterrows():
         query = str(row[NGRAM])
-        year = int(row[YEAR])
+        year = int(row[step])
         value = float(row[metric])
         key = f"{query}\u241f{year}"
         raw_value = row.get("Raw Count")
@@ -93,9 +102,9 @@ def ngram_frequency_over_time(
                 group=query,
                 evidence=Evidence(
                     scope="rows",
-                    filters=((NGRAM, query), (YEAR, str(year))),
+                    filters=((NGRAM, query), (step, str(year))),
                     count=max(0, raw_count) if raw_count is not None else 1,
-                    describe=f"{query}, {year}: {metric} {value:g}{matches}{exposure}",
+                    describe=f"{query}, {'' if step == YEAR else noun + ' '}{year}: {metric} {value:g}{matches}{exposure}",
                 ),
             )
         )
@@ -103,10 +112,12 @@ def ngram_frequency_over_time(
     prepared = PreparedPanel(
         panel=NGRAM_FREQUENCY_OVER_TIME.name,
         shape="line_series",
-        title="N-gram frequency over time",
-        subtitle=f"{len(groups)} n-gram series; {len(marks)} corpus-exposure year points",
+        title="N-gram frequency over time" if step == YEAR else f"N-gram frequency {along('order', noun)}",
+        subtitle=f"{len(groups)} n-gram series; {len(marks)} corpus-exposure {unit} points",
         marks=tuple(marks),
-        x_label="Year",
+        x_label="Year" if step == YEAR else noun,
+        x_axis="time" if step == YEAR else "order",
+        x_noun="" if step == YEAR else noun,
         y_label=metric,
         provenance=provenance,
         data=working,
@@ -130,7 +141,7 @@ NGRAM_FREQUENCY_OVER_TIME = PanelDefinition(
     tool="ngram_viewer",
     shape="line_series",
     summary="Independent n-gram frequency lines over dated corpus exposure years.",
-    requires=(NGRAM, YEAR, COUNT, PER_MILLION, SHARE),
+    requires=(NGRAM, AXIS, COUNT, PER_MILLION, SHARE),
     params=(
         PanelParam(
             name="metric",

@@ -103,6 +103,10 @@ class ParamSpec:
     choices: tuple[object, ...] = ()
     minimum: float | None = None
     maximum: float | None = None
+    #: A choice that also accepts a document detail: ``field:<name>``
+    #: ("field:Party") names one detail's values as the grouping. The declared
+    #: choices are the base; the tool checks the detail exists.
+    details: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +153,7 @@ def _flag(  # noqa: PLR0913
     choices: tuple[object, ...] = (),
     minimum: float | None = None,
     maximum: float | None = None,
+    details: bool = False,
 ) -> ParamSpec:
     return ParamSpec(
         name=name,
@@ -159,6 +164,7 @@ def _flag(  # noqa: PLR0913
         choices=choices,
         minimum=minimum,
         maximum=maximum,
+        details=details,
     )
 
 
@@ -1018,7 +1024,15 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         requires_parse=True,
         parser_backend="config",
         input_kind="corpus",
-        params=(),
+        params=(
+            _flag(
+                "ignore",
+                "str",
+                "",
+                "comma-separated entity names to leave out (e.g. 'Speaker, Chamber'): the reviewed "
+                "stop-entity list of plan 5.2",
+            ),
+        ),
         outputs=("entity_timeline.csv", "locations.csv", "movement_tracks.csv", "movement_summary.csv"),
         version="1",
     ),
@@ -1282,7 +1296,15 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
             ),
             # Spelled out rather than imported: the registry is data and does
             # not import tool modules. A test pins these to lexicon_series.BY_CHOICES.
-            _flag("by", "str", "year", "the axis to count along", choices=("year", "decade", "document", "pattern")),
+            _flag(
+                "by",
+                "str",
+                "year",
+                "the axis to count along: year, decade, document, pattern, each Order value, "
+                "the axis's periods, or 'field:<detail name>' for a document detail's values",
+                choices=("year", "decade", "document", "pattern", "order", "period"),
+                details=True,
+            ),
             _flag(
                 "group-pattern",
                 "str",
@@ -1316,8 +1338,8 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
             _flag(
                 "max-df-ratio",
                 "float",
-                1.0,
-                "drop terms in more than this fraction of documents",
+                0.5,
+                "drop terms in more than this fraction of documents (0.5 since 0.5.0; 1.0 keeps them)",
                 minimum=0.0,
                 maximum=1.0,
             ),
@@ -1359,19 +1381,27 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         parser_backend="config",
         input_kind="corpus",
         params=(
-            ParamSpec(
-                name="group-pattern",
-                type="str",
-                default=None,
-                required=True,
-                help="regex over document names; group A matches, group B is the rest",
+            _flag(
+                "group-field",
+                "str",
+                "",
+                "a document detail that names the groups (Kind, Speaker); used instead of group-pattern",
+            ),
+            _flag("group-a", "str", "", "the detail's value(s) for group A, comma-separated (sotu)"),
+            _flag("group-b", "str", "", "the detail's value(s) for group B; empty = every other document"),
+            _flag(
+                "group-pattern",
+                "str",
+                "",
+                "regex over document names; group A matches, group B is the rest (when no group-field)",
             ),
             _flag("field", "str", "lemma", "token field", choices=("form", "lemma")),
             _flag("smoothing", "float", 0.5, "Log Ratio smoothing (Hardie 0.5)", minimum=0.000001),
             _flag("top-n", "int", 200, "keyness rows kept (0 = all)", minimum=0),
         ),
         outputs=("keyness.csv",),
-        version="1",
+        # 2: groups by a document detail (group-field/a/b); group-pattern optional.
+        version="2",
     ),
     ToolSpec(
         name="bert_topics",

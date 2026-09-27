@@ -144,6 +144,17 @@ class TestSvd:
         assert abs(float(result.explained["Cumulative"].iloc[-1]) - 1.0) < 1e-6
         assert len(result.loadings) == len(matrix.feature_names)
 
+    def test_the_features_are_standardized_so_length_is_not_the_component(self) -> None:
+        """D7 (Riley, 2026-09-25): unstandardized, component 1 was sentence length."""
+        matrix = build_shape_matrix(corpus(), resample=8).unwrap()
+        outcome = svd_reduce(matrix, n_components=2, seed=7)
+        result = outcome.unwrap()
+        assert any(d.code == "SHAPE_STANDARDIZED" for d in outcome.diagnostics)
+        loadings = result.loadings.set_index("Feature")
+        token = loadings.loc[[f"Tokens {i:02d}" for i in range(1, 9)], "Component 1"].abs().max()
+        ratio = loadings.loc[[f"Noun Ratio {i:02d}" for i in range(1, 9)], "Component 1"].abs().max()
+        assert ratio > 0.1 * token, "a ratio's loading still cannot compete with the tokens'"
+
     def test_a_fixed_seed_repeats_exactly(self) -> None:
         matrix = build_shape_matrix(corpus(), resample=8).unwrap()
         first = svd_reduce(matrix, n_components=2, seed=7).unwrap()
@@ -175,6 +186,7 @@ class TestNmf:
         assert result.ok, result.diagnostics
         assert result.value.shift > 0
         assert any(d.code == "SHAPE_NMF_SHIFT" for d in result.diagnostics)
+        assert any(d.code == "SHAPE_STANDARDIZED" for d in result.diagnostics)
 
     def test_a_fixed_seed_repeats_exactly(self) -> None:
         matrix = build_shape_matrix(corpus(), resample=8).unwrap()

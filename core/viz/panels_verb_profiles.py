@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from core.result import Diagnostic, Result
-from core.viz.panel_helpers import decimal_year, document_labels, group_of
+from core.viz.panel_helpers import decimal_year, document_labels, group_of, positioned
 from core.viz.panelspec import Annotation, Evidence, PanelDefinition, PanelMark, PanelParam, PreparedPanel, Provenance
 
 __all__ = ["VERB_PROFILE_PANELS"]
@@ -31,8 +31,9 @@ _GROUP_BY = PanelParam(
     type="choice",
     default="decade",
     choices=("decade", "speaker", "none"),
+    details=True,
     label="Colour speeches by",
-    help="Group points by decade or speaker parsed from the document name.",
+    help="Group points by decade, by speaker, or by a document detail (Party, Kind...) the corpus carries.",
 )
 _MIN_VERBS = PanelParam(
     name="minimum-verbs",
@@ -82,15 +83,35 @@ def _documents(frame: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=columns)
 
     rows: list[dict[str, object]] = []
+    places, _ = positioned(working)
     for (doc_id, name), group in working.groupby([DOC_ID, DOC], sort=False, dropna=False):
         year = _year_from_name(str(name))
-        row: dict[str, object] = {DOC_ID: str(doc_id), DOC: str(name), "Year": year, "Verbs": len(group)}
+        place = places.loc[group.index[0]]
+        if pd.isna(place):
+            place = year  # no axis column: the year in the name, as before
+        row: dict[str, object] = {
+            DOC_ID: str(doc_id),
+            DOC: str(name),
+            "Year": year,
+            "Verbs": len(group),
+            "_place": place,
+        }
         for category in _VOICE_LABELS:
             row[f"voice:{category}"] = int((group[VOICE] == category).sum())
         for category in _MODALITY_LABELS:
             row[f"modality:{category}"] = int((group[MODALITY] == category).sum())
         rows.append(row)
-    return pd.DataFrame(rows).sort_values(["Year", DOC_ID], na_position="last", kind="stable").reset_index(drop=True)
+
+    # The corpus's own order first (a chapter number, a date); a year read
+    # from the name is only what stands in when nothing places the document.
+    def _place_of(row: dict[str, object]) -> float:
+        value = row["_place"]
+        return float(value) if isinstance(value, (int, float)) and not pd.isna(value) else float("inf")
+
+    rows.sort(key=lambda row: (_place_of(row), str(row[DOC_ID])))
+    for row in rows:
+        del row["_place"]
+    return pd.DataFrame(rows).reset_index(drop=True)
 
 
 def _composition(  # noqa: PLR0913 - panel metadata is explicit and keyword-only
@@ -153,11 +174,13 @@ def _composition(  # noqa: PLR0913 - panel metadata is explicit and keyword-only
             )
             start += share
 
+    _, axis = positioned(frame)
+    order_word = "year" if axis.kind == "time" else (axis.noun.lower() if axis.kind == "order" else "document order")
     prepared = PreparedPanel(
         panel=definition.name,
         shape="ribbon",
         title=definition.title,
-        subtitle=f"{len(docs)} speeches, ordered by year; each band totals 100% of that speech's verbs",
+        subtitle=f"{len(docs)} speeches, ordered by {order_word}; each band totals 100% of that speech's verbs",
         marks=tuple(marks),
         x_label=f"Share of {field} categories in each speech",
         y_label="Speech",
@@ -222,10 +245,10 @@ def _agency_commitment(frame: pd.DataFrame, params: Mapping[str, Any], provenanc
                 "Verbs": total,
                 "Passive %": 100.0 * passive / total,
                 "Obligation %": 100.0 * obligation / total,
-                "Group": group_of(str(row[DOC]), str(int(year)) if pd.notna(year) else None, grouping),
+                "Group": group_of(str(row[DOC]), str(int(year)) if pd.notna(year) else None, grouping, row),
             }
         )
-    result = pd.DataFrame(rows).sort_values(["Year", DOC_ID], na_position="last", kind="stable").reset_index(drop=True)
+    result = pd.DataFrame(rows).reset_index(drop=True)
     groups = tuple(dict.fromkeys(result["Group"].astype(str)))
 
     # Label only the most extreme points, keeping a dense corpus readable.

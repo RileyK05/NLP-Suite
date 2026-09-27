@@ -31,6 +31,9 @@ CORE = ROOT / "core"
 # - models/download.py: writes downloaded model files into the user's models
 #   directory (never a run directory), each through <file>.partial and an
 #   atomic rename after its SHA-256 checks out
+# - models/vector_cache.py: writes cached embedding matrices into the
+#   workspace's vectors/ directory (never a run directory), each through
+#   <file>.partial and an atomic rename (plan 5.4)
 # - profiler/batch.py: publishes batch children through OutputWriter only
 #   (the ".write_text(" match is the writer.write_text METHOD call, not a
 #   direct filesystem write — it contains no open/mkdir/Path.write call)
@@ -43,6 +46,7 @@ ALLOWED_WRITERS: frozenset[str] = frozenset(
         "core/file_ops/merger.py",
         "core/pcace/core.py",
         "core/models/download.py",
+        "core/models/vector_cache.py",
         "core/profiler/batch.py",
     }
 )

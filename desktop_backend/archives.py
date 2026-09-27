@@ -14,9 +14,12 @@ import zipfile
 
 from pydantic import ValidationError
 
+from desktop_backend.comparisons import MAX_COMPARISONS_PER_PROJECT, ComparisonBody, comparisons
+from desktop_backend.fields import MAX_FIELDS_PER_PROJECT, FieldRow, FieldSettings, settings, stored_rows
+from desktop_backend.notebooks import MAX_NOTEBOOKS_PER_PROJECT, NotebookBody
 from desktop_backend.paths import portable_key, safe_relative
 from desktop_backend.questions import MAX_QUESTIONS_PER_PROJECT, QuestionBody
-from desktop_backend.store import MAX_DOCUMENTS, MAX_PROJECT_NAME, TERMINAL_JOB_STATES, Workspace
+from desktop_backend.store import MAX_DOCUMENTS, MAX_PROJECT_NAME, TERMINAL_JOB_STATES, Workspace, now
 from desktop_backend.views import MAX_VIEWS_PER_PROJECT, ViewBody
 
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -59,12 +62,14 @@ def backup(workspace: Workspace, project_id: str, destination: Path) -> None:
     manifest: dict[str, Any] = {
         "format": "nlp-suite-project",
         # Version 2 adds saved views; version 3 adds questions; version 4
-        # records trashed documents and runs. Trashed projects cannot be backed up.
+        # records trashed documents and runs; version 5 adds notebooks;
+        # version 6 adds document details someone set, the project's detail
+        # settings, and saved comparisons. Trashed projects cannot be backed up.
         # An older build refuses this archive outright rather than restoring it
         # with every saved view silently missing. Refusing is the safe
         # direction: a backup that quietly comes back smaller than it went in
         # is only discovered by the person who needed the missing part.
-        "version": 4,
+        "version": 6,
         "project": project,
         "documents": workspace.documents(project_id, include_trashed=True),
         "jobs": workspace.jobs(project_id, include_trashed=True),
@@ -73,6 +78,12 @@ def backup(workspace: Workspace, project_id: str, destination: Path) -> None:
         # to disagree with it.
         "views": [{k: v for k, v in view.items() if k != "source"} for view in workspace.views(project_id)],
         "questions": workspace.questions(project_id),
+        "notebooks": workspace.notebooks(project_id),
+        # Details read from file names are not stored anywhere, so they come
+        # back by themselves; these are the ones a person or spreadsheet set.
+        "details": stored_rows(workspace, project_id),
+        "settings": settings(workspace, project_id)["settings"],
+        "comparisons": comparisons(workspace, project_id),
         "files": {},
     }
     total = 0
@@ -124,7 +135,7 @@ def restore(workspace: Workspace, source: Path) -> dict[str, Any]:
             if archive.getinfo("project.json").file_size > MAX_MANIFEST_BYTES:
                 raise ValueError("Project manifest is too large.")
             manifest = json.loads(archive.read("project.json"))
-            if manifest.get("format") != "nlp-suite-project" or manifest.get("version") not in (1, 2, 3, 4):
+            if manifest.get("format") != "nlp-suite-project" or manifest.get("version") not in (1, 2, 3, 4, 5, 6):
                 raise ValueError("Unsupported project archive version.")
             files = manifest["files"]
             if not isinstance(files, dict) or set(names) != {
@@ -174,6 +185,9 @@ def _validate_inventory(stage: Path, manifest: dict[str, Any]) -> None:
             raise ValueError("Invalid document size or word count")
         if not isinstance(json.loads(document.get("import_diagnostics", "[]")), list):
             raise ValueError("Invalid import diagnostics")
+        derivation = document.get("derivation")
+        if derivation is not None and not isinstance(json.loads(derivation), dict):
+            raise ValueError("Invalid record of how a chapter was cut from its book")
         original = document.get("source_name")
         if original:
             normalized = safe_member(original)
@@ -190,6 +204,8 @@ def _validate_inventory(stage: Path, manifest: dict[str, Any]) -> None:
                 raise ValueError("Run inventory does not match its result envelope.")
     _validate_views(manifest)
     _validate_questions(manifest)
+    _validate_notebooks(manifest)
+    _validate_details(manifest)
 
 
 def _validate_views(manifest: dict[str, Any]) -> None:
@@ -255,6 +271,57 @@ def _validate_questions(manifest: dict[str, Any]) -> None:
         names.add(question["name"])
 
 
+def _validate_notebooks(manifest: dict[str, Any]) -> None:
+    """Reject a notebook this build could not open. Versions 1-4 carry none."""
+    notebooks = manifest.get("notebooks", [])
+    if not isinstance(notebooks, list) or len(notebooks) > MAX_NOTEBOOKS_PER_PROJECT:
+        raise ValueError("Invalid notebook inventory.")
+    names: set[str] = set()
+    for notebook in notebooks:
+        if not isinstance(notebook, dict):
+            raise ValueError("Invalid notebook.")
+        try:
+            NotebookBody(name=notebook["name"], content=notebook["content"])
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid notebook “{notebook.get('name', '?')}”: {exc}") from exc
+        if not isinstance(notebook.get("revision"), int) or notebook["revision"] < 1:
+            raise ValueError("Invalid notebook revision")
+        if notebook["name"] in names:
+            raise ValueError(f"Two notebooks are both called “{notebook['name']}”.")
+        names.add(notebook["name"])
+
+
+def _validate_details(manifest: dict[str, Any]) -> None:
+    """Reject details, settings or comparisons this build could not use. Versions 1-5 carry none."""
+    documents = {str(doc["id"]) for doc in manifest.get("documents", [])}
+    rows = manifest.get("details", [])
+    if not isinstance(rows, list) or len(rows) > MAX_DOCUMENTS * MAX_FIELDS_PER_PROJECT:
+        raise ValueError("Invalid document details.")
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("document_id")) not in documents:
+            raise ValueError("A document detail names a document the archive does not hold.")
+        try:
+            FieldRow(document_id=str(row["document_id"]), name=row["name"], value=row["value"], source=row["source"])
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"Invalid document detail: {exc}") from exc
+    try:
+        FieldSettings(**(manifest.get("settings") or {}))
+    except ValueError as exc:
+        raise ValueError(f"Invalid project settings: {exc}") from exc
+    saved = manifest.get("comparisons", [])
+    if not isinstance(saved, list) or len(saved) > MAX_COMPARISONS_PER_PROJECT:
+        raise ValueError("Invalid comparison inventory.")
+    names: set[str] = set()
+    for item in saved:
+        try:
+            ComparisonBody(name=item["name"], definition=item["definition"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid comparison: {exc}") from exc
+        if item["name"] in names:
+            raise ValueError(f"Two comparisons are both called “{item['name']}”.")
+        names.add(item["name"])
+
+
 def _publish(workspace: Workspace, stage: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     _validate_inventory(stage, manifest)
     documents, jobs = manifest["documents"], manifest["jobs"]
@@ -275,7 +342,7 @@ def _publish(workspace: Workspace, stage: Path, manifest: dict[str, Any]) -> dic
             for doc in documents:
                 document_ids[str(doc["id"])] = uuid.uuid4().hex
                 db.execute(
-                    "INSERT INTO documents(id,project_id,name,stored_name,sha256,bytes,words,created,source_name,source_sha256,import_diagnostics,trashed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO documents(id,project_id,name,stored_name,sha256,bytes,words,created,source_name,source_sha256,import_diagnostics,trashed,derivation) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         document_ids[str(doc["id"])],
                         identifier,
@@ -289,8 +356,16 @@ def _publish(workspace: Workspace, stage: Path, manifest: dict[str, Any]) -> dic
                         doc.get("source_sha256"),
                         doc.get("import_diagnostics", "[]"),
                         int(bool(doc.get("trashed", False))),
+                        doc.get("derivation"),
                     ),
                 )
+            # A chapter names the book it was cut from by ID, and IDs are new
+            # here. A book purged before the backup maps to nothing; the
+            # chapter's derivation still carries the book's sha256.
+            for doc in documents:
+                parent = document_ids.get(str(doc.get("derived_from") or ""))
+                if parent is not None:
+                    db.execute("UPDATE documents SET derived_from=? WHERE id=?", (parent, document_ids[str(doc["id"])]))
             # Restored jobs are given fresh IDs, so anything that referred to a
             # job by ID has to be carried across with them. Saved views do.
             job_ids: dict[str, str] = {}
@@ -355,6 +430,67 @@ def _publish(workspace: Workspace, stage: Path, manifest: dict[str, Any]) -> dic
                         question["revision"],
                         question["created"],
                         question["updated"],
+                    ),
+                )
+            for notebook in manifest.get("notebooks", []):
+                # Normalized again on the way in, so a notebook restored from a
+                # backup is exactly as clean as one saved in the app.
+                content = NotebookBody(name=notebook["name"], content=notebook["content"]).content
+                db.execute(
+                    "INSERT INTO notebooks(id,project_id,name,content,revision,created,updated) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        uuid.uuid4().hex,
+                        identifier,
+                        notebook["name"],
+                        json.dumps(content),
+                        notebook["revision"],
+                        notebook["created"],
+                        notebook["updated"],
+                    ),
+                )
+            for row in manifest.get("details", []):
+                db.execute(
+                    "INSERT INTO document_fields(project_id,document_id,name,key,value,source,updated) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (
+                        identifier,
+                        document_ids[str(row["document_id"])],
+                        row["name"],
+                        str(row["name"]).strip().casefold(),
+                        row["value"],
+                        row["source"],
+                        row.get("updated") or row.get("created") or manifest["project"]["created"],
+                    ),
+                )
+            if manifest.get("settings"):
+                db.execute(
+                    "INSERT INTO project_settings(project_id,settings,revision,updated) VALUES(?,?,1,?)",
+                    (identifier, json.dumps(FieldSettings(**manifest["settings"]).model_dump()), now()),
+                )
+            old_project = str(manifest["project"].get("id", ""))
+            for item in manifest.get("comparisons", []):
+                # A side on this project follows it to its new id; a side on
+                # another project keeps that id and shows as missing if this
+                # workspace does not have it.
+                definition = ComparisonBody(name=item["name"], definition=item["definition"]).definition
+                for side in definition.sides:
+                    if side.project_id == old_project:
+                        side.project_id = identifier
+                        if side.selection is not None and side.selection.document_ids is not None:
+                            side.selection.document_ids = [
+                                document_ids.get(doc_id, doc_id) for doc_id in side.selection.document_ids
+                            ]
+                db.execute(
+                    "INSERT INTO comparisons(id,project_id,name,definition,revision,created,updated) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (
+                        uuid.uuid4().hex,
+                        identifier,
+                        item["name"],
+                        definition.model_dump_json(),
+                        item.get("revision", 1),
+                        item.get("created") or now(),
+                        item.get("updated") or now(),
                     ),
                 )
             # Move only after all SQL statements have validated. On a commit error,

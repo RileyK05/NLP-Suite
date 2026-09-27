@@ -272,3 +272,93 @@ class TestNotes:
     def test_every_parameter_explains_itself(self) -> None:
         for param in LDA_PREVALENCE.params:
             assert param.help.strip(), f"{param.name} has no help"
+
+
+def chapter_frame(rows: list[tuple[str, int, float]] | None = None) -> pd.DataFrame:
+    """The same rows from a book: chapters instead of dates (no date in the names)."""
+    out = frame(
+        [
+            (f"chapter_{index:02d}.txt", topic, contribution)
+            for index, (_, topic, contribution) in enumerate(rows if rows is not None else _ROWS, 1)
+        ]
+    )
+    out["Position"] = [float(index) for index in range(1, len(out) + 1)]
+    out["Position label"] = [f"Chapter {index}" for index in range(1, len(out) + 1)]
+    return out
+
+
+def build_on(frame_table: pd.DataFrame, params: dict[str, Any] | None = None) -> Result[Any]:
+    settings = LDA_PREVALENCE.defaults() | (params or {})
+    return lda_prevalence(frame_table, settings, Provenance(tool="lda_gensim", panel="lda_prevalence", source="d.csv"))
+
+
+TIME_WORDS = ("year", "over time", "speech date", "decade")
+
+
+class TestOrderAxis:
+    """A book's chapters: the same figure along the order axis (plan 1.7)."""
+
+    def _says_time(self, panel: PreparedPanel) -> list[str]:
+        words = " ".join((panel.title, panel.subtitle, panel.x_label, panel.y_label)).lower()
+        return [word for word in TIME_WORDS if word in words]
+
+    def test_a_book_draws_across_its_chapters(self) -> None:
+        result = build_on(chapter_frame())
+        assert result.ok, [str(d) for d in result.diagnostics]
+        panel = result.unwrap()
+        assert not self._says_time(panel), f"still says {self._says_time(panel)} for a book"
+        described = f"{panel.title} {panel.x_label} {panel.subtitle}".lower()
+        assert "chapter" in described, described
+
+    def test_coarse_grouping_makes_blocks_of_chapters(self) -> None:
+        from core.corpus_axis import DASH
+
+        panel = build_on(chapter_frame()).unwrap()
+        periods = {str(row[PERIOD]) for _, row in panel.data.iterrows()}
+        assert periods == {f"Chapters 1{DASH}2", f"Chapters 3{DASH}4", f"Chapters 5{DASH}6"}
+
+    def test_fine_grouping_takes_one_step_each(self) -> None:
+        panel = build_on(chapter_frame(), {"bucket": "year"}).unwrap()
+        periods = {str(row[PERIOD]) for _, row in panel.data.iterrows()}
+        assert periods == {"Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4", "Chapter 5", "Chapter 6"}
+        assert panel.x_label == "Chapter"
+
+    def test_marks_sit_on_chapter_numbers_not_years(self) -> None:
+        panel = build_on(chapter_frame(), {"bucket": "year"}).unwrap()
+        xs = sorted({mark.x for mark in panel.marks})
+        assert xs == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+    def test_evidence_resolves_against_the_published_table(self) -> None:
+        panel = build_on(chapter_frame()).unwrap()
+        for mark in panel.marks:
+            selected = panel.data
+            for column, value in mark.evidence.filters:
+                selected = selected[selected[column].astype(str) == value]
+            assert len(selected) == mark.evidence.count, mark.key
+
+    def test_a_date_column_beats_the_names(self) -> None:
+        """Axis first: names with no year in them still draw when the Date
+        column (from the corpus's own metadata) places the documents."""
+        dated = frame()
+        dated[DOCUMENT] = [
+            "speech_one.txt",
+            "speech_two.txt",
+            "speech_three.txt",
+            "speech_four.txt",
+            "speech_five.txt",
+            "speech_six.txt",
+        ]
+        dated["Date"] = ["1934-01-03", "1935-01-04", "1938-01-03", "1945-01-06", "1947-01-06", "2024-03-07"]
+        result = build_on(dated)
+        assert result.ok, [str(d) for d in result.diagnostics]
+        assert result.unwrap().title == "Topic prevalence over time"
+
+    def test_nothing_placing_the_documents_says_where_to_add_it(self) -> None:
+        bare = frame(
+            [(f"speech_{index}.txt", topic, contribution) for index, (_, topic, contribution) in enumerate(_ROWS, 1)]
+        )
+        result = build_on(bare)
+        assert not result.ok
+        message = " ".join(d.message for d in result.diagnostics)
+        assert "Corpus page" in message
+        assert "date" in message and "order" in message

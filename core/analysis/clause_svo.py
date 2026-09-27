@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 
@@ -92,7 +93,7 @@ _PASSIVE_AGENT_CASES = frozenset(["agent", "obl:agent"])
 _AUX_PASS_DEPRELS = frozenset(["aux:pass", "auxpass"])
 
 
-def _agent_name(dep: pd.Series, sent: pd.DataFrame, full_rel: str) -> str:
+def _agent_name(dep: dict[str, Any], children_by_head: dict[int, list[dict[str, Any]]], full_rel: str) -> str:
     """The surface form of the passive agent introduced by this dependent.
 
     * UD ``obl:agent``: the dependent itself carries the agent noun, with a
@@ -101,9 +102,13 @@ def _agent_name(dep: pd.Series, sent: pd.DataFrame, full_rel: str) -> str:
       its ``pobj`` child.
     """
     if full_rel == "agent":
-        for _, child in sent.iterrows():
+        try:
+            dep_id = int(dep[Col.ID.value])
+        except (ValueError, TypeError):
+            return ""
+        for child in children_by_head.get(dep_id, ()):
             try:
-                if int(child[Col.HEAD.value]) == int(dep[Col.ID.value]) and str(child[Col.DEPREL.value]).lower() in (
+                if str(child[Col.DEPREL.value]).lower() in (
                     "pobj",
                     "obl",
                     "obj",
@@ -115,7 +120,7 @@ def _agent_name(dep: pd.Series, sent: pd.DataFrame, full_rel: str) -> str:
     return str(dep[Col.FORM.value])
 
 
-def _is_agent_case(dep: pd.Series, sent: pd.DataFrame) -> bool:
+def _is_agent_case(dep: dict[str, Any]) -> bool:
     """Is this dependent a genuine passive-agent marking?
 
     UD ``obl:agent`` always is. A bare ``case``/``agent`` dependent counts
@@ -159,19 +164,20 @@ def extract_svo(frame: pd.DataFrame) -> Result[tuple[SvoRow, ...]]:
 
     # Treat each (Document ID, Sentence ID) as an independent sentence partition.
     for (_doc_id, _sent_id), sent in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        # Index tokens by ID (CoNLL IDs are 1-based per sentence).
-        # HEAD of 0 means root — no governing token.
-        by_id: dict[int, pd.Series] = {}
-        for _, row in sent.iterrows():
+        # Build token and dependent indexes in one pass. CoNLL IDs are
+        # 1-based per sentence; HEAD of 0 means root.
+        tokens = sent.to_dict("records")
+        children_by_head: dict[int, list[dict[str, Any]]] = {}
+        for row in tokens:
             try:
-                tid = int(row[Col.ID.value])
+                head = int(row[Col.HEAD.value])
             except (ValueError, TypeError):
                 continue
-            by_id[tid] = row
+            children_by_head.setdefault(head, []).append(row)
 
         # A token is a plausible predicate if it is a verb (when POS is available) or
         # if it is the head of at least one nsubj/object dependent (when POS is missing).
-        for _, tok in sent.iterrows():
+        for tok in tokens:
             is_verb = True
             if pos_col is not None:
                 pos = str(tok[pos_col])
@@ -188,22 +194,16 @@ def extract_svo(frame: pd.DataFrame) -> Result[tuple[SvoRow, ...]]:
             passive_patients: list[str] = []
             passive_agents: list[str] = []
             passive_aux_seen = False
-            for _, dep in sent.iterrows():
-                try:
-                    head = int(dep[Col.HEAD.value])
-                except (ValueError, TypeError):
-                    continue
-                if head != tid2:
-                    continue
+            for dep in children_by_head.get(tid2, ()):
                 deprel = str(dep[Col.DEPREL.value]).split(":")[0].lower()
                 full_rel = str(dep[Col.DEPREL.value]).lower()
                 if full_rel in _PASSIVE_PATIENT_DEPRELS:
                     # Passive patient: semantic OBJECT (legacy maps nsubj:pass to the
                     # object slot — "Mary was hired by John" is (John, hired, Mary)).
-                    passive_patients.append(str(dep[Col.Form.value] if hasattr(Col, "Form") else dep[Col.FORM.value]))
-                elif full_rel in _PASSIVE_AGENT_CASES and _is_agent_case(dep, sent):
+                    passive_patients.append(str(dep[Col.FORM.value]))
+                elif full_rel in _PASSIVE_AGENT_CASES and _is_agent_case(dep):
                     # obl:agent (UD) or the agent preposition's pobj child (spaCy).
-                    name = _agent_name(dep, sent, full_rel)
+                    name = _agent_name(dep, children_by_head, full_rel)
                     if name:
                         passive_agents.append(name)
                 elif full_rel in _AUX_PASS_DEPRELS:

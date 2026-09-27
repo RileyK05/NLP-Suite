@@ -9,7 +9,7 @@ import pandas as pd
 
 from core.result import Diagnostic, Result
 from core.viz.panels import best_table, get_panel, panels_for_tool, prepare_panel
-from core.viz.panelspec import PanelDefinition, PreparedPanel, Source
+from core.viz.panelspec import PanelDefinition, PreparedPanel, Source, requirement_words
 from desktop_backend.live import LiveResult
 from desktop_backend.panels import panel_failure, public_panel
 
@@ -113,7 +113,7 @@ def draw_live_panel(result: LiveResult, settings: dict[str, Any], panel: str, pa
         [
             Diagnostic.error(
                 "PANEL_NO_TABLE",
-                f"this answer has no table with the columns {panel} reads: {', '.join(definition.requires)}",
+                f"this answer has no table with the columns {panel} reads: {requirement_words(definition.requires)}",
                 panel=panel,
             )
         ]

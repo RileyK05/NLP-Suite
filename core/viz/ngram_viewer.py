@@ -19,7 +19,7 @@ from core.result import Diagnostic, Result
 __all__ = ["ngram_viewer_html"]
 
 
-def ngram_viewer_html(series: pd.DataFrame, *, title: str = "N-gram viewer") -> Result[str]:
+def ngram_viewer_html(series: pd.DataFrame, *, title: str = "N-gram viewer", x_label: str = "Year") -> Result[str]:
     """Line chart of the n-gram series (N-gram, Year, Count, Per Million, ...)."""
     missing = [c for c in ("N-gram", "Year", "Per Million") if c not in series.columns]
     if series.empty:
@@ -85,7 +85,8 @@ def ngram_viewer_html(series: pd.DataFrame, *, title: str = "N-gram viewer") -> 
             template="plotly_white",
         )
         fig.update_traces(connectgaps=False)
-        fig.update_layout(title_text=title or "N-gram viewer", font_size=11)
+        # "Chapter" when the series counted per chapter (its steps sit in the Year column here).
+        fig.update_layout(title_text=title or "N-gram viewer", font_size=11, xaxis_title_text=x_label)
         html_str: str = fig.to_html(full_html=False, include_plotlyjs="cdn")
         return Result.success(html_str)
     except ImportError:

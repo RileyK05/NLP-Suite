@@ -195,6 +195,27 @@ class TestGroups:
         assert panel.y_categories[0] == "Franklin D Roosevelt"
         assert "Joseph R Biden" in panel.y_categories
 
+    def test_a_document_detail_is_a_grouping(self) -> None:
+        """ "Group by Party" needs no regex and no file-name convention."""
+        frame = readability_frame()
+        parties = ["Democratic", "Republican"] * 4
+        frame["Party"] = parties[: len(frame)]
+        frame.attrs["details"] = ["Party"]
+        panel = ok("readability_by_group", frame, {"group-by": "Party"})
+        assert set(panel.y_categories) == {"Democratic", "Republican"}
+        assert all(m.evidence.describe for m in panel.marks)
+
+    def test_a_detail_that_is_not_there_is_refused_with_the_list(self) -> None:
+        from core.viz.panels import prepare_panel
+
+        frame = readability_frame()
+        frame["Party"] = ["Democratic"] * len(frame)
+        frame.attrs["details"] = ["Party"]
+        result = prepare_panel("readability_by_group", frame, {"group-by": "Parties"})
+        assert not result.ok
+        message = " ".join(d.message for d in result.diagnostics)
+        assert "Party" in message and "decade" in message
+
     def test_every_document_is_a_point_in_its_row(self) -> None:
         panel = ok("readability_by_group", readability_frame())
         assert len(panel.marks) == 7
@@ -226,3 +247,47 @@ class TestLengthCheckAndAllMeasures:
         assert "Flesch Reading Ease" in panel.facets
         assert "Flesch-Kincaid Grade" in panel.facets
         assert {m.facet for m in panel.marks} == set(panel.facets)
+
+
+class TestTwoBooksOnOneChapterAxis:
+    """Found in the real app: Alice's chapter 3 and Pride and Prejudice's chapter 3 sat side by side,
+    and one rolling median zig-zagged between the two books."""
+
+    def _two_books(self) -> pd.DataFrame:
+        frame = pd.concat([readability_frame(), readability_frame()], ignore_index=True)
+        frame["Document ID"] = range(1, len(frame) + 1)
+        frame["Document"] = [f"book{i}.txt" for i in range(len(frame))]
+        frame = frame.drop(columns=["Date", "Year"])
+        frame["Position"] = [float(i) for i in range(1, 8)] * 2
+        frame["Position label"] = [f"Chapter {i}" for i in range(1, 8)] * 2
+        frame["Work"] = ["Alice"] * 7 + ["Pride"] * 7
+        frame.loc[7:, "Flesch Reading Ease"] = frame.loc[7:, "Flesch Reading Ease"] + 30
+        return frame
+
+    def test_each_book_has_its_own_points_and_median(self) -> None:
+        panel = ok("readability_over_time", self._two_books(), {"window": 3})
+        assert panel.groups == ("Alice", "Pride", "Alice: rolling median", "Pride: rolling median")
+        assert panel.points_only == ("Alice", "Pride")
+        alice = [m.y for m in panel.marks if m.group == "Alice: rolling median"]
+        pride = [m.y for m in panel.marks if m.group == "Pride: rolling median"]
+        # Each median reads only its own book: Pride's sits 30 points above Alice's.
+        assert min(pride) > max(alice)
+
+    def test_the_small_multiples_draw_the_books_apart(self) -> None:
+        panel = ok("readability_all_measures", self._two_books(), {"window": 3})
+        assert set(panel.points_only) == {"Alice", "Pride"}
+        assert {m.group for m in panel.marks} == {"Alice", "Pride", "Alice: rolling median", "Pride: rolling median"}
+
+    def test_groups_are_the_books(self) -> None:
+        result = build("readability_by_group", self._two_books(), {"group-by": "decade"})
+        panel = result.unwrap()
+        assert set(panel.y_categories) == {"Alice", "Pride"}
+        assert "PANEL_GROUPED_BY_WORK" in [d.code for d in result.diagnostics]
+
+    def test_each_median_wears_its_books_colour(self) -> None:
+        from core.viz.static.style import group_colors
+
+        colors = group_colors(["Alice", "Pride", "Alice: rolling median", "Pride: rolling median"])
+        assert colors["Alice: rolling median"] == colors["Alice"]
+        assert colors["Pride: rolling median"] == colors["Pride"]
+        assert colors["Alice"] != colors["Pride"]

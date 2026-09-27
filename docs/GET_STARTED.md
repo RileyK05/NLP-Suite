@@ -65,6 +65,22 @@ corpus. Large corpora take longer, and analyses are queued one at a time.
 Use **Environment & setup → Project backup & restore** to save a `.nlpsuite`
 backup outside the app's workspace. Restoring creates a separate project.
 
+### Books and other collections in 0.5.0
+
+On **Corpus**, check the details detected from file names. You can edit a
+detail, import a spreadsheet of details, and choose whether the collection is
+lined up by date or by an order such as chapter number. **Split book** previews
+chapters or transcript turns before making separate documents; the original
+goes to Trash by default and can be restored. Run an analysis on selected
+chapters, then inspect figures along the chapter axis.
+
+Use **Compare** in the Workshop group to choose two or more document sets and
+compare their measures, vocabulary, topics, or tone. A shared detail such as
+Speaker can line up comparable groups. Use **Scripts** in the same group when
+you want to write a repeatable analysis, save its tables and figures, or export
+the notebook. Read imported or chatbot-generated code before running it; it
+has the same file and network access as the app.
+
 ## 3. Know what is included
 
 Complete release installers include the local Python engine, English spaCy
@@ -78,9 +94,10 @@ offline WebView2 installer. You do not need a cloud account for these workflows.
   operation from selecting a structured table for statistics.
 - **Extra resources:** restricted research lexicons are not bundled. Supply
   them only if you have permission to use them.
-- **Optional models:** Stanza and transformer workflows need a separately
-  prepared source environment. Running pip on your computer does not add
-  packages to an installed app's frozen runtime.
+- **Models:** the installer includes the BERT, neural sentiment and document
+  embedding models described in the release notes. The Models page offers a
+  larger optional embedding download. Other backends may need separate setup;
+  running pip on your computer does not add packages to an installed app.
 
 The app is a beta. Tested workflows are useful starting points, not a guarantee
 that all legacy NLP Suite features are replaced or that every analysis is

@@ -98,6 +98,10 @@ class CompareBody(BaseModel):
     actual: str
 
 
+class PassageContextBody(BaseModel):
+    passage: str = Field(min_length=1, max_length=4096)
+
+
 class WarmBody(BaseModel):
     """Which documents to bring up for live questioning, and with what parser."""
 
@@ -222,6 +226,7 @@ def reading_of(frame: Any, tool: str) -> dict[str, Any]:
     """
     from core.insight.readout import readout
     from core.insight.recommend import recommend_charts
+    from core.viz.panelspec import missing_columns
     from core.viz.recipes import recipe_for
 
     recipe = recipe_for(tool)
@@ -247,7 +252,7 @@ def reading_of(frame: Any, tool: str) -> dict[str, Any]:
         "figures": [
             {"panel": panel.name, "title": panel.title, "question": panel.question, "shape": panel.shape}
             for panel in recipe.panels
-            if set(panel.requires) <= columns
+            if not missing_columns(panel.requires, columns)
         ],
         "table_first": recipe.table_first,
         "recommended_charts": [
@@ -281,6 +286,10 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
             "date_from": selected.get("date_from"),
             "date_to": selected.get("date_to"),
             "include_undated": selected.get("include_undated", False),
+            "order_from": selected.get("order_from"),
+            "order_to": selected.get("order_to"),
+            "include_unordered": selected.get("include_unordered", False),
+            "fields": selected.get("fields") or None,
             "explicit_documents": selected.get("document_ids") is not None,
         }
     )
@@ -304,13 +313,22 @@ def public_document(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -> FastAPI:
+    from desktop_backend.comparison_routes import register_comparison_routes
+    from desktop_backend.field_routes import register_field_routes
+    from desktop_backend.fields import project_axis
+    from desktop_backend.kernels import KernelManager
+    from desktop_backend.notebook_routes import register_notebook_routes
+    from desktop_backend.section_routes import register_section_routes
+
     runner = Runner(workspace)
+    kernels = KernelManager(workspace)
 
     downloads = ModelDownloads()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         yield
+        kernels.close()
         runner.close()
         downloads.close()
 
@@ -379,10 +397,15 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         return JSONResponse({"detail": f"File operation failed: {exc.strerror or str(exc)}"}, status_code=400)
 
     secured = [Depends(authorize)]
+    app.state.kernels = kernels
+    register_notebook_routes(app, workspace, runner, kernels, secured, public_job)
+    register_field_routes(app, workspace, runner, secured)
+    register_section_routes(app, workspace, runner, secured)
+    register_comparison_routes(app, workspace, runner, secured, public_job)
 
     @app.get("/api/health", dependencies=secured)
     def health() -> dict[str, Any]:
-        return {"ok": True, "version": "0.4.0", "workspace": str(workspace.root)}
+        return {"ok": True, "version": "0.5.0", "workspace": str(workspace.root)}
 
     @app.get("/api/setup", dependencies=secured)
     def setup() -> dict[str, Any]:
@@ -406,6 +429,32 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             "text": path.read_text(encoding="utf-8")
             if path.is_file()
             else "Dependency notices are generated during packaging. See docs/LICENSE_REVIEW.md for the current source and research-asset licensing policy."
+        }
+
+    @app.get("/api/caches", dependencies=secured)
+    def cache_status() -> dict[str, int]:
+        """How much disk the recomputable caches hold: parses and vectors."""
+        from core.models.vector_cache import VectorCache
+        from desktop_backend.live import Annotations
+
+        return {
+            "parse_bytes": Annotations(workspace.root).size_bytes(),
+            "vector_bytes": VectorCache(workspace.root).size_bytes(),
+        }
+
+    @app.post("/api/caches/clear", dependencies=secured)
+    def clear_caches() -> dict[str, int]:
+        """Drop every cached parse and vector: recompute time, and nothing else.
+
+        Both caches hold only what the suite can always rebuild, so clearing
+        them never touches documents, projects or finished runs.
+        """
+        from core.models.vector_cache import VectorCache
+        from desktop_backend.live import Annotations
+
+        return {
+            "parses_removed": Annotations(workspace.root).forget(),
+            "vectors_removed": VectorCache(workspace.root).forget(),
         }
 
     @app.get("/api/models", dependencies=secured)
@@ -584,6 +633,10 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             for key, value in workspace.preview(project_id, document_id).items()
             if key not in {"stored_name", "source_name"}
         }
+
+    @app.post("/api/projects/{project_id}/documents/{document_id}/context", dependencies=secured)
+    def passage_context(project_id: str, document_id: str, body: PassageContextBody) -> dict[str, Any]:
+        return workspace.passage_context(project_id, document_id, body.passage)
 
     @app.post("/api/projects/{project_id}/documents", dependencies=secured)
     async def upload(project_id: str, name: str, request: Request) -> dict[str, Any]:
@@ -771,7 +824,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         # R-C4: a question about documents that are no longer loaded is
         # refused (409), never silently answered against the wrong corpus.
         snapshot = held.resolved(body.snapshot_id) if body.snapshot_id else held.resolved()
-        result = await run_in_threadpool(held.analyse, body.tool, body.params)
+        result = await run_in_threadpool(held.analyse, body.tool, body.params, project_axis(workspace, project_id))
         # R-C8: abandoned mid-flight. The fit ran; its answer is discarded
         # rather than delivered to a question that is gone.
         if held.analysis_cancelled(body.request_id):
@@ -1561,6 +1614,11 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--worker", nargs="?", const="", default=None)
     parser.add_argument("--desktop", action="store_true", help="shut down gracefully when the native shell disconnects")
+    # A notebook kernel (desktop_backend.kernel): the project it reads, the
+    # folder its outputs go to, and the parser its documents are parsed with.
+    parser.add_argument("--script-kernel", default=None)
+    parser.add_argument("--session", type=Path, default=None)
+    parser.add_argument("--parser", default="spacy")
     args = parser.parse_args()
     # Downloaded models live beside the workspace, in the app's own data
     # folder: they survive app updates, and every worker process this one
@@ -1573,6 +1631,12 @@ def main() -> None:
     # Both paths import the analysis engine before they take work (R-C5): a
     # job worker's first import is as fatal in its own way -- the job dies
     # silently at the point of the cold import -- as the request-thread wedge.
+    if args.script_kernel is not None:
+        from desktop_backend.kernel import kernel_loop
+
+        if args.session is None:
+            raise SystemExit("--script-kernel needs --session")
+        raise SystemExit(kernel_loop(args.data_dir, args.script_kernel, args.session, args.parser))
     preload_engine()
     if args.worker is not None:
         if args.worker:

@@ -84,6 +84,25 @@ describe("group colours", () => {
     expect(colors.get("Topic 1")).toBe(OKABE_ITO[2]);
   });
 
+  it("colours each book's median as that book, without using up a colour", () => {
+    // Two novels on one chapter axis: "Alice: rolling median" must read as
+    // Alice's line (static/style.group_colors applies the same rule).
+    const colors = groupColors([
+      "Alice",
+      "Pride",
+      "Alice: rolling median",
+      "Pride: rolling median",
+    ]);
+    expect(colors.get("Alice")).toBe(OKABE_ITO[0]);
+    expect(colors.get("Pride")).toBe(OKABE_ITO[1]);
+    expect(colors.get("Alice: rolling median")).toBe(OKABE_ITO[0]);
+    expect(colors.get("Pride: rolling median")).toBe(OKABE_ITO[1]);
+    // A summary of an undeclared group is an ordinary group.
+    expect(groupColors(["x: rolling median"]).get("x: rolling median")).toBe(
+      OKABE_ITO[0],
+    );
+  });
+
   it("wraps the palette rather than running out", () => {
     const many = Array.from({ length: 12 }, (_, i) => `g${i}`);
     const colors = groupColors(many);

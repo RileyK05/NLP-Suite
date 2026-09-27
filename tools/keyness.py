@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from core.analysis.keyness import keyness
+from core.analysis.keyness import detail_groups, keyness
 from core.conll.schema import Col
+from core.io.filename_fields import apply_template, detect_template
 from core.io.reader import read_corpus
 from tools._cli import handle_result_states, build_common_parser, get_pipeline, make_writer, resolve_config
 
@@ -14,14 +15,28 @@ from tools._cli import handle_result_states, build_common_parser, get_pipeline, 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = build_common_parser("Keyness (G2 log-likelihood) between two document groups")
     p.add_argument(
+        "--group-field",
+        default="",
+        help="a detail read from the file names (Kind, Speaker) that names the groups; used instead of --group-pattern",
+    )
+    p.add_argument("--group-a", default="", help="the detail's value(s) for group A, comma-separated")
+    p.add_argument("--group-b", default="", help="the detail's value(s) for group B; empty = every other document")
+    p.add_argument(
         "--group-pattern",
-        required=True,
+        default="",
         help="regex over document names; matching docs form group A, the rest group B",
     )
     p.add_argument("--field", choices=["form", "lemma"], default="lemma")
     p.add_argument("--smoothing", type=float, default=0.5, help="Log Ratio smoothing (Hardie 0.5)")
     p.add_argument("--top-n", type=int, default=200, help="rows kept (0 = all)")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    # A usage error, before any parsing: naming neither kind of group is a
+    # mistake in the command, not something a corpus can answer.
+    if args.group_field and not args.group_a:
+        p.error("--group-field needs --group-a (the detail's value for group A)")
+    if not args.group_field and not args.group_pattern:
+        p.error("say which documents are group A: --group-field with --group-a, or --group-pattern")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,7 +67,27 @@ def main(argv: list[str] | None = None) -> int:
     table_result = pipeline.parse(corpus)
     parse_state = handle_result_states(table_result)
     table = table_result.unwrap()
-    result = keyness(table, args.group_pattern, field=field, smoothing=args.smoothing, top_n=args.top_n)
+    groups, labels = None, ("Group A", "Group B")
+    if args.group_field:
+        # A folder has no stored details; its file names are read as the app reads them.
+        names = [doc.path.name for doc in corpus.docs]
+        template = detect_template(names)
+        details = {name: apply_template(name, template) if template else {} for name in names}
+        chosen = detail_groups(details, args.group_field, args.group_a, args.group_b)
+        if chosen.value is None:
+            for d in chosen.diagnostics:
+                print(d, file=sys.stderr)
+            return 1
+        groups, labels = chosen.unwrap()
+    result = keyness(
+        table,
+        args.group_pattern,
+        groups=groups,
+        labels=labels,
+        field=field,
+        smoothing=args.smoothing,
+        top_n=args.top_n,
+    )
     if not result.ok:
         for d in result.diagnostics:
             print(d, file=sys.stderr)

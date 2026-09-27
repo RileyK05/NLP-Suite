@@ -20,14 +20,12 @@ system with its exact documents, parser snapshot, settings, comparison, complete
 occurrence evidence, and six reusable CSV tables. Metadata-cohort comparisons
 remain a later slice.
 
-Implementation review (2026-09-20):
-[current capabilities, confirmed bugs, remaining gaps and ordered acceptance gates](QUESTION_RESEARCH_REVIEW_2026-09-20.md).
-The implemented slice is not yet the complete first milestone described below.
+The September 2026 implementation review found that the implemented slice is
+not yet the complete first milestone described below.
 Order A is implemented as of 2026-09-20, correctness-wise. Live query
 tokenization, atomic load completion, draft/refinement separation, save controls
-and cold-session shelf access landed first; F1-F5 of the
-[follow-up review](QUESTION_RESEARCH_REVIEW_2026-09-20_FOLLOWUP.md) closed after
-them. Publication now matches by the same rules as the workspace and by the saved
+and cold-session shelf access landed first. Publication now matches by the same
+rules as the workspace and by the saved
 question's own recorded tokens; word positions are document coordinates; every
 request names the snapshot it belongs to; shelf selection is distinct from the
 open record and updates carry an expected revision; and how a question was read
@@ -44,9 +42,8 @@ offset. Document grouping and UTF-16 conversion are the two costs that have been
 addressed.
 
 Next is Order B: linked position/source exploration, then metadata and date
-precision, then cohort and context comparison. Use the follow-up review's
-resolution notes rather than treating every future-tense item in this original
-design as still unimplemented.
+precision, then cohort and context comparison. Earlier future-tense design
+sections below describe historical gaps; use the current status above.
 
 ## Dated results and wider matching (2026-09-21)
 
@@ -127,9 +124,9 @@ Original foundation assessment; read with the implementation status above:
   separated from paginated evidence. A first-page chart cannot answer a whole-
   corpus question reliably.
 
-Earlier notes in `INTERACTIVE_RESEARCH_PLAN.md` describe historical implementation
-stages. In particular, its initial “no persistent annotations/saved views” gap is
-superseded by the code above. This plan does not ask for those systems to be rebuilt.
+The earlier interactive research plan's initial “no persistent annotations/saved
+views” gap is superseded by the code above. This plan does not ask for those
+systems to be rebuilt.
 
 ## Research questions as the primary navigation
 

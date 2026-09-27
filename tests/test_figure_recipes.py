@@ -11,9 +11,12 @@ from __future__ import annotations
 from core.profiler.registry import TOOL_REGISTRY
 from core.viz.panels import PANELS
 from core.viz.recipes import GENERIC_BUILDERS, TABLE_FIRST, recipe_for
+from desktop_backend.comparisons import CONTRAST_TOOL
 from desktop_backend.tables import TABLE_TOOLS
 
-EVERY_TOOL = sorted({spec.name for spec in TOOL_REGISTRY} | set(TABLE_TOOLS))
+#: Every name a run's envelope can carry. Comparisons are published by the
+#: runner under their own tool name (the Compare page), outside the catalog.
+EVERY_TOOL = sorted({spec.name for spec in TOOL_REGISTRY} | set(TABLE_TOOLS) | {CONTRAST_TOOL})
 
 
 def test_every_tool_has_a_recipe() -> None:

@@ -15,6 +15,7 @@ Pure functions of their inputs: no I/O, no rendering imports, no randomness
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 import math
 import re
@@ -23,19 +24,30 @@ import numpy as np
 import pandas as pd
 
 from core.analysis.lda import STOPWORDS
+from core.corpus_axis import along
+from core.io.document_fields import DETAIL_PREFIX
+from core.io.filename_fields import speaker_name
+from core.result import Diagnostic
 
 __all__ = [
     "FUNCTION_WORDS",
     "GROUPINGS",
+    "POSITION",
+    "POSITION_LABEL",
+    "AxisInfo",
     "communities",
     "community_order",
     "dated",
     "decimal_year",
+    "detail_columns",
     "document_labels",
     "force_layout",
     "group_of",
+    "groupings",
     "is_function_word",
+    "no_axis",
     "per_10k",
+    "positioned",
     "rolling_median",
     "short_document_label",
     "speaker_of",
@@ -45,9 +57,10 @@ __all__ = [
 #: word hidden here is a word the topic panels also never show.
 FUNCTION_WORDS: frozenset[str] = STOPWORDS
 
-#: How a per-document view may group its documents. ``speaker`` is read from
-#: the file name (``1934-01-03_franklin d roosevelt_sotu.txt``) and is empty
-#: for names that do not follow that pattern.
+#: The groupings every table offers, before its document details (:func:`groupings`).
+#: ``speaker`` reads the ``Speaker`` detail when the table carries one and
+#: falls back to the file-name rule for run tables made before details
+#: existed.
 GROUPINGS: tuple[str, ...] = ("none", "year", "decade", "speaker")
 
 # date_speaker_kind.ext, with the date optional. The kind is the last
@@ -75,7 +88,9 @@ def speaker_of(name: str) -> str:
     match = _NAMED.match(_stem(name))
     if not match or not match.group("kind"):
         return ""
-    return " ".join(part.capitalize() for part in match.group("speaker").split())
+    # One spelling rule for speakers, shared with the file-name detector that
+    # gives documents a Speaker detail (core/io/filename_fields.py).
+    return speaker_name(match.group("speaker"))
 
 
 def short_document_label(name: str) -> str:
@@ -146,25 +161,165 @@ def decimal_year(value: object) -> float | None:
     return day.year + (day - start).days / length
 
 
-def group_of(document: str, when: object, by: str) -> str:
-    """Which group a document belongs to under one of :data:`GROUPINGS`.
+#: A run's per-document tables place each document on the corpus's axis with
+#: these two columns (core/profiler/executor.py): a number for x, and what a
+#: reader is shown ("1934-01-03", "Chapter 3").
+DATE = "Date"
+YEAR = "Year"
+POSITION = "Position"
+POSITION_LABEL = "Position label"
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@dataclass(frozen=True, slots=True)
+class AxisInfo:
+    """What a table's documents are placed along: ``time`` (x is a decimal year),
+    ``order`` (x is a chapter or session number, called *noun*), or ``none``."""
+
+    kind: str
+    noun: str
+
+    @property
+    def along(self) -> str:
+        """ "over time", "across the chapters", or "" (core/corpus_axis.py)."""
+        return along(self.kind, self.noun)
+
+    @property
+    def x_label(self) -> str:
+        return "Year" if self.kind == "time" else self.noun
+
+    @property
+    def x_axis(self) -> str:
+        """For :class:`~core.viz.panelspec.PreparedPanel`: the kind, or "" when nothing places the documents."""
+        return self.kind if self.kind in ("time", "order") else ""
+
+    @property
+    def x_noun(self) -> str:
+        """For :class:`~core.viz.panelspec.PreparedPanel`: what one order step is called."""
+        return self.noun if self.kind == "order" else ""
+
+
+def positioned(frame: pd.DataFrame, date_column: str = "Date") -> tuple[pd.Series, AxisInfo]:
+    """Each row's place on the corpus's axis, and what that axis is.
+
+    Time reads the date exactly as figures always have (:func:`decimal_year`),
+    so no dated figure changes. Order reads ``Position`` when the run lined
+    the documents up by chapter or session; its noun comes from the label
+    ("Chapter 3" -> "Chapter"). Neither: every place is missing and the kind
+    is ``none``, for the builder to refuse with :func:`no_axis`.
+    """
+    labels = frame[POSITION_LABEL].dropna().astype(str) if POSITION_LABEL in frame.columns else pd.Series(dtype=str)
+    ordered = (
+        POSITION in frame.columns
+        and frame[POSITION].notna().any()
+        and not labels.empty
+        and not labels.map(lambda text: bool(_ISO_DAY.match(text))).all()
+    )
+    if ordered:
+        first = labels.iloc[0]
+        noun = first.rsplit(" ", 1)[0] if " " in first else "Order"
+        return pd.to_numeric(frame[POSITION], errors="coerce"), AxisInfo("order", noun)
+    if date_column in frame.columns:
+        years = frame[date_column].map(decimal_year)
+        if years.notna().any():
+            return years, AxisInfo("time", "Year")
+    return pd.Series([None] * len(frame), index=frame.index, dtype=object), AxisInfo("none", "")
+
+
+def no_axis(what: str) -> Diagnostic:
+    """The refusal of a figure about change when nothing places the documents."""
+    return Diagnostic.error(
+        "PANEL_NO_AXIS",
+        f"{what} needs the documents lined up: add a date or an order (chapter, session) to each document on the "
+        "Corpus page, under Document details.",
+    )
+
+
+def detail_columns(frame: pd.DataFrame) -> list[str]:
+    """The document details this table carries, named as a grouping names them ("Speaker", "Party").
+
+    Details the executor added under :data:`~core.io.document_fields.DETAIL_PREFIX`
+    (a name a tool column already had) keep their plain name here: the
+    grouping is the detail, whichever column it landed in. The plain-named
+    ones come from the frame's ``attrs["details"]``, written as the columns
+    were added.
+    """
+    found: list[str] = []
+    for column in frame.columns:
+        name = str(column)
+        if name.startswith(DETAIL_PREFIX):
+            found.append(name[len(DETAIL_PREFIX) :])
+    for name in getattr(frame, "attrs", {}).get("details", ()) or ():
+        if str(name) not in found and str(name) in {str(column) for column in frame.columns}:
+            found.append(str(name))
+    return sorted({name for name in found if name.casefold() != "speaker"}, key=str.casefold)
+
+
+def groupings(frame: pd.DataFrame) -> tuple[str, ...]:
+    """What this table can be grouped by: the axis's buckets, then its document details.
+
+    On a table lined up by chapter, "year" and "decade" are answered with
+    blocks of chapters by the figures that offer them, so there is no separate
+    "period" choice. ``speaker`` covers the ``Speaker`` detail when there is
+    one and the file-name rule when there is not (run tables from before
+    details existed), so it is never listed beside a detail of that name.
+    Everything else in the list names a detail column the table has.
+    """
+    found = ["none"]
+    if YEAR in frame.columns or DATE in frame.columns or POSITION in frame.columns:
+        found += ["year", "decade"]
+    found.append("speaker")
+    return tuple(dict.fromkeys(found + detail_columns(frame)))
+
+
+def group_of(document: str, when: object, by: str, row: object | None = None) -> str:
+    """Which group a document belongs to under :data:`GROUPINGS` -- or by its own detail.
 
     Decades start on the zero year (the 1930s are 1930 to 1939). An undated
     or unparsable document is named as such, so a reader can see how many
-    fell outside the grouping.
+    fell outside the grouping. *by* may also name a document detail
+    (``"Party"``, ``"Kind"``) or any column of *row*, which is how "group by
+    Party" works without a second pass over the table.
     """
     if by not in GROUPINGS:
-        raise ValueError(f"unknown grouping {by!r}; expected one of {GROUPINGS}")
+        value = _group_of_column(row, by)
+        if value is None:
+            raise ValueError(f"unknown grouping {by!r}; expected one of {GROUPINGS} or a detail column of the table")
+        return value
     if by == "none":
         return "All documents"
     if by == "speaker":
-        return speaker_of(document) or "(speaker not in file name)"
+        named = _group_of_column(row, "Speaker", empty="") or ""
+        return named or speaker_of(document) or "(speaker not in file name)"
     year = decimal_year(when)
     if year is None:
         return "(undated)"
     if by == "year":
         return str(int(year))
     return f"{int(year) // 10 * 10}s"
+
+
+def _group_of_column(row: object, by: str, empty: str | None = None) -> str | None:
+    """A grouping read off one table row: its detail column, or None when the table has none.
+
+    *empty* names a present-but-blank value (``"(no party)"``); ``""`` says
+    the caller prefers another reading over a label, which is how an empty
+    ``Speaker`` detail falls back to the file name.
+    """
+    if row is None:
+        return None
+    for column in (by, DETAIL_PREFIX + by):
+        try:
+            if column not in row.index:  # type: ignore[attr-defined]
+                continue
+            raw = row[column]  # type: ignore[index]
+        except (AttributeError, KeyError, TypeError):
+            return None
+        text = "" if raw is None else str(raw)
+        if text and text != "nan":
+            return text
+        return f"(no {by.lower()})" if empty is None else empty
+    return None
 
 
 def per_10k(count: float, tokens: float) -> float | None:

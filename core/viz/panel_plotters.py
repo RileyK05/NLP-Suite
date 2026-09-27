@@ -183,10 +183,12 @@ def _ranked_bars(prepared: PreparedPanel) -> Figure:
     series' rows wherever they first appeared -- the same desynchronisation
     ``plotters.py`` pins ``categoryarray`` to avoid.
 
-    Two series overlay rather than sitting side by side, because the question
-    they answer is "how far apart are these two readings of the same term?"
-    and adjacent half-width bars make that a comparison of lengths across a
-    gap instead of a comparison at a shared baseline.
+    Two series share their row one bar under the other, both from the zero
+    baseline, so "how far apart are these two readings?" is still a
+    comparison of lengths from one baseline. They used to overlay, the second
+    at 45% opacity; where they overlapped the colours blended into one
+    neither series has, and on real data (a president's focus rate in two
+    settings) a reader could not tell which length was which.
     """
     import plotly.graph_objects as go
 
@@ -202,7 +204,10 @@ def _ranked_bars(prepared: PreparedPanel) -> Figure:
     categories = [label for label, _ in sorted(ranked.items(), key=lambda item: -item[1])]
 
     fig = go.Figure()
-    for index, group in enumerate(ordered):
+    # Plotly stacks a horizontal group's bars bottom-up in trace order, so the
+    # traces go in reversed and the legend is reversed back: the first series
+    # is the top bar of each row and the first legend entry, as in the app.
+    for group in reversed(ordered):
         marks = by_group[group]
         fig.add_trace(
             go.Bar(
@@ -211,15 +216,12 @@ def _ranked_bars(prepared: PreparedPanel) -> Figure:
                 orientation="h",
                 name=group,
                 marker={"color": colors.get(group, OKABE_ITO[0])},
-                # The first series reads as the foreground; anything behind it
-                # stays visible through it rather than hiding underneath.
-                opacity=1.0 if index == 0 else 0.45,
                 hovertext=[mark.evidence.describe for mark in marks],
                 hoverinfo="text",
                 showlegend=group != _UNGROUPED,
             )
         )
-    fig.update_layout(barmode="overlay")
+    fig.update_layout(barmode="group", bargroupgap=0.08, legend={"traceorder": "reversed"})
     fig.update_yaxes(categoryorder="array", categoryarray=categories)
     _style(fig, prepared)
     return fig

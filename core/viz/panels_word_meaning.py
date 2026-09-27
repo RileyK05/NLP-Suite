@@ -37,6 +37,7 @@ import pandas as pd
 from core.analysis import word_meaning
 from core.analysis.postags import WORD_CLASSES
 from core.analysis.word_meaning import Space
+from core.corpus_axis import period_key
 from core.result import Diagnostic, Result
 from core.viz.panel_helpers import FUNCTION_WORDS
 from core.viz.panelspec import (
@@ -899,7 +900,7 @@ def _over_time(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Prove
         provenance = replace(provenance, params={**provenance.params, "word": word})
     rows = table[table["Word"] == word]
     k = int(params["neighbours"])
-    periods = sorted(rows["Period"].unique())
+    periods = sorted(rows["Period"].unique(), key=period_key)
     uses = rows.drop_duplicates("Period").set_index("Period")["Uses"].to_dict()
     top = rows[rows["Rank"] <= k]
     first_seen: dict[str, tuple[int, float]] = {}
@@ -963,7 +964,7 @@ def _most_changed(table: pd.DataFrame) -> str:
     for word, rows in table.groupby("Word", sort=True):
         if float(totals.get(word, 0)) < floor:
             continue
-        periods = sorted(rows["Period"].unique())
+        periods = sorted(rows["Period"].unique(), key=period_key)
         before = set(rows[(rows["Period"] == periods[0]) & (rows["Rank"] <= 6)]["Neighbor"])
         after = set(rows[(rows["Period"] == periods[-1]) & (rows["Rank"] <= 6)]["Neighbor"])
         union = before | after

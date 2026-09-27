@@ -132,8 +132,9 @@ class TestComponents:
         tokens = sorted((m for m in panel.marks if m.facet == "Tokens" and m.group == "Component 1"), key=lambda m: m.x)
         assert [m.x for m in tokens] == [0.25, 0.5, 0.75, 1.0]
 
-    def test_the_notes_warn_that_length_drives_unscaled_components(self) -> None:
-        assert any("not standardised" in note for note in BY_NAME["shape_svd_loadings"].notes)
+    def test_the_notes_say_the_features_are_standardized(self) -> None:
+        """D7 (Riley, 2026-09-25): the note used to warn that length drove the components."""
+        assert any("standardized" in note for note in BY_NAME["shape_svd_loadings"].notes)
 
     def test_explained_labels_components_as_integers(self) -> None:
         frame = pd.DataFrame({"Component": [1.0, 2.0], "Explained variance": [0.54, 0.46], "Cumulative": [0.54, 1.0]})

@@ -2,12 +2,15 @@ import { Notices } from "./Notices";
 import { UpdateBanner } from "./UpdateBanner";
 import { Learn } from "./Learn";
 import { Models } from "./Models";
+import { Compare } from "./Compare";
+import { CorpusDetails } from "./CorpusDetails";
 import { Glance } from "./Glance";
 import { ProjectManager } from "./ProjectManager";
 import { useChartSettings, Workbench } from "./Workbench";
 import { CorpusScope } from "./CorpusScope";
 import {
   allDocuments,
+  scopeFilters,
   selectedDocuments,
   selectionError,
 } from "./corpusSelection";
@@ -40,6 +43,8 @@ import { Badge, Diagnostics } from "./RunStatus";
 import {
   createContext,
   Fragment,
+  lazy,
+  Suspense,
   useContext,
   useCallback,
   useEffect,
@@ -67,6 +72,7 @@ import {
   Files,
   FlaskConical,
   FolderOpen,
+  GitCompareArrows,
   Layers3,
   LayoutDashboard,
   Package,
@@ -76,6 +82,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  SquareCode,
   Upload,
   X,
   TriangleAlert,
@@ -83,6 +90,8 @@ import {
 import {
   api,
   apiWithTimeout,
+  cacheInfo,
+  clearCaches,
   connect,
   download,
   desktopParams,
@@ -101,11 +110,20 @@ import {
   type ImportReport,
   type Job,
   type Project,
+  type CacheInfo,
   type Setup,
   type Table,
   type TableSource,
   type Tool,
 } from "./api";
+
+// Loaded when first opened: the page carries the code editor (CodeMirror),
+// which nobody who never writes a script should wait for at start-up.
+// Defined after the imports: Vite's dev transform turns named imports into
+// in-body consts, so a top-level use of `lazy` above them is a TDZ error.
+const Scripts = lazy(() =>
+  import("./Scripts").then((module) => ({ default: module.Scripts })),
+);
 
 type Page =
   | "overview"
@@ -114,11 +132,18 @@ type Page =
   | "studio"
   | "runs"
   | "models"
+  | "scripts"
+  | "compare"
   | "learn"
   | "setup";
 
 /**
- * The sidebar, in three groups.
+ * The sidebar, in four groups.
+ *
+ * WORKSHOP, below the research pages, holds the places where the researcher
+ * builds something of their own rather than running a tool as it comes:
+ * Scripts now, Compare next (docs/PLAN_0.5.0.md D2; the heading is a
+ * placeholder name).
  *
  * The order inside the middle group is the order the work happens in: ask
  * something and watch it answer, then run the heavier version over everything,
@@ -166,7 +191,27 @@ const navigation = [
     section: "RESEARCH",
     hint: "Language models to add or remove",
   },
-  { key: "learn", label: "Learn", icon: BookOpen, section: "REFERENCE" },
+  {
+    key: "scripts",
+    label: "Scripts",
+    icon: SquareCode,
+    section: "WORKSHOP",
+    hint: "Write it yourself, with the suite's tools",
+  },
+  {
+    key: "compare",
+    label: "Compare",
+    icon: GitCompareArrows,
+    section: "WORKSHOP",
+    hint: "Two collections side by side",
+  },
+  {
+    key: "learn",
+    label: "Learn",
+    icon: BookOpen,
+    section: "REFERENCE",
+    hint: "What the workspace is, and how to use it",
+  },
 ] as const;
 /**
  * Where published tables and saved views are shown.
@@ -179,6 +224,12 @@ const navigation = [
 const ARCHIVE_PAGE = "runs" as const;
 
 const fmt = (value: number) => value.toLocaleString();
+const fmtBytes = (value: number): string =>
+  value >= 1024 ** 2
+    ? `${(value / 1024 ** 2).toFixed(1)} MB`
+    : value >= 1024
+      ? `${(value / 1024).toFixed(0)} KB`
+      : `${value} B`;
 const active = (job: Job) => ["QUEUED", "RUNNING"].includes(job.state);
 
 /**
@@ -328,6 +379,7 @@ export default function App() {
     setToolCatalog(catalog);
   }, []);
   const [setup, setSetup] = useState<Setup | null>(null);
+  const [caches, setCaches] = useState<CacheInfo | null>(null);
   const [newProject, setNewProject] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [preview, setPreview] = useState<Document | null>(null);
@@ -346,6 +398,8 @@ export default function App() {
   const [viewing, setViewing] = useState(false);
   const [params, setParams] = useState<Record<string, unknown>>({});
   const [parser, setParser] = useState("spacy");
+  // Learn's "Get help from an AI chatbot" opens Scripts with the dialog open.
+  const [scriptGuide, setScriptGuide] = useState(false);
 
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   /** The run a "Compare with…" click armed; null when no comparison is open. */
@@ -417,15 +471,17 @@ export default function App() {
     let alive = true;
     connect()
       .then(async () => {
-        const [p, t, s] = await Promise.all([
+        const [p, t, s, c] = await Promise.all([
           apiWithTimeout<Project[]>("/projects", 30),
           apiWithTimeout<Tool[]>("/tools", 30),
           apiWithTimeout<Setup>("/setup", 30),
+          apiWithTimeout<CacheInfo>("/caches", 30).catch(() => null),
         ]);
         if (!alive) return;
         setProjects(p);
         setTools(t);
         setSetup(s);
+        setCaches(c);
         const saved = localStorage.getItem("nlp-project");
         setProjectId(
           p.some((item) => item.id === saved) ? saved! : p[0]?.id || "",
@@ -502,14 +558,25 @@ export default function App() {
     setTrashedDocuments(td);
   };
   const moveDocument = async (doc: Document, restore: boolean) =>
-    perform(restore ? "Restoring document…" : "Moving document to Trash…", async () => {
-      await post(`/projects/${projectId}/documents/${doc.id}/${restore ? "restore" : "trash"}`, {});
-      await refreshCorpus();
-      setCorpusSelection(allDocuments());
-      setNotice(restore ? `${doc.name} restored.` : `${doc.name} moved to Trash.`);
-    });
+    perform(
+      restore ? "Restoring document…" : "Moving document to Trash…",
+      async () => {
+        await post(
+          `/projects/${projectId}/documents/${doc.id}/${restore ? "restore" : "trash"}`,
+          {},
+        );
+        await refreshCorpus();
+        setCorpusSelection(allDocuments());
+        setNotice(
+          restore ? `${doc.name} restored.` : `${doc.name} moved to Trash.`,
+        );
+      },
+    );
   const purgeDocument = async (doc: Document) => {
-    if (!window.confirm(`Permanently delete ${doc.name}? This cannot be undone.`)) return;
+    if (
+      !window.confirm(`Permanently delete ${doc.name}? This cannot be undone.`)
+    )
+      return;
     await perform("Permanently deleting document…", async () => {
       await post(`/projects/${projectId}/documents/${doc.id}/purge`, {});
       await refreshCorpus();
@@ -797,9 +864,9 @@ export default function App() {
    * failure here changes nothing the reader can see.
    */
   const abortLive = (requestId: string) => {
-    void del(`/projects/${projectId}/live/analyse/${encodeURIComponent(requestId)}`).catch(
-      () => undefined,
-    );
+    void del(
+      `/projects/${projectId}/live/analyse/${encodeURIComponent(requestId)}`,
+    ).catch(() => undefined);
   };
 
   /**
@@ -1288,28 +1355,101 @@ export default function App() {
     list.length ? (
       <div className="run-list">
         {list.map((job) => (
-          <div
-            key={job.id}
-            className="run-entry"
-          >
-            <button className="run-row" onClick={() => inspectJob(job)} disabled={!!busy || trashed} title={trashed ? "Restore this run to inspect its results" : undefined}>
-            <span className="run-icon">
-              <FlaskConical size={18} />
-            </span>
-            <span className="run-name">
-              <strong>{title(job.tool)}</strong>
-              <small>
-                {when(job.created)} · {job.stage}
-              </small>
-            </span>
-            <Badge state={job.state} />
-            <ChevronRight size={16} />
+          <div key={job.id} className="run-entry">
+            <button
+              className="run-row"
+              onClick={() => inspectJob(job)}
+              disabled={!!busy || trashed}
+              title={
+                trashed ? "Restore this run to inspect its results" : undefined
+              }
+            >
+              <span className="run-icon">
+                <FlaskConical size={18} />
+              </span>
+              <span className="run-name">
+                <strong>{title(job.tool)}</strong>
+                <small>
+                  {when(job.created)} · {job.stage}
+                </small>
+              </span>
+              <Badge state={job.state} />
+              <ChevronRight size={16} />
             </button>
-            {trashed ? <>
-              <span className="muted">Restore to inspect</span>
-              <button className="text-button" disabled={!!busy} onClick={() => void perform("Restoring run…", async () => { await post(`/projects/${projectId}/jobs/${job.id}/restore`, {}); setJobs(await api<Job[]>(`/projects/${projectId}/jobs`)); setTrashedJobs(await api<Job[]>(`/projects/${projectId}/jobs/trash`)); })}>Restore</button>
-              <button className="text-button" disabled={!!busy} onClick={() => { if (window.confirm(`Permanently delete this ${title(job.tool)} run? Saved views that use it will remain marked as missing their source.`)) void perform("Permanently deleting run…", async () => { await post(`/projects/${projectId}/jobs/${job.id}/purge`, {}); setTrashedJobs(await api<Job[]>(`/projects/${projectId}/jobs/trash`)); }); }}>Delete permanently</button>
-            </> : <button className="text-button" disabled={!!busy || active(job)} onClick={() => { if (window.confirm(`Move this ${title(job.tool)} run to Trash? Saved views that use it will be unavailable until restored.`)) void perform("Moving run to Trash…", async () => { await post(`/projects/${projectId}/jobs/${job.id}/trash`, {}); setJobs(await api<Job[]>(`/projects/${projectId}/jobs`)); setTrashedJobs(await api<Job[]>(`/projects/${projectId}/jobs/trash`)); if (selectedJob?.id === job.id) { setSelectedJob(null); setEnvelope(null); setTable(null); } }); }}>Move to Trash</button>}
+            {trashed ? (
+              <>
+                <span className="muted">Restore to inspect</span>
+                <button
+                  className="text-button"
+                  disabled={!!busy}
+                  onClick={() =>
+                    void perform("Restoring run…", async () => {
+                      await post(
+                        `/projects/${projectId}/jobs/${job.id}/restore`,
+                        {},
+                      );
+                      setJobs(await api<Job[]>(`/projects/${projectId}/jobs`));
+                      setTrashedJobs(
+                        await api<Job[]>(`/projects/${projectId}/jobs/trash`),
+                      );
+                    })
+                  }
+                >
+                  Restore
+                </button>
+                <button
+                  className="text-button"
+                  disabled={!!busy}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `Permanently delete this ${title(job.tool)} run? Saved views that use it will remain marked as missing their source.`,
+                      )
+                    )
+                      void perform("Permanently deleting run…", async () => {
+                        await post(
+                          `/projects/${projectId}/jobs/${job.id}/purge`,
+                          {},
+                        );
+                        setTrashedJobs(
+                          await api<Job[]>(`/projects/${projectId}/jobs/trash`),
+                        );
+                      });
+                  }}
+                >
+                  Delete permanently
+                </button>
+              </>
+            ) : (
+              <button
+                className="text-button"
+                disabled={!!busy || active(job)}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Move this ${title(job.tool)} run to Trash? Saved views that use it will be unavailable until restored.`,
+                    )
+                  )
+                    void perform("Moving run to Trash…", async () => {
+                      await post(
+                        `/projects/${projectId}/jobs/${job.id}/trash`,
+                        {},
+                      );
+                      setJobs(await api<Job[]>(`/projects/${projectId}/jobs`));
+                      setTrashedJobs(
+                        await api<Job[]>(`/projects/${projectId}/jobs/trash`),
+                      );
+                      if (selectedJob?.id === job.id) {
+                        setSelectedJob(null);
+                        setEnvelope(null);
+                        setTable(null);
+                      }
+                    });
+                }}
+              >
+                Move to Trash
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -1533,7 +1673,7 @@ export default function App() {
               <span />
               Local workspace <ShieldCheck size={14} />
             </div>
-            <small>Desktop beta · 0.4.0</small>
+            <small>Desktop beta · 0.5.0</small>
           </div>
         </aside>
         <div className="main-shell">
@@ -1668,6 +1808,17 @@ export default function App() {
                               ? "Build your first corpus"
                               : "Run an analysis live"}
                           <ArrowRight size={17} />
+                        </button>
+                        {/* The way in for someone who does not yet know what
+                            any of this is. It sits under the action button
+                            because the button is for people who already know
+                            where they are going. */}
+                        <button
+                          className="hero-link"
+                          onClick={() => setPage("learn")}
+                        >
+                          New here? See what the workspace does
+                          <ArrowRight size={14} />
                         </button>
                       </div>
                       <div className="hero-art" aria-hidden="true">
@@ -1827,7 +1978,11 @@ export default function App() {
                       </button>
                     </div>
                     {projectId && (
-                      <Glance projectId={projectId} parser={parser} hasDocuments={documents.length > 0} />
+                      <Glance
+                        projectId={projectId}
+                        parser={parser}
+                        hasDocuments={documents.length > 0}
+                      />
                     )}
                     <section className="dropzone">
                       <span className="upload-icon">
@@ -1909,11 +2064,21 @@ export default function App() {
                         <h2>
                           {showTrash ? "Trash" : "Documents"}{" "}
                           <span className="subtle-count">
-                            {showTrash ? trashedDocuments.length : documents.length}
+                            {showTrash
+                              ? trashedDocuments.length
+                              : documents.length}
                           </span>
                         </h2>
-                        <button className="text-button" onClick={() => { setShowTrash(!showTrash); setQuery(""); }}>
-                          {showTrash ? "Back to documents" : `Trash (${trashedDocuments.length})`}
+                        <button
+                          className="text-button"
+                          onClick={() => {
+                            setShowTrash(!showTrash);
+                            setQuery("");
+                          }}
+                        >
+                          {showTrash
+                            ? "Back to documents"
+                            : `Trash (${trashedDocuments.length})`}
                         </button>
                         <label className="search-box">
                           <Search size={16} />
@@ -1970,11 +2135,33 @@ export default function App() {
                                 <td>
                                   {showTrash ? (
                                     <>
-                                      <button className="text-button" disabled={!!busy} onClick={() => void moveDocument(doc, true)}>Restore</button>{" "}
-                                      <button className="text-button" disabled={!!busy} onClick={() => void purgeDocument(doc)}>Delete permanently</button>
+                                      <button
+                                        className="text-button"
+                                        disabled={!!busy}
+                                        onClick={() =>
+                                          void moveDocument(doc, true)
+                                        }
+                                      >
+                                        Restore
+                                      </button>{" "}
+                                      <button
+                                        className="text-button"
+                                        disabled={!!busy}
+                                        onClick={() => void purgeDocument(doc)}
+                                      >
+                                        Delete permanently
+                                      </button>
                                     </>
                                   ) : (
-                                    <button className="text-button" disabled={!!busy || running > 0} onClick={() => void moveDocument(doc, false)}>Move to Trash</button>
+                                    <button
+                                      className="text-button"
+                                      disabled={!!busy || running > 0}
+                                      onClick={() =>
+                                        void moveDocument(doc, false)
+                                      }
+                                    >
+                                      Move to Trash
+                                    </button>
                                   )}
                                 </td>
                               </tr>
@@ -1990,6 +2177,13 @@ export default function App() {
                         </p>
                       )}
                     </section>
+                    {projectId && !showTrash && documents.length > 0 && (
+                      <CorpusDetails
+                        projectId={projectId}
+                        documents={documents}
+                        onChanged={() => void refreshCorpus()}
+                      />
+                    )}
                   </>
                 )}
                 {page === "studio" && (
@@ -2123,8 +2317,67 @@ export default function App() {
                     }
                   />
                 )}
+                {page === "scripts" &&
+                  (projectId ? (
+                    <Suspense
+                      fallback={
+                        <div className="working" role="status">
+                          <LoaderCircle size={15} className="spin" />
+                          Opening Scripts…
+                        </div>
+                      }
+                    >
+                      <Scripts
+                        projectId={projectId}
+                        projectName={project?.name ?? ""}
+                        parser={parser}
+                        jobs={jobs}
+                        onOpenJob={inspectJob}
+                        openGuide={scriptGuide}
+                        onGuideOpened={() => setScriptGuide(false)}
+                      />
+                    </Suspense>
+                  ) : (
+                    <section className="panel">
+                      <h2>Scripts</h2>
+                      <p className="muted">
+                        Create a project and add documents first; a notebook
+                        reads the project it belongs to.
+                      </p>
+                    </section>
+                  ))}
+                {page === "compare" &&
+                  (projectId ? (
+                    <Compare
+                      projectId={projectId}
+                      projects={projects}
+                      parser={parser}
+                      jobs={jobs}
+                      onOpenJob={inspectJob}
+                    />
+                  ) : (
+                    <section className="panel">
+                      <h2>Compare</h2>
+                      <p className="muted">
+                        Create a project and add documents first; a comparison
+                        lives in a project and can reach into others.
+                      </p>
+                    </section>
+                  ))}
                 {page === "learn" && (
-                  <Learn tools={tools} onChoose={openAnalysis} canRun={!busy} />
+                  <Learn
+                    tools={tools}
+                    onChoose={openAnalysis}
+                    canRun={!busy}
+                    onScriptHelp={
+                      projectId
+                        ? () => {
+                            setScriptGuide(true);
+                            setPage("scripts");
+                          }
+                        : undefined
+                    }
+                  />
                 )}
                 {page === "runs" && (
                   <>
@@ -2145,7 +2398,14 @@ export default function App() {
                     <section className="panel">
                       <div className="section-title">
                         <h2>{showRunTrash ? "Run Trash" : "Past runs"}</h2>
-                        <button className="text-button" onClick={() => setShowRunTrash(!showRunTrash)}>{showRunTrash ? "Back to runs" : `Trash (${trashedJobs.length})`}</button>
+                        <button
+                          className="text-button"
+                          onClick={() => setShowRunTrash(!showRunTrash)}
+                        >
+                          {showRunTrash
+                            ? "Back to runs"
+                            : `Trash (${trashedJobs.length})`}
+                        </button>
                       </div>
                       {runList(showRunTrash ? trashedJobs : jobs, showRunTrash)}
                     </section>
@@ -2335,27 +2595,33 @@ export default function App() {
                                 jobId={selectedJob.id}
                                 selectedColumns={table?.columns}
                                 requested={figureRequest}
-                                fallback={table ? (
-                                  <RunWorkbench
-                                    key={`${selectedJob.id}-${artifactIndex}`}
-                                    table={table}
-                                    contract={contract}
-                                    artifactPath={envelope.artifacts[artifactIndex]?.path ?? ""}
-                                    canPublish={!busy && !!projectId}
-                                    onPublish={(settings) =>
-                                      publishChart(
-                                        selectedJob.id,
-                                        artifactIndex,
-                                        envelope.artifacts[artifactIndex]?.path ?? "",
-                                        settings,
-                                      )
-                                    }
-                                    onHandOff={(seed) => {
-                                      setChartSeed(seed);
-                                      setVisualizing(true);
-                                    }}
-                                  />
-                                ) : undefined}
+                                fallback={
+                                  table ? (
+                                    <RunWorkbench
+                                      key={`${selectedJob.id}-${artifactIndex}`}
+                                      table={table}
+                                      contract={contract}
+                                      artifactPath={
+                                        envelope.artifacts[artifactIndex]
+                                          ?.path ?? ""
+                                      }
+                                      canPublish={!busy && !!projectId}
+                                      onPublish={(settings) =>
+                                        publishChart(
+                                          selectedJob.id,
+                                          artifactIndex,
+                                          envelope.artifacts[artifactIndex]
+                                            ?.path ?? "",
+                                          settings,
+                                        )
+                                      }
+                                      onHandOff={(seed) => {
+                                        setChartSeed(seed);
+                                        setVisualizing(true);
+                                      }}
+                                    />
+                                  ) : undefined
+                                }
                               />
                             )}
                             {table && (
@@ -2447,9 +2713,10 @@ export default function App() {
                                         ? " Undated documents allowed by the date filter."
                                         : " Undated documents excluded by the date filter."}
                                     </>
-                                  )}{" "}
-                                  The input manifest records the exact documents
-                                  and date provenance.
+                                  )}
+                                  {scopeFilters(selectedJob.scope)} The input
+                                  manifest records the exact documents and date
+                                  provenance.
                                 </p>
                               )}
                               <h3>Parameters</h3>
@@ -2482,12 +2749,15 @@ export default function App() {
                         disabled={!!busy}
                         onClick={() =>
                           void perform("Checking environment…", async () => {
-                            const [environment, catalog] = await Promise.all([
-                              api<Setup>("/setup"),
-                              api<Tool[]>("/tools"),
-                            ]);
+                            const [environment, catalog, sizes] =
+                              await Promise.all([
+                                api<Setup>("/setup"),
+                                api<Tool[]>("/tools"),
+                                cacheInfo().catch(() => null),
+                              ]);
                             setSetup(environment);
                             setTools(catalog);
+                            setCaches(sizes);
                           })
                         }
                       >
@@ -2585,11 +2855,12 @@ export default function App() {
                         const available = await api<Project[]>("/projects");
                         setProjects(available);
                         setProjectId((current) =>
-                          selectProjectId && available.some((p) => p.id === selectProjectId)
+                          selectProjectId &&
+                          available.some((p) => p.id === selectProjectId)
                             ? selectProjectId
                             : available.some((p) => p.id === current)
-                            ? current
-                            : available[0]?.id || "",
+                              ? current
+                              : available[0]?.id || "",
                         );
                       }}
                     />
@@ -2645,6 +2916,38 @@ export default function App() {
                             });
                         }}
                       />
+                    </section>
+                    <section className="panel settings-panel">
+                      <h2>Cached results</h2>
+                      <p>
+                        Parsed texts and document vectors are kept so runs and
+                        comparisons never pay for them twice. Clearing them
+                        costs recompute time and nothing else — documents,
+                        projects and finished runs are untouched.
+                      </p>
+                      <dl>
+                        <dt>Parsed texts</dt>
+                        <dd>{caches ? fmtBytes(caches.parse_bytes) : "…"}</dd>
+                        <dt>Document vectors</dt>
+                        <dd>{caches ? fmtBytes(caches.vector_bytes) : "…"}</dd>
+                      </dl>
+                      <div className="drop-actions">
+                        <button
+                          className="secondary"
+                          disabled={!!busy}
+                          onClick={() =>
+                            void perform("Clearing caches…", async () => {
+                              await clearCaches();
+                              setCaches(await cacheInfo());
+                              setNotice(
+                                "Cached parses and vectors cleared. Nothing else was touched.",
+                              );
+                            })
+                          }
+                        >
+                          Clear cached results
+                        </button>
+                      </div>
                     </section>
                     <section className="panel settings-panel">
                       <h2>A few things worth knowing</h2>
@@ -2886,6 +3189,7 @@ export default function App() {
                 tool={analysis}
                 params={params}
                 onChange={setParams}
+                projectId={projectId ?? undefined}
                 onBusyChange={(uploading) =>
                   setResourceUploads((count) => count + (uploading ? 1 : -1))
                 }
@@ -2965,8 +3269,8 @@ export default function App() {
                 ) && (
                   <div className="empty-inline">
                     <p>
-                      No other finished run to compare against yet. Run the
-                      same analysis with the other backend first.
+                      No other finished run to compare against yet. Run the same
+                      analysis with the other backend first.
                     </p>
                   </div>
                 )}
@@ -2980,14 +3284,12 @@ export default function App() {
                       ? "These two runs agree on every row, column and parameter the comparison checks."
                       : `These two runs disagree — every difference is listed below.`}
                 </p>
-                {compareView.ok &&
-                  !compareView.passed &&
-                  compareView.diff && (
-                    <ResultTable
-                      columns={compareView.diff.columns}
-                      rows={compareView.diff.rows}
-                    />
-                  )}
+                {compareView.ok && !compareView.passed && compareView.diff && (
+                  <ResultTable
+                    columns={compareView.diff.columns}
+                    rows={compareView.diff.rows}
+                  />
+                )}
                 {!!compareView.diagnostics?.length && (
                   <ul className="muted">
                     {compareView.diagnostics.map((entry) => (

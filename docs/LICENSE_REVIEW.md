@@ -56,7 +56,7 @@ enforces that boundary.
 | Transformer models (BERT etc.) | Own model licenses (often Apache-2.0) | download |
 | Google Geocoding / DBpedia | API terms; keys from env, never logged | network |
 
-## Decisions owed (owner)
+## Remaining distribution review
 
 ### Desktop packaging update (2026-09-06)
 
@@ -72,18 +72,9 @@ is retained inside its bundled `corpora/wordnet.zip`. This generated inventory
 is not a replacement for final distribution review. Restricted research
 lexicons (including ANEW, NRC, concreteness and iconicity) remain user-supplied.
 
-No license has been assigned to the original code without the owner's answer.
-The decisions below remain outstanding.
-
-1. **Brysbaert/iconicity redistribution** — may the suite ever bundle
-   these, or stay user-supplied forever? (Recommendation: stay
-   user-supplied; the checksums already pin the oracle copies.)
-2. **Suite license** — no `LICENSE` file exists yet. Recommendation:
-   Apache-2.0 or MIT for code, with `corpus/` public-domain noted and
-   all rows above referenced from `pyproject.toml` metadata.
-3. **Attribution page** — whether the app gallery needs a permanent
-   credits surface (Brysbaert, ANEW, NRC, WordNet, VADER, spaCy/Stanza,
-   Hugging Face) beyond this document.
-
-Until decided: FR-0.3 stays open; the no-vendoring test guarantees the
-status quo cannot silently change.
+The owner chose MIT for the original code on 2026-09-16, and the desktop has a
+Credits & licenses surface backed by `/api/notices`. Brysbaert and iconicity
+remain user-supplied; no redistribution decision is needed for this release.
+Before publishing an installer, inspect its generated third-party notices and
+confirm that every bundled model and package has the attribution its own terms
+require. The no-vendoring test guards the restricted research lexicons.

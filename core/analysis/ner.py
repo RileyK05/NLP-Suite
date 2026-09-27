@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import pandas as pd
 
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
-__all__ = ["entity_timeline", "location_tracking"]
+__all__ = ["entity_timeline", "location_tracking", "parse_ignore"]
 
 _LOCATION_TAGS = frozenset(["LOC", "GPE", "LOCATION", "FAC", "FACILITY"])
+
+
+def parse_ignore(raw: str | Iterable[str]) -> frozenset[str]:
+    """The ``ignore`` parameter as lowercase names ("Speaker, Chamber").
+
+    Matching is on the whole entity text, casefolded: ignoring "Speaker"
+    leaves "Mr. Speaker" alone, so the reader names what to leave out.
+    """
+    if isinstance(raw, str):
+        parts = raw.split(",")
+    else:
+        parts = list(raw)
+    return frozenset(part.strip().casefold() for part in parts if part.strip())
 
 
 def _sid_key(sid: object) -> tuple[int, str, int]:
@@ -101,8 +116,13 @@ def _mentions_from_spans(g: pd.DataFrame) -> dict[tuple[str, str], list[object]]
     return mentions
 
 
-def entity_timeline(frame: pd.DataFrame) -> Result[pd.DataFrame]:
-    """One row per (entity text, NER tag, document)."""
+def entity_timeline(frame: pd.DataFrame, *, ignore: Iterable[str] = ()) -> Result[pd.DataFrame]:
+    """One row per (entity text, NER tag, document).
+
+    *ignore* names entities to leave out entirely (the reviewed stop-entity
+    list of plan 5.2): matched casefolded on the whole entity text.
+    """
+    skipped = parse_ignore(ignore)
     checked = validate_columns([str(c) for c in frame.columns])
     if not checked.ok:
         return Result[pd.DataFrame](None, checked.diagnostics)
@@ -124,6 +144,8 @@ def entity_timeline(frame: pd.DataFrame) -> Result[pd.DataFrame]:
         doc = str(g[doc_col].iloc[0]) if doc_col is not None else ""
         mentions = _mentions_from_spans(g)
         for (entity, tag), sids in mentions.items():
+            if entity.casefold() in skipped:
+                continue
             rows.append(
                 {
                     "Entity": entity,
@@ -149,8 +171,8 @@ def entity_timeline(frame: pd.DataFrame) -> Result[pd.DataFrame]:
     return Result.success(df)
 
 
-def location_tracking(frame: pd.DataFrame) -> Result[pd.DataFrame]:
-    """Only location entities (LOC/GPE)."""
+def location_tracking(frame: pd.DataFrame, *, ignore: Iterable[str] = ()) -> Result[pd.DataFrame]:
+    """Only location entities (LOC/GPE), minus the ones a reader ignored."""
     checked = validate_columns([str(c) for c in frame.columns])
     if not checked.ok:
         return Result[pd.DataFrame](None, checked.diagnostics)
@@ -160,7 +182,7 @@ def location_tracking(frame: pd.DataFrame) -> Result[pd.DataFrame]:
     if frame.empty:
         return Result.success(pd.DataFrame(columns=["Location", "NER Tag", "Count", "Document ID", "Document"]))
 
-    timeline = entity_timeline(frame)
+    timeline = entity_timeline(frame, ignore=ignore)
     if not timeline.ok:
         return Result[pd.DataFrame](None, timeline.diagnostics)
     df = timeline.unwrap()

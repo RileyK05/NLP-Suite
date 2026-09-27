@@ -52,7 +52,9 @@ from typing import Any
 
 import pandas as pd
 
+from core.corpus_axis import Axis, period_key, plural
 from core.result import Diagnostic, Result
+from core.viz.panel_helpers import AxisInfo, positioned
 from core.viz.panelspec import (
     Evidence,
     PanelDefinition,
@@ -113,38 +115,48 @@ def lda_prevalence(
     diagnostics: list[Diagnostic] = []
     working = frame.copy()
 
-    # -- date extraction -----------------------------------------------
-    years = working[DOCUMENT].astype(str).map(_leading_year)
-    dated = years.notna()
-    undated = int((~dated).sum())
+    # -- where the documents sit ---------------------------------------
+    # The corpus's own axis first (a Date, or the Order detail): a book's
+    # chapters line up by chapter and this panel follows them. The filename
+    # year is the fallback for tables that carry names but no axis columns
+    # (an exported dominant.csv), and it is deliberately narrow -- see
+    # _leading_year for why a year anywhere in a name is not a date.
+    places, axis = positioned(working)
+    if axis.kind == "none":
+        places = working[DOCUMENT].astype(str).map(_leading_year)
+    placed = places.notna()
+    unplaced = int((~placed).sum())
 
-    if undated == len(working):
+    if unplaced == len(working):
         examples = working[DOCUMENT].astype(str).head(_MAX_EXAMPLES).tolist()
         shown = ", ".join(repr(name) for name in examples)
         return Result[PreparedPanel].failure(
             Diagnostic.error(
                 "PANEL_NO_DATES",
-                "no document name in this corpus starts with a parseable year, so topic prevalence over "
-                "time cannot be plotted. This panel needs names of the form 'YYYY...' or 'YYYY-MM-DD...', "
-                f"e.g. '1934-01-03_franklin d roosevelt_sotu.txt'. Got, for example: {shown}.",
+                "nothing places these documents: no Date or Order column, and no document name starts "
+                "with a parseable year, so topic prevalence along the corpus cannot be plotted. Names of "
+                "the form 'YYYY...' or 'YYYY-MM-DD...' work, e.g. '1934-01-03_franklin d roosevelt_sotu.txt'; "
+                f"got, for example: {shown}. To line the documents up another way, add a date or an "
+                "order on the Corpus page.",
                 examples=examples,
             )
         )
-    if undated:
-        examples = working.loc[~dated, DOCUMENT].astype(str).head(_MAX_EXAMPLES).tolist()
+    if unplaced:
+        examples = working.loc[~placed, DOCUMENT].astype(str).head(_MAX_EXAMPLES).tolist()
         shown = ", ".join(repr(name) for name in examples)
         diagnostics.append(
             Diagnostic.warning(
                 "PANEL_NO_DATE",
-                f"{undated} document(s) had no parseable year at the start of their name and were left out "
-                f"of the plot rather than being guessed at or bucketed as year zero, e.g. {shown}.",
-                dropped=undated,
+                f"{unplaced} document(s) had no place on the corpus's axis (no date, no order, and no "
+                f"parseable year at the start of their name) and were left out rather than being guessed "
+                f"at or bucketed as year zero, e.g. {shown}.",
+                dropped=unplaced,
                 examples=examples,
             )
         )
 
-    working = working.loc[dated].copy()
-    years = years[dated]
+    working = working.loc[placed].copy()
+    places = places[placed]
     # A passage too short to score has no dominant topic; it is left out and
     # counted rather than crashing the cast to int.
     topic = pd.to_numeric(working[DOMINANT_TOPIC], errors="coerce")
@@ -153,11 +165,49 @@ def lda_prevalence(
         diagnostics.append(
             Diagnostic.info("PANEL_UNSCORED_ROWS", f"{unscored} row(s) had no dominant topic and were left out.")
         )
-        working, years, topic = working[topic.notna()].copy(), years[topic.notna()], topic[topic.notna()]
+        working, places, topic = working[topic.notna()].copy(), places[topic.notna()], topic[topic.notna()]
     if working.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no row has a dominant topic"), *diagnostics)
     working[DOMINANT_TOPIC] = topic.astype(int)
-    working[PERIOD] = [_bucket_of(int(year), bucket) for year in years]
+
+    # -- the period each document lands in, and where that period sits on x --
+    # A time axis buckets years (1934, or the 1930s); an order axis takes
+    # whole steps ("Chapter 3") or the same axis's blocks ("Chapters 1-15"),
+    # which is the decade question asked of a book. A period is a value this
+    # builder computes, not a column the source frame already has.
+    # ``PreparedPanel.data`` is the table published beside the figure -- the
+    # CLI writes it out as ``panel_data.csv`` next to the HTML -- so the
+    # honest place to put the derived grouping is *in* that table, as a real
+    # ``Period`` column, rather than smuggling it into a filter a reader
+    # cannot check. Evidence then reads ``[("Period", "1930"), ("Dominant
+    # topic", "3")]``, and a test can take those filters straight back to
+    # ``panel.data`` and find exactly the documents the band was drawn from --
+    # see ``tests/test_panels_lda_prevalence.py``.
+    period_x: dict[object, float] = {}
+    if axis.kind == "order":
+        noun = axis.noun or "Document"
+        ids = working[DOCUMENT_ID].astype(str)
+        if bucket == "year":
+            # One band per step: the fine reading of an order axis.
+            working[PERIOD] = [f"{noun} {_step(at)}" for at in places]
+            period_x = {label: float(at) for label, at in zip(working[PERIOD], places, strict=True)}
+        else:
+            # Blocks of steps: the decade question asked of chapters.
+            positions = {doc: float(at) for doc, at in zip(ids, places, strict=True)}
+            blocks = Axis("order", noun, positions).periods()
+            missing = f"(no {noun.lower()} number)"
+            working[PERIOD] = [blocks.get(str(doc), missing) for doc in ids]
+            centers: dict[object, list[float]] = {}
+            for label, at in zip(working[PERIOD], places, strict=True):
+                centers.setdefault(label, []).append(float(at))
+            period_x = {label: sum(xs) / len(xs) for label, xs in centers.items()}
+    else:
+        working[PERIOD] = [_bucket_of(int(year), bucket) for year in places]
+        period_x = {value: float(value) for value in working[PERIOD].unique()}
+    label_of = {
+        value: (str(value) if axis.kind == "order" else _period_label(int(value), bucket))
+        for value in dict.fromkeys(working[PERIOD])
+    }
 
     # -- numeric contribution, only when the measure needs it -----------
     # "documents" never reads Contribution, so a broken value there should
@@ -189,21 +239,31 @@ def lda_prevalence(
         )
 
     # -- how many documents landed in each bucket, for the thin-bucket check
-    # and for "N of M addresses" wording on the marks --
-    doc_counts_by_period: dict[int, int] = {
-        int(period): int(count) for period, count in working.groupby(PERIOD)[DOCUMENT_ID].nunique().items()
+    # and for "N of M documents" wording on the marks --
+    doc_counts_by_period: dict[object, int] = {
+        period: int(count) for period, count in working.groupby(PERIOD)[DOCUMENT_ID].nunique().items()
     }
-    thin = sorted(period for period, count in doc_counts_by_period.items() if count == 1)
+    thin = sorted((period for period, count in doc_counts_by_period.items() if count == 1), key=period_key)
     if thin:
-        labels = ", ".join(_period_label(period, bucket) for period in thin)
-        diagnostics.append(
-            Diagnostic.info(
-                "PANEL_THIN_BUCKET",
-                f"{len(thin)} time bucket(s) hold only one document, so their 100% band is one speech, not "
-                f"a trend: {labels}.",
-                buckets=thin,
+        labels = ", ".join(label_of[period] for period in thin)
+        if axis.kind == "order":
+            diagnostics.append(
+                Diagnostic.info(
+                    "PANEL_THIN_BUCKET",
+                    f"{len(thin)} group(s) hold only one document, so their 100% band is one document, not "
+                    f"a trend: {labels}.",
+                    buckets=[label_of[period] for period in thin],
+                )
             )
-        )
+        else:
+            diagnostics.append(
+                Diagnostic.info(
+                    "PANEL_THIN_BUCKET",
+                    f"{len(thin)} time bucket(s) hold only one document, so their 100% band is one speech, not "
+                    f"a trend: {labels}.",
+                    buckets=[label_of[period] for period in thin],
+                )
+            )
 
     # -- the aggregate a band's height actually is -----------------------
     if measure == "documents":
@@ -234,15 +294,20 @@ def lda_prevalence(
     groups = tuple(name_of[topic] for topic in sorted(name_of))
 
     marks: list[PanelMark] = []
-    for _, row in grouped.sort_values([PERIOD, DOMINANT_TOPIC], kind="stable").iterrows():
-        period = int(row[PERIOD])
+    ordered = grouped.sort_values(
+        [PERIOD, DOMINANT_TOPIC],
+        kind="stable",
+        key=lambda column: column.map(period_key) if column.name == PERIOD else column,
+    )
+    for _, row in ordered.iterrows():
+        period = row[PERIOD]
         topic = int(row[DOMINANT_TOPIC])
         count = int(row["_count"])
         value = float(row["_share"])
-        period_label = _period_label(period, bucket)
+        period_label = label_of[period]
         doc_total = doc_counts_by_period.get(period, count)
         keywords = _short_keywords(row["_keywords"])
-        value_desc = _value_desc(measure, normalize, value, count, doc_total)
+        value_desc = _value_desc(measure, normalize, value, count, doc_total, axis=axis.kind)
         label = f"{period_label} · Topic {topic}"
         if keywords:
             label += f" ({keywords})"
@@ -251,7 +316,7 @@ def lda_prevalence(
             PanelMark(
                 key=f"{period}:{topic}",
                 label=label,
-                x=float(period),
+                x=period_x[period],
                 y=value,
                 group=name_of[topic],
                 size=float(count),
@@ -264,20 +329,31 @@ def lda_prevalence(
             )
         )
 
-    x_label = "Decade" if bucket == "decade" else "Year"
+    if axis.kind == "order":
+        x_label = f"{axis.noun or 'Document'} block" if bucket != "year" else axis.noun or "Document"
+        subject = "documents"
+    else:
+        x_label = "Decade" if bucket == "decade" else "Year"
+        noun = ""
+        subject = "addresses"
     if measure == "documents":
-        y_label = "Share of addresses (dominant topic)" if normalize else "Number of addresses (dominant topic)"
+        y_label = f"Share of {subject} (dominant topic)" if normalize else f"Number of {subject} (dominant topic)"
     else:
         y_label = "Share of contribution mass" if normalize else "Total contribution mass"
 
     n_docs = int(working[DOCUMENT_ID].nunique())
     n_periods = int(grouped[PERIOD].nunique())
-    subtitle = f"{n_docs} addresses across {n_periods} {bucket}(s) · {len(groups)} topic(s)"
+    if axis.kind == "order":
+        steps = plural(axis.noun or "Document").lower()
+        where = steps if bucket == "year" else f"blocks of {steps}"
+        subtitle = f"{n_docs} document(s) across {n_periods} {where} · {len(groups)} topic(s)"
+    else:
+        subtitle = f"{n_docs} addresses across {n_periods} {bucket}(s) · {len(groups)} topic(s)"
 
     prepared = PreparedPanel(
         panel=LDA_PREVALENCE.name,
         shape="stream",
-        title="Topic prevalence over time",
+        title="Topic prevalence over time" if axis.kind != "order" else f"Topic prevalence {axis.along}",
         subtitle=subtitle,
         marks=tuple(marks),
         x_label=x_label,
@@ -285,7 +361,7 @@ def lda_prevalence(
         provenance=provenance,
         data=working,
         groups=groups,
-        notes=_NOTES,
+        notes=_ORDER_NOTES if axis.kind == "order" else _NOTES,
     )
     return Result.success(prepared, *diagnostics)
 
@@ -307,8 +383,13 @@ def _bucket_of(year: int, bucket: str) -> int:
     return year if bucket == "year" else year - (year % 10)
 
 
+def _step(at: float) -> str:
+    """An order step the way a person writes it: 3, not 3.0 (4.5 stays 4.5)."""
+    return str(int(at)) if float(at).is_integer() else f"{at:g}"
+
+
 def _period_label(period: int, bucket: str) -> str:
-    """How a bucket reads to a person: "1934" or "1930s"."""
+    """How a time bucket reads to a person: "1934" or "1930s"."""
     return str(period) if bucket == "year" else f"{period}s"
 
 
@@ -333,12 +414,22 @@ def _short_keywords(keywords: Any) -> str:
     return ", ".join(parts[:_LABEL_KEYWORDS])
 
 
-def _value_desc(measure: str, normalize: bool, value: float, count: int, doc_total: int) -> str:
+def _value_desc(  # noqa: PLR0913 - the five numbers and two axes a mark's height can be in
+    measure: str, normalize: bool, value: float, count: int, doc_total: int, *, axis: str = "time"
+) -> str:
     """One clause describing a mark's height, in the units it is actually in."""
     if measure == "documents":
+        if axis == "order":
+            if normalize:
+                return f"{value:.0%} of {doc_total} document(s) in that group"
+            return f"{count} of {doc_total} document(s) in that group"
         if normalize:
             return f"{value:.0%} of {doc_total} address(es) that period"
         return f"{count} of {doc_total} address(es) that period"
+    if axis == "order":
+        if normalize:
+            return f"{value:.0%} of that group's contribution mass"
+        return f"{value:.2f} total contribution"
     if normalize:
         return f"{value:.0%} of that period's contribution mass"
     return f"{value:.2f} total contribution"
@@ -360,10 +451,28 @@ _NOTES: tuple[str, ...] = (
 )
 
 
+#: The same cautions for an order axis (chapters, sessions), where the words
+#: "year", "decade" and "speech" would describe a corpus this is not.
+_ORDER_NOTES: tuple[str, ...] = (
+    "A document's dominant topic is a summary of a mixture, not the whole of it: a document about several "
+    "things is still counted once, under whichever topic had the largest share of it.",
+    "Groups are not the same size -- some blocks of the order hold more documents than others. Without "
+    "normalize, a taller band can mean more documents in that group rather than more of that topic; a "
+    "share only reads as a rate once normalize is on.",
+    "A topic's rise or fall across the plot can reflect the model's vocabulary -- the words that happened "
+    "to define that topic in this fit -- as much as it reflects the sequence of documents. Read a spike "
+    "alongside the topic's keywords before calling it a trend.",
+    "Topic numbers are arbitrary labels assigned during the fit, not a ranking or a timeline: topic 0 is "
+    "not earlier, bigger or more important than topic 5, and a re-run of the model can renumber them entirely.",
+    "A group built from a single document is not a trend. A 100% band from one document says only that the "
+    "one document had a dominant topic; PANEL_THIN_BUCKET names which groups these are.",
+)
+
+
 LDA_PREVALENCE = PanelDefinition(
     name="lda_prevalence",
     title="Topic prevalence over time",
-    question="Which topics rise and fall across the years?",
+    question="Which topics rise and fall along the corpus's axis?",
     tool="lda_gensim",
     shape="stream",
     summary="How much each topic takes up in each period, by dominant documents or by contribution, as stacked bands.",
@@ -374,10 +483,12 @@ LDA_PREVALENCE = PanelDefinition(
             type="choice",
             default="decade",
             choices=("year", "decade"),
-            label="Time grouping",
+            label="Grouping",
             help=(
-                "How to group documents along the x axis. With roughly one State of the Union address per "
-                "year, 'year' produces a very spiky picture; 'decade' is usually more readable."
+                "How to group documents along the x axis. On a time axis: years or decades. On an order "
+                "axis (chapters, sessions): single steps or blocks of steps -- the same question, asked of "
+                "a book. With roughly one document per step, the fine choice produces a very spiky "
+                "picture; the coarse one is usually more readable."
             ),
         ),
         PanelParam(

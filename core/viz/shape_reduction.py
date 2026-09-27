@@ -194,6 +194,8 @@ def components_html(result: ReductionResult, *, title: str = "") -> Result[str]:
     note = (
         "<p>Each panel is one story metric along the narrative (opening to ending); "
         "a line is a shape component's profile over that path.</p>"
+        "<p>The features were standardized (per-feature z-scores) before the reduction, so the components "
+        "describe shape rather than sentence length; runs made before 0.5.0 give different components.</p>"
     )
     if result.method == "nmf" and result.shift:
         note += (

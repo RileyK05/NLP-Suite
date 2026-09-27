@@ -16,12 +16,16 @@ import time
 from typing import Any
 import uuid
 
+from core.corpus_axis import axis_of
 from core.profiler.plan import Plan
 from core.profiler.registry import ParamSpec, ToolSpec, get_tool
 from core.research.phrase import Tokenization
 from core.result import Diagnostic, Result
 from desktop_backend.catalog import CORPUS_TOOLS, desktop_spec
+from desktop_backend.comparisons import CONTRAST_TOOL
+from desktop_backend.fields import cleaning as project_cleaning, project_axis
 from desktop_backend.live import as_parser
+from desktop_backend.project_corpus import load_corpus, parse_cached, resolve_parser
 from desktop_backend.selection import CorpusSelection, resolve_selection
 from desktop_backend.store import Workspace, now
 from desktop_backend.tables import TABLE_TOOLS, run_table
@@ -78,9 +82,14 @@ QUESTION_PUBLISHERS = frozenset(QUESTION_PUBLISHER_SPECS)
 
 def _question_plan(tool: str, params: dict[str, Any]) -> Result[Plan]:
     """Validate one private research publisher without adding a public CLI."""
+    return _private_plan(QUESTION_PUBLISHER_SPECS[tool], params)
+
+
+def _private_plan(spec: ToolSpec, params: dict[str, Any]) -> Result[Plan]:
+    """A one-tool plan for a tool the general catalog does not list (questions, comparisons)."""
     from core.profiler.plan import PlannedTool, validate_parameters
 
-    spec = QUESTION_PUBLISHER_SPECS[tool]
+    tool = spec.name
     validated = validate_parameters(spec, params)
     if not validated.ok:
         return Result.failure(*validated.diagnostics)
@@ -114,6 +123,41 @@ JOB_STATES: tuple[str, ...] = (
 # produced" has to skip it, so it is named once here rather than spelled out
 # as a literal at each of those places.
 INPUT_MANIFEST = "desktop_inputs.csv"
+
+
+def input_manifest(documents: list[dict[str, Any]]) -> Any:
+    """The documents a run read, one row each, with a column per detail.
+
+    Details are flattened into columns (Date, Speaker, Kind, Side ...) so an
+    exported run says what each document was, not only which file it was. A
+    detail named like one of the manifest's own columns is prefixed.
+    """
+    import pandas as pd
+
+    rows = []
+    for document in documents:
+        row = {key: value for key, value in document.items() if key not in ("fields", "field_sources")}
+        for name, value in (document.get("fields") or {}).items():
+            row[f"Detail: {name}" if name in row else name] = value
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def overlapping_documents(documents: list[dict[str, Any]]) -> list[Diagnostic]:
+    """A warning when a run reads a book and chapters cut from it: every word would count twice."""
+    ids = {str(document.get("id")) for document in documents}
+    books = {str(document["derived_from"]) for document in documents if document.get("derived_from")} & ids
+    if not books:
+        return []
+    names = [str(document["name"]) for document in documents if str(document.get("id")) in books]
+    return [
+        Diagnostic.warning(
+            "CORPUS_OVERLAPPING_DOCUMENTS",
+            f"This run read {', '.join(names[:3])} and the chapters cut from it, so their words count twice. "
+            "Leave the whole book out of the selection, or move it to Trash.",
+        )
+    ]
+
 
 # A warm worker that has had no job for this long is shut down to free memory.
 WORKER_IDLE_SECONDS = 300.0
@@ -396,6 +440,14 @@ class Runner:
                     "date_from": scope.date_from,
                     "date_to": scope.date_to,
                     "include_undated": scope.include_undated,
+                    "order_from": scope.order_from,
+                    "order_to": scope.order_to,
+                    "include_unordered": scope.include_unordered,
+                    # As text, so the input manifest says in one cell what
+                    # narrowed the run ("Speaker = Barack Obama").
+                    "detail_filter": "; ".join(
+                        f"{name} = {' or '.join(values)}" for name, values in (scope.fields or {}).items()
+                    ),
                 }
                 for document in documents
             ]
@@ -435,6 +487,14 @@ class Runner:
             "parser": parser,
             "resources": resources,
             "selection": selection.model_dump() if selection is not None else None,
+            "axis": project_axis(self.workspace, project_id),
+            # What each project leaves out of the text the tools read (stage
+            # directions), frozen like the documents: a run records what it
+            # read (plan 5.2).
+            "text_cleaning": {
+                home: project_cleaning(self.workspace, home).model_dump()
+                for home in sorted({str(document.get("project_id") or project_id) for document in documents})
+            },
         }
         if glance:
             # The cache key: the documents' contents and the recipe version.
@@ -444,6 +504,96 @@ class Runner:
                 "INSERT INTO jobs (id, project_id, tool, state, stage, created, request) "
                 "VALUES (?, ?, ?, 'QUEUED', 'Waiting for an analysis slot', ?, ?)",
                 (job_id, project_id, tool, now(), json.dumps(request)),
+            )
+        self.pool.submit(self._dispatch, job_id)
+        return next(j for j in self.workspace.jobs(project_id) if j["id"] == job_id)
+
+    def submit_contrast(
+        self, project_id: str, definition: Any, parser: str, *, name: str = "", comparison_id: str = ""
+    ) -> dict[str, Any]:
+        """Queue a comparison: every side's documents, each read from its own project.
+
+        The job belongs to *project_id* (the comparison's home), so its results
+        are an ordinary run there. The documents are frozen now, as for every
+        run; a side's project that is missing or trashed refuses here, with the
+        side's name, rather than failing later in the worker.
+        """
+        import importlib.util
+
+        from desktop_backend.comparisons import CONTRAST_SPEC, contrast_params, side_documents
+
+        if self._stopping:
+            raise ValueError("The app is closing. Reopen it before starting a comparison.")
+        if self.workspace.project(project_id)["archived"]:
+            raise ValueError("Restore this project from the archive before starting a comparison.")
+        as_parser(parser)
+        if importlib.util.find_spec(parser) is None:
+            raise ValueError(f"The {parser} package is not installed. Open Setup for installation instructions.")
+        documents = side_documents(self.workspace, definition)
+        params = contrast_params(definition, name, comparison_id)
+        plan = _private_plan(CONTRAST_SPEC, params)
+        if not plan.ok:
+            raise ValueError("; ".join(d.message for d in plan.diagnostics))
+        request = {
+            "documents": documents,
+            "params": plan.unwrap().params,
+            "parser": parser,
+            "resources": [],
+            "selection": None,
+            "comparison": definition.model_dump(),
+            "axis": project_axis(self.workspace, project_id),
+        }
+        job_id = uuid.uuid4().hex
+        with self.workspace.connect() as db:
+            db.execute(
+                "INSERT INTO jobs (id, project_id, tool, state, stage, created, request) "
+                "VALUES (?, ?, ?, 'QUEUED', 'Waiting for an analysis slot', ?, ?)",
+                (job_id, project_id, CONTRAST_SPEC.name, now(), json.dumps(request)),
+            )
+        self.pool.submit(self._dispatch, job_id)
+        return next(j for j in self.workspace.jobs(project_id) if j["id"] == job_id)
+
+    def submit_notebook(self, project_id: str, notebook_id: str, parser: str) -> dict[str, Any]:
+        """Queue "Run and save": every cell of the notebook's saved revision, in a fresh namespace.
+
+        Queued like any analysis, so it waits its turn rather than competing
+        with a run already using the parser. The request freezes the notebook's
+        code and the project's documents as they are now, as every run does.
+        """
+        from desktop_backend.notebooks import NOTEBOOK_TOOL
+
+        if self._stopping:
+            raise ValueError("The app is closing. Reopen it before running a notebook.")
+        if self.workspace.project(project_id)["archived"]:
+            raise ValueError("Restore this project from the archive before running a notebook.")
+        as_parser(parser)
+        notebook = self.workspace.notebook(project_id, notebook_id)
+        # Pasted code runs when its reader chooses to run it. A saved run is a
+        # record that says what produced a figure, so it waits until every
+        # pasted cell has been marked as read.
+        for position, cell in enumerate(notebook["content"]["cells"], 1):
+            if cell["cell_type"] == "code" and cell.get("metadata", {}).get("nlpsuite", {}).get("origin") == "pasted":
+                raise ValueError(
+                    f"Cell {position} was pasted in from outside the app and is not marked as read. "
+                    "Read it, then press “I have read it”, before saving a run."
+                )
+        documents = resolve_selection(self.workspace.documents(project_id), None)
+        request = {
+            "notebook": notebook["content"],
+            "notebook_id": notebook_id,
+            "name": notebook["name"],
+            "revision": notebook["revision"],
+            "documents": documents,
+            "parser": parser,
+            "params": {},
+            "resources": [],
+        }
+        job_id = uuid.uuid4().hex
+        with self.workspace.connect() as db:
+            db.execute(
+                "INSERT INTO jobs (id, project_id, tool, state, stage, created, request) "
+                "VALUES (?, ?, ?, 'QUEUED', 'Waiting for an analysis slot', ?, ?)",
+                (job_id, project_id, NOTEBOOK_TOOL, now(), json.dumps(request)),
             )
         self.pool.submit(self._dispatch, job_id)
         return next(j for j in self.workspace.jobs(project_id) if j["id"] == job_id)
@@ -567,9 +717,8 @@ def run_mallet(
 
 def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker lifecycle
     """Entrypoint used by both Python development and the frozen executable."""
-    import pandas as pd
-
-    from core.io.reader import Corpus, Document, corpus_fingerprint, date_from_filename, hash_file, hash_text, read_text
+    from core.io.reader import hash_file
+    from core.models.vector_cache import VectorCache
     from core.profiler.batch import BatchRequest, write_batch
     from core.profiler.executor import BatchResult, execute
     from core.profiler.plan import build_plan
@@ -584,41 +733,27 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
                 raise ValueError("An analysis resource changed after submission. Submit a new run.")
         if job["tool"] in TABLE_TOOLS:
             return run_table(workspace, job, request["params"][job["tool"]])
+        from desktop_backend.notebooks import NOTEBOOK_TOOL, run_notebook
+
+        if job["tool"] == NOTEBOOK_TOOL:
+            return run_notebook(workspace, job, request)
         project_dir = workspace.project_dir(job["project_id"])
         workspace.update_job(job_id, state="RUNNING", stage="Reading document snapshot")
-        documents = []
-        diagnostics: list[Diagnostic] = []
-        for index, item in enumerate(request["documents"], 1):
-            path = project_dir / "corpus" / item["stored_name"]
-            if hash_file(path) != item["sha256"]:
-                raise ValueError(
-                    f"Imported document has changed since import: {item['name']}. Reimport it before running."
-                )
-            text_result = read_text(path)
-            diagnostics.extend(text_result.diagnostics)
-            if text_result.value is not None:
-                documents.append(
-                    Document(
-                        doc_id=index,
-                        path=path,
-                        text=text_result.unwrap(),
-                        sha256=hash_text(text_result.unwrap()),
-                        date=date_from_filename(Path(item["name"])),
-                        source_id=str(item["id"]),
-                        label=str(item["name"]),
-                    )
-                )
-        if not documents:
-            raise ValueError("No readable documents remain in the run snapshot.")
-        docs = tuple(documents)
-        corpus = Corpus(docs, corpus_fingerprint(docs))
+        corpus, diagnostics = load_corpus(
+            workspace, job["project_id"], request["documents"], text_cleaning=request.get("text_cleaning")
+        )
+        diagnostics.extend(overlapping_documents(request["documents"]))
         if job["tool"] == "lda_mallet":
-            return run_mallet(workspace, job, request["params"][job["tool"]], documents, project_dir)
+            return run_mallet(workspace, job, request["params"][job["tool"]], list(corpus.docs), project_dir)
         from desktop_backend.glance import GLANCE_TOOL
 
         glance = job["tool"] == GLANCE_TOOL
         if job["tool"] in QUESTION_PUBLISHERS:
             plan = _question_plan(job["tool"], request["params"][job["tool"]]).unwrap()
+        elif job["tool"] == CONTRAST_TOOL:
+            from desktop_backend.comparisons import CONTRAST_SPEC
+
+            plan = _private_plan(CONTRAST_SPEC, request["params"][job["tool"]]).unwrap()
         elif glance:
             plan = build_plan(list(request["params"]), request["params"]).unwrap()
         else:
@@ -630,15 +765,12 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
         tokenizer: Tokenization | None = None
         if plan.needs_parse:
             workspace.update_job(job_id, state="RUNNING", stage="Parsing English documents")
-            from core.config import NLPConfig
-            from core.pipelines.cache import PipelineCache
-            from core.pipelines.resolve import resolve_pipeline
             from desktop_backend.live import annotation_key, parser_identity
 
             # Same policy as the CLI: a backend whose model is missing or
             # damaged does not fail the job while another installed backend
             # can parse. The substitution rides along in the job diagnostics.
-            pipeline = resolve_pipeline(PipelineCache(), NLPConfig(parser=request["parser"], language="en"))
+            pipeline = resolve_parser(request["parser"])
             if pipeline.value is None:
                 workspace.update_job(
                     job_id,
@@ -656,27 +788,35 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
                         "This saved question belongs to an older document or parser snapshot. "
                         "Open it in Explore, review the refreshed answer, and save it again before publishing."
                     )
-            parsed = resolved_pipeline.parse(corpus)
-            table = parsed.value
-            parse_diags = (*pipeline.diagnostics, *parsed.diagnostics)
-            identity = parser_identity(resolved_pipeline)
-            tokenizer = Tokenization(
-                resolved_pipeline.tokenize,
-                f"{identity['backend']}/{identity['model'] or identity['language']}",
+            # Through the same cache the Interactive page keeps, so the second
+            # run over these documents reads the parse instead of redoing it.
+            parsed = parse_cached(
+                workspace.root,
+                corpus,
+                resolved_pipeline,
+                stage=lambda text: workspace.update_job(job_id, state="RUNNING", stage=text),
             )
+            table = parsed.table
+            parse_diags = (*pipeline.diagnostics, *parsed.diagnostics)
+            tokenizer = parsed.tokenizer
         workspace.update_job(job_id, state="RUNNING", stage="Computing analysis")
+        # The axis the project chose when the run was submitted; runs queued
+        # before axes existed choose from what the documents carry, as then.
+        chosen = request.get("axis") or {}
         batch = execute(
             plan,
             corpus=corpus,
             table=table,
             parse_diagnostics=parse_diags,
             tokenizer=tokenizer,
+            axis=axis_of(corpus, chosen.get("kind"), chosen.get("noun", "")),
+            vectors=VectorCache(workspace.root),
         )
         batch = BatchResult(
             tuple(
                 replace(
                     o,
-                    frames={**o.frames, INPUT_MANIFEST: pd.DataFrame(request["documents"])} if o.frames else {},
+                    frames={**o.frames, INPUT_MANIFEST: input_manifest(request["documents"])} if o.frames else {},
                     ok=o.ok and not any(d.severity.value == "ERROR" for d in diagnostics),
                     diagnostics=(*o.diagnostics, *diagnostics),
                 )

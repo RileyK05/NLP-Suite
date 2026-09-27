@@ -173,3 +173,70 @@ class TestKwic:
         assert panel.shape == "positions"
         assert len(panel.marks) == 6
         assert len(panel.y_categories) == 3
+
+
+class TestCharacters:
+    """Who is in which chapter: the cast strip (plan 2.6)."""
+
+    def _chapters(self) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        counts: dict[int, dict[str, int]] = {
+            1: {"Alice": 5, "Rabbit": 2},
+            2: {"Alice": 3},
+            3: {"Queen": 4, "Alice": 1},
+            4: {"Rabbit": 6},
+        }
+        for chapter, found in counts.items():
+            for character, mentions in found.items():
+                rows.append(
+                    {
+                        "Character": character,
+                        "Mentions": mentions,
+                        "First Sentence": 1,
+                        "Last Sentence": 2,
+                        "Document ID": str(chapter),
+                        "Document": f"Alice in Wonderland__{chapter:03d}.txt",
+                        "Position": float(chapter),
+                        "Position label": f"Chapter {chapter}",
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def test_the_strip_is_characters_x_chapters_coloured_by_mentions(self) -> None:
+        panel = ok("narrative_characters_by_order", self._chapters(), {"top-n": 2})
+        assert panel.shape == "heatmap"
+        assert panel.title == "Named characters across the chapters"
+        assert panel.x_label == "Chapter"
+        assert panel.x_categories == ("Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4")
+        assert panel.y_categories == ("Alice", "Rabbit"), "ranked by total mentions (Alice 9, Rabbit 8, Queen 4)"
+        assert panel.value_label == "Mentions"
+        cells = {(mark.label, panel.x_categories[int(mark.x)]): mark.value for mark in panel.marks}
+        assert cells[("Alice", "Chapter 1")] == 5
+        assert ("Alice", "Chapter 4") not in cells, "a blank cell is no mention, not a zero"
+        assert ("Queen", "Chapter 1") not in cells, "outside the top-2"
+        assert panel.notes
+
+    def test_a_dated_corpus_draws_the_same_strip_over_its_dates(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "Character": "Alice",
+                    "Mentions": 3,
+                    "Document ID": str(doc),
+                    "Document": f"{year}-01-05_alice_sotu.txt",
+                    "Date": f"{year}-01-05",
+                    "Year": year,
+                }
+                for doc, year in enumerate(YEARS[:3], start=1)
+            ]
+        )
+        panel = ok("narrative_characters_by_order", frame)
+        assert panel.x_categories == tuple(f"{year}-01-05" for year in YEARS[:3])
+        assert panel.title == "Named characters over time"
+
+    def test_without_an_axis_it_says_where_to_add_one(self) -> None:
+        frame = self._chapters().drop(columns=["Position", "Position label"])
+        result = build("narrative_characters_by_order", frame)
+        assert not result.ok
+        message = " ".join(d.message for d in result.diagnostics)
+        assert "Corpus page" in message

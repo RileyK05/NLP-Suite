@@ -27,7 +27,7 @@ and its vector is the word-weighted mean of its passages' vectors.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,9 +38,10 @@ from core.analysis.contextual import embed_sentences, text_backend, truncation_n
 from core.analysis.detokenize import detokenize
 from core.analysis.doc_similarity import CLASS_LABELS, band_index
 from core.conll.schema import Col, validate_columns
+from core.models.vector_cache import VectorCache
 from core.result import Diagnostic, Result
 
-__all__ = ["DEFAULT_MODEL", "EmbeddingTables", "embed_corpus", "semantic_search"]
+__all__ = ["DEFAULT_MODEL", "EmbeddingTables", "SentenceVectors", "embed_corpus", "sentence_vectors", "semantic_search"]
 
 DEFAULT_MODEL = "granite-embedding-english-r2"
 #: Words per passage when a document is read in pieces (well inside 512 pieces).
@@ -61,6 +62,15 @@ class EmbeddingTables:
     pairs: pd.DataFrame
     neighbours: pd.DataFrame
     map: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class SentenceVectors:
+    """Parsed sentences and their unit vectors, in the table's document order."""
+
+    sentences: tuple[_Sentence, ...]
+    vectors: np.ndarray
+    diagnostics: tuple[Diagnostic, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +168,105 @@ def _project(matrix: np.ndarray, seed: int) -> np.ndarray:
     return coords
 
 
+def _model_sha(name: str) -> str:
+    """The model's registered sha256, or "" when it is not a registered model."""
+    from core.models.registry import get_model
+
+    spec = get_model(name)
+    return str(getattr(spec, "sha256", "") or "") if spec is not None else ""
+
+
+def sentence_vectors(
+    frame: pd.DataFrame,
+    *,
+    model: str = DEFAULT_MODEL,
+    backend: Any = None,
+    shas: Mapping[str, str] | None = None,
+    cache: VectorCache | None = None,
+) -> Result[SentenceVectors]:
+    """Embed each parsed sentence once, reusing the shared sentence cache.
+
+    Comparison methods use the same detokenized sentence text and cache key as
+    ``doc_embeddings(unit="sentence")``. This avoids paying for the model's
+    clustering/map figures when the caller only needs pair similarities.
+    """
+    checked = validate_columns([str(c) for c in frame.columns])
+    if not checked.ok:
+        return Result[SentenceVectors](None, checked.diagnostics)
+    sentences = _sentences(frame)
+    if not sentences:
+        return Result.failure(Diagnostic.error("DOC_EMBED_EMPTY", "no sentences to embed"))
+    resolved = backend
+    if resolved is None:
+        opened = text_backend(model)
+        if opened.value is None:
+            return Result[SentenceVectors](None, opened.diagnostics)
+        resolved = opened.value
+    name = getattr(resolved, "model_name", model)
+    try:
+        matrix = _unit(
+            _embedded_items(
+                resolved,
+                [sentence.text for sentence in sentences],
+                [sentence.doc_id for sentence in sentences],
+                unit="sentence",
+                model_name=name,
+                model_sha=_model_sha(name),
+                shas=shas,
+                cache=cache,
+            )
+        )
+    except (RuntimeError, ValueError, OSError) as exc:
+        return Result.failure(Diagnostic.error("DOC_EMBED_MODEL_FAILED", str(exc)))
+    return Result.success(
+        SentenceVectors(tuple(sentences), matrix, tuple(truncation_note(resolved))),
+        *truncation_note(resolved),
+    )
+
+
+def _embedded_items(
+    backend: Any,
+    texts: Sequence[str],
+    owners: Sequence[str],
+    *,
+    unit: str,
+    model_name: str,
+    model_sha: str,
+    shas: Mapping[str, str] | None,
+    cache: VectorCache | None,
+) -> np.ndarray:
+    """One vector per item, embedded per document through the cache when given.
+
+    A miss costs one model call for that document's items and writes them
+    back; a hit costs no model call at all (plan 5.4's A/B). Documents whose
+    sha is unknown are always computed, never cached.
+    """
+    if cache is None or not shas or not texts:
+        return np.asarray(embed_sentences(backend, list(texts)), dtype=float)
+    by_owner: dict[str, list[int]] = {}
+    for index, owner in enumerate(owners):
+        by_owner.setdefault(owner, []).append(index)
+    vectors: dict[int, np.ndarray] = {}
+    for owner, indices in by_owner.items():
+        document = shas.get(owner, "")
+        group = [texts[index] for index in indices]
+        found = None
+        if document:
+            key = cache.key(model=model_name, model_sha=model_sha, unit=unit, document=document, items=group)
+            found = cache.load(key)
+            if found is not None and found.shape[0] != len(group):
+                found = None
+        if found is None:
+            found = np.asarray(embed_sentences(backend, group), dtype=float)
+            if document:
+                cache.save(
+                    cache.key(model=model_name, model_sha=model_sha, unit=unit, document=document, items=group), found
+                )
+        for slot, index in enumerate(indices):
+            vectors[index] = found[slot]
+    return np.stack([vectors[index] for index in range(len(texts))])
+
+
 def embed_corpus(
     frame: pd.DataFrame,
     *,
@@ -166,8 +275,15 @@ def embed_corpus(
     top_n: int = 5,
     seed: int = 42,
     backend: Any = None,
+    shas: Mapping[str, str] | None = None,
+    cache: VectorCache | None = None,
 ) -> Result[EmbeddingTables]:
-    """Vectors, pairwise similarity, neighbours and a map for documents or sentences."""
+    """Vectors, pairwise similarity, neighbours and a map for documents or sentences.
+
+    *shas* maps document id to the sha256 of its (cleaned) text, so *cache*
+    can recognise the same document in a later run; without both, every call
+    embeds afresh.
+    """
     if unit not in ("document", "sentence"):
         return Result.failure(
             Diagnostic.error("DOC_EMBED_BAD_UNIT", f"unit must be document or sentence, got {unit!r}")
@@ -188,26 +304,48 @@ def embed_corpus(
             return Result.failure(*opened.diagnostics)
         resolved = opened.value
     name = getattr(resolved, "model_name", model)
+    model_sha = _model_sha(name)
 
     try:
         if unit == "sentence":
-            matrix = _unit(np.asarray(embed_sentences(resolved, [s.text for s in sentences]), dtype=float))
+            matrix = _unit(
+                _embedded_items(
+                    resolved,
+                    [s.text for s in sentences],
+                    [s.doc_id for s in sentences],
+                    unit="sentence",
+                    model_name=name,
+                    model_sha=model_sha,
+                    shas=shas,
+                    cache=cache,
+                )
+            )
             rows = [(s.doc_id, s.document, s.sent_id, len(s.text.split())) for s in sentences]
         else:
             by_doc: dict[str, list[_Sentence]] = {}
             for sentence in sentences:
                 by_doc.setdefault(sentence.doc_id, []).append(sentence)
             passages: list[str] = []
-            owners: list[int] = []
-            for index, members in enumerate(by_doc.values()):
+            owners: list[str] = []
+            for doc_id, members in by_doc.items():
                 for passage in _passages(members):
                     passages.append(passage)
-                    owners.append(index)
-            passage_vectors = np.asarray(embed_sentences(resolved, passages), dtype=float)
+                    owners.append(doc_id)
+            passage_vectors = _embedded_items(
+                resolved,
+                passages,
+                owners,
+                unit="document",
+                model_name=name,
+                model_sha=model_sha,
+                shas=shas,
+                cache=cache,
+            )
             weights = np.array([len(passage.split()) for passage in passages], dtype=float)
             matrix = np.zeros((len(by_doc), passage_vectors.shape[1]))
+            row_of = {doc_id: index for index, doc_id in enumerate(by_doc)}
             for vector, owner, weight in zip(passage_vectors, owners, weights, strict=True):
-                matrix[owner] += weight * vector
+                matrix[row_of[owner]] += weight * vector
             matrix = _unit(matrix)
             rows = [
                 (doc_id, members[0].document, None, sum(len(s.text.split()) for s in members))

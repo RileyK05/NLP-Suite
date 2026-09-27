@@ -9,6 +9,7 @@ import type {
   PreparedPanel,
 } from "./api";
 import { Diagnostics } from "./RunStatus";
+import { loadDetails, type ProjectDetails } from "./details";
 import { PanelCanvas, type PanelSelection } from "./PanelCanvas";
 import { BundleGallery } from "./BundleGallery";
 import { PanelPassages } from "./PanelPassages";
@@ -62,6 +63,24 @@ export function PanelSection({
     panel: string;
     params: Record<string, unknown>;
   } | null>(null);
+
+  // The project's document details, offered beside the declared choices of a
+  // detail-taking parameter ("group by Party"). Loaded only when a panel
+  // declares one, the way ParamFields does.
+  const [details, setDetails] = useState<ProjectDetails | null>(null);
+  const wantsDetails = !!panels?.some((panel) =>
+    panel.params.some((param) => param.details),
+  );
+  useEffect(() => {
+    if (!projectId || !wantsDetails) return;
+    let alive = true;
+    loadDetails(projectId)
+      .then((found) => alive && setDetails(found))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [projectId, wantsDetails]);
 
   // The run on screen *now*, updated during render rather than in an effect:
   // a draw's answer can resolve in the gap between a re-render and its
@@ -238,6 +257,7 @@ export function PanelSection({
               key={param.name}
               param={param}
               value={params[param.name]}
+              extraChoices={detailChoices(details, param)}
               onChange={(value) =>
                 setParams((current) => ({ ...current, [param.name]: value }))
               }
@@ -286,16 +306,36 @@ export function panelDefaults(panel: PanelInfo): Record<string, unknown> {
   );
 }
 
+/** The declared choices plus the project's detail names ("Party", "Kind"), de-duplicated.
+ *  Date is left out: year and decade already group by it. */
+export function detailChoices(
+  details: ProjectDetails | null,
+  param: Param,
+): string[] | undefined {
+  if (!param.details) return undefined;
+  const base = param.choices.map(String);
+  const seen = new Set(base.map((choice) => choice.toLowerCase()));
+  const extras = (details?.names ?? [])
+    .map((item) => item.name)
+    .filter(
+      (name) => name.toLowerCase() !== "date" && !seen.has(name.toLowerCase()),
+    );
+  return [...base, ...extras];
+}
+
 /** One declared parameter as a control. Labels, choices, bounds and help all
  *  come from the engine — the desktop invents none of them. */
 export function PanelParamField({
   param,
   value,
   onChange,
+  extraChoices,
 }: {
   param: Param;
   value: unknown;
   onChange: (value: unknown) => void;
+  /** A detail-taking choice's options: declared choices plus the project's details. */
+  extraChoices?: string[];
 }) {
   const NUMERIC = param.type === "int" || param.type === "float";
   if (param.type === "bool") {
@@ -312,6 +352,7 @@ export function PanelParamField({
     );
   }
   if (param.type === "choice") {
+    const choices = extraChoices ?? param.choices.map(String);
     return (
       <label className="field-label">
         {param.label}
@@ -319,7 +360,7 @@ export function PanelParamField({
           value={String(value ?? "")}
           onChange={(event) => onChange(event.target.value)}
         >
-          {param.choices.map((choice) => (
+          {choices.map((choice) => (
             <option key={choice} value={choice}>
               {choice}
             </option>

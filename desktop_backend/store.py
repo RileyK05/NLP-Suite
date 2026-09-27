@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -17,6 +18,7 @@ import uuid
 from core.artifacts.envelope import Envelope
 from core.file_ops.converter import convert_document_to_text, supported_suffixes
 from core.io.reader import read_text
+from desktop_backend.notebooks import MAX_NOTEBOOKS_PER_PROJECT, NotebookBody
 from desktop_backend.paths import portable_key, storage_filename
 from desktop_backend.questions import MAX_QUESTIONS_PER_PROJECT, QuestionBody
 from desktop_backend.views import MAX_VIEW_NAME, MAX_VIEWS_PER_PROJECT, ViewBody, describe_source
@@ -112,6 +114,40 @@ class Workspace:
                     revision INTEGER NOT NULL DEFAULT 1,
                     created TEXT NOT NULL, updated TEXT NOT NULL,
                     UNIQUE(project_id, name));
+                -- Smart-script notebooks. content is nbformat 4 JSON without
+                -- outputs: outputs belong to runs, and a notebook is the code.
+                CREATE TABLE IF NOT EXISTS notebooks (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    name TEXT NOT NULL, content TEXT NOT NULL,
+                    revision INTEGER NOT NULL DEFAULT 1,
+                    created TEXT NOT NULL, updated TEXT NOT NULL,
+                    UNIQUE(project_id, name));
+                -- Document details a person, a spreadsheet or the book splitter
+                -- set (desktop_backend/fields.py). Details read from file names
+                -- are not stored: they are recomputed from the names, so they
+                -- can never go stale. One row per source, so "back to the file
+                -- name's value" deletes a row instead of guessing one.
+                CREATE TABLE IF NOT EXISTS document_fields (
+                    project_id TEXT NOT NULL REFERENCES projects(id),
+                    document_id TEXT NOT NULL REFERENCES documents(id),
+                    name TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+                    source TEXT NOT NULL, updated TEXT NOT NULL,
+                    PRIMARY KEY (document_id, key, source));
+                CREATE INDEX IF NOT EXISTS document_fields_project ON document_fields(project_id, key);
+                CREATE TABLE IF NOT EXISTS project_settings (
+                    project_id TEXT PRIMARY KEY REFERENCES projects(id),
+                    settings TEXT NOT NULL DEFAULT '{}',
+                    revision INTEGER NOT NULL DEFAULT 1, updated TEXT NOT NULL);
+                -- Saved corpus comparisons (desktop_backend/comparisons.py).
+                -- A comparison lives in its first side's project; its sides may
+                -- name other projects, which is why it is only a definition:
+                -- the results are ordinary runs of the "contrast" tool.
+                CREATE TABLE IF NOT EXISTS comparisons (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    name TEXT NOT NULL, definition TEXT NOT NULL,
+                    revision INTEGER NOT NULL DEFAULT 1,
+                    created TEXT NOT NULL, updated TEXT NOT NULL,
+                    UNIQUE(project_id, name));
             """)
             if "archived" not in {row[1] for row in db.execute("PRAGMA table_info(projects)")}:
                 db.execute("ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
@@ -131,6 +167,11 @@ class Workspace:
                 ("source_name", "TEXT"),
                 ("source_sha256", "TEXT"),
                 ("import_diagnostics", "TEXT NOT NULL DEFAULT '[]'"),
+                # A chapter cut from a book (desktop_backend/sections.py): the
+                # book's document id, and how it was cut (rule, offsets, and
+                # the book's sha256, so provenance survives the book's purge).
+                ("derived_from", "TEXT"),
+                ("derivation", "TEXT"),
             ):
                 if name not in columns:
                     db.execute(f"ALTER TABLE documents ADD COLUMN {name} {declaration}")
@@ -198,6 +239,14 @@ class Workspace:
         project_id = uuid.uuid4().hex
         with self.connect() as db:
             db.execute("INSERT INTO projects(id,name,created) VALUES (?, ?, ?)", (project_id, name, now()))
+            # New projects leave transcript stage directions out of their
+            # analyses (Riley, D6): "(Applause.)" is not the speaker's words.
+            # Projects made before this setting existed keep reading every
+            # character until their reader opts in on the Corpus page.
+            db.execute(
+                "INSERT INTO project_settings(project_id, settings, revision, updated) VALUES (?, ?, 1, ?)",
+                (project_id, json.dumps({"text_cleaning": {"stage_directions": True}}), now()),
+            )
         (self.project_dir(project_id) / "corpus").mkdir(parents=True)
         return self.project(project_id)
 
@@ -290,6 +339,10 @@ class Workspace:
                 # cascaded, so purge their rows in dependency order.
                 db.execute("DELETE FROM views WHERE project_id=?", (project_id,))
                 db.execute("DELETE FROM questions WHERE project_id=?", (project_id,))
+                db.execute("DELETE FROM notebooks WHERE project_id=?", (project_id,))
+                db.execute("DELETE FROM comparisons WHERE project_id=?", (project_id,))
+                db.execute("DELETE FROM document_fields WHERE project_id=?", (project_id,))
+                db.execute("DELETE FROM project_settings WHERE project_id=?", (project_id,))
                 db.execute("DELETE FROM jobs WHERE project_id=?", (project_id,))
                 db.execute("DELETE FROM documents WHERE project_id=?", (project_id,))
                 db.execute("DELETE FROM projects WHERE id=?", (project_id,))
@@ -317,13 +370,19 @@ class Workspace:
     ) -> list[dict[str, Any]]:
         self.project(project_id)
         with self.connect() as db:
-            return [
+            rows = [
                 dict(row)
                 for row in db.execute(
                     "SELECT * FROM documents WHERE project_id=? AND (? OR trashed=?) ORDER BY name, id",
                     (project_id, int(include_trashed), int(trashed)),
                 )
             ]
+        # Every document row carries its details (Date, Speaker, ...), so a
+        # selection, a run's frozen request and the Corpus page all read the
+        # same effective values.
+        from desktop_backend.fields import attach_fields  # noqa: PLC0415 -- fields.py reads through this Workspace
+
+        return attach_fields(self, project_id, rows)
 
     def trash_document(self, project_id: str, document_id: str, trashed: bool) -> dict[str, Any]:
         """Hide or restore one imported document without moving its identity or files."""
@@ -385,6 +444,7 @@ class Workspace:
                         target.parent.mkdir(parents=True, exist_ok=True)
                         path.rename(target)
                         moved.append((target, path))
+                db.execute("DELETE FROM document_fields WHERE document_id=?", (document_id,))
                 db.execute("DELETE FROM documents WHERE project_id=? AND id=?", (project_id, document_id))
             except BaseException:
                 for source, target in reversed(moved):
@@ -491,6 +551,35 @@ class Workspace:
             raise KeyError("Document not found")
         text = read_text(self.project_dir(project_id) / "corpus" / doc["stored_name"]).unwrap()
         return {**doc, "text": text[:PREVIEW_CHARACTERS], "truncated": len(text) > PREVIEW_CHARACTERS}
+
+    def passage_context(self, project_id: str, document_id: str, passage: str) -> dict[str, Any]:
+        """Find a parsed sentence in its full source and return nearby text.
+
+        Parser spacing around punctuation may differ from the original, so a
+        word-sequence fallback locates the source span after an exact search.
+        """
+        doc = next((d for d in self.documents(project_id) if d["id"] == document_id), None)
+        if doc is None:
+            raise KeyError("Document not found")
+        text = read_text(self.project_dir(project_id) / "corpus" / doc["stored_name"]).unwrap()
+        start = text.casefold().find(passage.casefold())
+        end = start + len(passage)
+        if start < 0:
+            source_tokens = list(re.finditer(r"\w+", text, re.UNICODE))
+            words = [token.group().casefold() for token in source_tokens]
+            sought = [token.group().casefold() for token in re.finditer(r"\w+", passage, re.UNICODE)]
+            if sought:
+                for index, word in enumerate(words):
+                    if word == sought[0] and words[index : index + len(sought)] == sought:
+                        start = source_tokens[index].start()
+                        end = source_tokens[index + len(sought) - 1].end()
+                        break
+        if start < 0:
+            return {"name": doc["name"], "excerpt": "", "found": False}
+        before = max(0, start - 240)
+        after = min(len(text), end + 240)
+        excerpt = ("…" if before else "") + text[before:after] + ("…" if after < len(text) else "")
+        return {"name": doc["name"], "excerpt": excerpt, "found": True}
 
     def jobs(self, project_id: str, *, trashed: bool = False, include_trashed: bool = False) -> list[dict[str, Any]]:
         self.project(project_id)
@@ -1006,3 +1095,104 @@ class Workspace:
         self.question(project_id, question_id)
         with self.connect() as db:
             db.execute("DELETE FROM questions WHERE project_id=? AND id=?", (project_id, question_id))
+
+    # ------------------------------------------------------------- notebooks --
+
+    @staticmethod
+    def _notebook(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "content": json.loads(row["content"]),
+            "revision": row["revision"],
+            "created": row["created"],
+            "updated": row["updated"],
+        }
+
+    def notebooks(self, project_id: str) -> list[dict[str, Any]]:
+        """Every notebook in the project, most recently touched first."""
+        self.project(project_id)
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM notebooks WHERE project_id=? ORDER BY updated DESC, rowid DESC", (project_id,)
+            ).fetchall()
+        return [self._notebook(row) for row in rows]
+
+    def notebook(self, project_id: str, notebook_id: str) -> dict[str, Any]:
+        self.project(project_id)
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM notebooks WHERE project_id=? AND id=?", (project_id, notebook_id)
+            ).fetchone()
+        if row is None:
+            raise KeyError("Notebook not found")
+        return self._notebook(row)
+
+    def save_notebook(self, project_id: str, body: NotebookBody) -> dict[str, Any]:
+        if self.project(project_id)["trashed"]:
+            raise ValueError("Restore this project from Trash before adding notebooks.")
+        stamp = now()
+        identifier = uuid.uuid4().hex
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            count = db.execute("SELECT COUNT(*) FROM notebooks WHERE project_id=?", (project_id,)).fetchone()[0]
+            if count >= MAX_NOTEBOOKS_PER_PROJECT:
+                raise ValueError(f"This project has reached the {MAX_NOTEBOOKS_PER_PROJECT}-notebook limit.")
+            if db.execute("SELECT 1 FROM notebooks WHERE project_id=? AND name=?", (project_id, body.name)).fetchone():
+                raise ValueError(f"This project already has a notebook called “{body.name}”.")
+            db.execute(
+                "INSERT INTO notebooks(id,project_id,name,content,revision,created,updated) VALUES(?,?,?,?,?,?,?)",
+                (identifier, project_id, body.name, json.dumps(body.content), 1, stamp, stamp),
+            )
+        return self.notebook(project_id, identifier)
+
+    def update_notebook(self, project_id: str, notebook_id: str, body: NotebookBody) -> dict[str, Any]:
+        """Replace a notebook, refusing to overwrite a revision this edit did not start from."""
+        existing = self.notebook(project_id, notebook_id)
+        if body.expected_revision is not None and body.expected_revision != existing["revision"]:
+            raise ValueError(
+                f"“{existing['name']}” has moved on to revision {existing['revision']} since this was opened "
+                "(another window saved it). Reopen it, or save this as a new notebook."
+            )
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            clash = db.execute(
+                "SELECT 1 FROM notebooks WHERE project_id=? AND name=? AND id != ?",
+                (project_id, body.name, notebook_id),
+            ).fetchone()
+            if clash:
+                raise ValueError(f"This project already has a notebook called “{body.name}”.")
+            db.execute(
+                "UPDATE notebooks SET name=?, content=?, revision=?, updated=? WHERE project_id=? AND id=?",
+                (body.name, json.dumps(body.content), existing["revision"] + 1, now(), project_id, notebook_id),
+            )
+        return self.notebook(project_id, notebook_id)
+
+    def duplicate_notebook(self, project_id: str, notebook_id: str) -> dict[str, Any]:
+        original = self.notebook(project_id, notebook_id)
+        stamp = now()
+        identifier = uuid.uuid4().hex
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            count = db.execute("SELECT COUNT(*) FROM notebooks WHERE project_id=?", (project_id,)).fetchone()[0]
+            if count >= MAX_NOTEBOOKS_PER_PROJECT:
+                raise ValueError(f"This project has reached the {MAX_NOTEBOOKS_PER_PROJECT}-notebook limit.")
+            taken = {row[0] for row in db.execute("SELECT name FROM notebooks WHERE project_id=?", (project_id,))}
+            db.execute(
+                "INSERT INTO notebooks(id,project_id,name,content,revision,created,updated) VALUES(?,?,?,?,?,?,?)",
+                (
+                    identifier,
+                    project_id,
+                    free_name(original["name"], taken),
+                    json.dumps(original["content"]),
+                    1,
+                    stamp,
+                    stamp,
+                ),
+            )
+        return self.notebook(project_id, identifier)
+
+    def delete_notebook(self, project_id: str, notebook_id: str) -> None:
+        self.notebook(project_id, notebook_id)
+        with self.connect() as db:
+            db.execute("DELETE FROM notebooks WHERE project_id=? AND id=?", (project_id, notebook_id))

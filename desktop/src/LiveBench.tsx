@@ -350,6 +350,7 @@ export function LiveBench({
                 params={params}
                 onChange={setParams}
                 disabled={busy}
+                projectId={projectId ?? undefined}
               />
             )}
           </div>

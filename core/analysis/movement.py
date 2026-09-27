@@ -15,6 +15,8 @@ never fabricates coordinates.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import pandas as pd
 
 from core.conll.schema import Col, validate_columns
@@ -32,12 +34,14 @@ def movement_tracks(
     frame: pd.DataFrame,
     *,
     geocode: bool = False,
+    ignore: Iterable[str] = (),
 ) -> Result[pd.DataFrame]:
     """One row per (PERSON mention, location mention) within a sentence.
 
     Returns the pair table; a per-(entity, location) summary is derivable by
     grouping, and the geocoded variant carries ``Lat``/``Lon`` columns when
-    the offline KB knows the place.
+    the offline KB knows the place. *ignore* names person entities to leave
+    out (plan 5.2's reviewed stop-entity list).
     """
     checked = validate_columns([str(c) for c in frame.columns])
     if not checked.ok:
@@ -48,8 +52,9 @@ def movement_tracks(
     if frame.empty:
         return Result.success(pd.DataFrame(columns=_PAIR_COLUMNS))
 
-    from core.analysis.ner import _mentions_from_spans
+    from core.analysis.ner import _mentions_from_spans, parse_ignore
 
+    skipped = parse_ignore(ignore)
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
     rows: list[dict[str, object]] = []
     diags: list[Diagnostic] = []
@@ -59,7 +64,7 @@ def movement_tracks(
             # Mentions are spans; tag text for a sentence comes from its span
             # (first token's tag for a multiword span).
             mentions = _mentions_from_spans(sent_group)
-            persons = [entity for (entity, tag) in mentions if tag in _PERSON_TAGS]
+            persons = [entity for (entity, tag) in mentions if tag in _PERSON_TAGS and entity.casefold() not in skipped]
             places = [entity for (entity, tag) in mentions if tag in _LOCATION_TAGS]
             if not persons or not places:
                 continue

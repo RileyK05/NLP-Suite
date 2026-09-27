@@ -212,7 +212,7 @@ def _time_span(frame: pd.DataFrame, profiles: dict[str, ColumnProfile], draft: _
     undated = len(frame) - len(values)
     if undated:
         draft.cautions.append(
-            f"{undated:,} of {len(frame):,} row(s) have no {column.name}, so any chart over time "
+            f"{undated:,} of {len(frame):,} row(s) have no {column.name}, so any chart along the axis "
             "silently leaves them out. They are in the table and in every total; they are not on the timeline."
         )
 

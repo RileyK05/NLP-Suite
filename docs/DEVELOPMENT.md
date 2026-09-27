@@ -44,20 +44,30 @@ Run `nlp-doctor` first — it tells you what is missing and how to install it.
 
 ## Status
 
-Early build. **52 of 52 scaffold chunks done** (see
-`docs/CHUNK_LEDGER.md`). This does not mean full legacy parity: see
-`docs/LEGACY_PARITY.md` for the current comparison and
+The original **52 of 52 scaffold chunks are done**. This does not mean full
+legacy parity: see `docs/LEGACY_PARITY.md` for the current comparison and
 `docs/FULL_REPLACEMENT_PLAN.md` for the remaining implementation and review
 roadmap.
 
 ## How work is planned
 
-`docs/BUILD_PLAN.md` is the completed 52-chunk scaffold build order and
-`docs/CHUNK_LEDGER.md` records that work. New feature-parity work is defined in
-`docs/FULL_REPLACEMENT_PLAN.md`. Each roadmap item is delivered through the
+New feature-parity work is defined in `docs/FULL_REPLACEMENT_PLAN.md`.
+The completed scaffold's detailed build order and per-chunk history remain in
+Git history. Each roadmap item is delivered through the
 repeated-prompt chunks in `docs/IMPLEMENTATION_CHUNKING_PROTOCOL.md`, followed
 by independent review before it can be verified. Live status belongs in
 `docs/REPLACEMENT_LEDGER.md`.
+
+## Declarative tool registry
+
+`core/profiler/registry.py` defines the tools the profiler and UI may select
+without importing their modules. `TOOL_REGISTRY` contains the retained tools;
+`TOOL_REGISTRY_EXCLUSIONS` names thin CLIs whose conditional schema, parser,
+assets, external service, or optional dependency prevents registration. A tool
+enters the registry only after its inputs, prerequisites, and artifacts are
+declared and tested. `validate_specs(TOOL_REGISTRY)` must return no diagnostics,
+every capability ID must occur in `docs/REPLACEMENT_LEDGER.md`, and new
+`tools/*.py` entry points require an explicit inclusion or exclusion decision.
 
 ## Layout
 
@@ -409,13 +419,15 @@ opinion is not a smaller error than a wrong answer.
 
 Both produce failures that look like product bugs and are not.
 
-**Stale temp root.** On this development machine a stale, admin-owned
-`%TEMP%/pytest-of-moomi` directory breaks pytest's default temp root
-(`WinError 5`), and every test taking `tmp_path` errors. The committed config
-carries no machine-specific path; on affected machines pass a local basetemp:
+**Stale temp root.** On this development machine stale, admin-owned pytest
+temp directories have broken every test taking `tmp_path` (`WinError 5`).
+`conftest.py` now gives each session a fresh, short temp root, and the default
+pytest options disable writes to a possibly unreadable `.pytest_cache`. An
+explicit `--basetemp` still takes precedence when reproducing a CI run:
 
-```bash
-set PYTEST_ADDOPTS=--basetemp=%TEMP%/nlp_suite_ng_pytest_tmp
+```powershell
+New-Item -ItemType Directory -Path C:\pt -Force
+python -m pytest -p no:cacheprovider --basetemp=C:\pt\nlp-suite
 ```
 
 **Path length.** Keep that basetemp *short* and near the drive root. The

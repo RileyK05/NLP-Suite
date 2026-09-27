@@ -48,6 +48,8 @@ SOURCE = Path(__file__).resolve().parents[1] / "desktop" / "src"
 LAYOUT = SOURCE / "panelLayout.ts"
 CANVAS = SOURCE / "PanelCanvas.tsx"
 CANVAS_TESTS = SOURCE / "PanelCanvas.test.tsx"
+PANEL_TICKS = SOURCE / "panelTicks.ts"
+PANEL_TICKS_TESTS = SOURCE / "panelTicks.test.ts"
 
 
 def ts(path: Path) -> str:
@@ -132,6 +134,18 @@ class TestThePaletteIsShared:
         # same rule panel_plotters._group_color_map applies.
         assert "OKABE_ITO" in body
         assert "% OKABE_ITO.length" in body
+
+    def test_a_median_shares_its_groups_colour_on_both_sides(self) -> None:
+        """Two books on one chapter axis: each median is coloured as its book, in the app and the export."""
+        from core.viz.panelspec import SUMMARY_SUFFIX
+        from core.viz.static.style import group_colors
+
+        groups = ["Alice", "Pride", f"Alice{SUMMARY_SUFFIX}", f"Pride{SUMMARY_SUFFIX}"]
+        colors = group_colors(groups)
+        assert colors[f"Pride{SUMMARY_SUFFIX}"] == colors["Pride"] != colors["Alice"]
+        source = ts(LAYOUT)
+        assert f'export const SUMMARY_SUFFIX = "{SUMMARY_SUFFIX}";' in source
+        assert "summaryOf(group, ordered)" in ts_body(source, "export function groupColors", end="\n}\n")
 
     def test_an_ungrouped_panel_gets_the_first_colour_on_both_sides(self) -> None:
         """Behavioural on the Python side, structural on the TypeScript side
@@ -458,3 +472,56 @@ def test_every_implemented_shape_has_a_python_and_a_typescript_renderer(shape: s
     import core.viz.panel_plotters as plotters
 
     assert shape in plotters.__dict__.get("IMPLEMENTED_SHAPES", ()), shape
+
+
+class TestOrderAxisTicksAgree:
+    """An order axis prints whole "Ch. 5" steps in every renderer, from one rule.
+
+    The two renderers are the app's SVG (``panelTicks.ts``) and the published
+    figure's matplotlib (``core/viz/static/text.py``). ``PreparedPanel.x_axis``
+    is what tells a chapter from a year; these tests pin that both sides read
+    it, both abbreviate the noun alike, and both test files pin the same
+    samples.
+    """
+
+    def test_both_sides_carry_the_same_abbreviations(self) -> None:
+        from core.viz.static.text import SHORT_NOUNS
+
+        body = ts_body(ts(PANEL_TICKS), "export const SHORT_NOUNS", end="};")
+        entries = dict(re.findall(r'(\w+): "([^"]+)"', body))
+        assert entries == SHORT_NOUNS, (
+            "the tick abbreviations drifted between panelTicks.ts and core/viz/static/text.py; "
+            "one table is the rule, the other is its copy"
+        )
+
+    def test_the_fallback_shortens_the_same_way(self) -> None:
+        from core.viz.static import text as text_module
+
+        python = Path(text_module.__file__).read_text(encoding="utf-8")
+        assert "word[:2]" in python and "len(word) <= 4" in python
+        source = ts(PANEL_TICKS)
+        assert "word.slice(0, 2)" in source and "word.length <= 4" in source
+
+    def test_both_test_files_pin_the_same_sample(self) -> None:
+        """ "Canto" is not in the table; the fallback rule's sample is shared."""
+        assert 'shortNoun("Canto")).toBe("Ca.")' in ts(PANEL_TICKS_TESTS)
+        figure_tests = Path(__file__).with_name("test_figure_quality.py").read_text(encoding="utf-8")
+        assert 'short_noun("Canto") == "Ca."' in figure_tests
+
+    def test_an_order_axis_is_whole_steps_in_both_renderers(self) -> None:
+        canvas = ts(CANVAS)
+        assert 'prepared.xAxis === "order"' in canvas and 'prepared.xAxis === "time"' in canvas
+        assert "Number.isInteger(tick)" in ts(PANEL_TICKS_TESTS)
+        from core.viz.static import shapes
+
+        source = Path(shapes.__file__).read_text(encoding="utf-8")
+        assert "MaxNLocator(integer=True)" in source
+
+    def test_the_engine_says_which_axis_it_drew(self) -> None:
+        """x_axis is decided on the engine side, so the app never guesses from
+        a range of numbers -- the guess that called chapter 1500 a year."""
+        from core.viz.panelspec import PreparedPanel
+
+        assert PreparedPanel.__dataclass_fields__["x_axis"].default == ""
+        answer = ts_body(ts(CANVAS), "function xTickOptions", end="\n}\n")
+        assert "prepared.xNoun" in answer

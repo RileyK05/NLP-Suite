@@ -17,6 +17,7 @@ from collections.abc import Iterator, Sequence
 import contextlib
 from typing import Any
 
+from core.viz.panelspec import SUMMARY_SUFFIX
 from core.viz.plotters import OKABE_ITO
 
 __all__ = [
@@ -100,10 +101,19 @@ def is_remainder(group: str) -> bool:
     return group.startswith("(") and group.endswith(")") and group != UNGROUPED
 
 
+def summary_of(group: str, groups: Sequence[str]) -> str | None:
+    """The declared group *group* summarises, or None."""
+    if not group.endswith(SUMMARY_SUFFIX):
+        return None
+    parent = group[: -len(SUMMARY_SUFFIX)]
+    return parent if parent in groups else None
+
+
 def group_colors(groups: Sequence[str]) -> dict[str, str]:
     """Colour per group by *declared* order, the app's rule exactly
     (``panelLayout.groupColors``): no groups colours the implicit one blue,
-    and a remainder group is grey without using up a palette colour."""
+    a remainder group is grey without using up a palette colour, and a
+    summary of another group (:data:`SUMMARY_SUFFIX`) shares its colour."""
     ordered = list(groups) or [UNGROUPED]
     colors: dict[str, str] = {}
     index = 0
@@ -111,8 +121,14 @@ def group_colors(groups: Sequence[str]) -> dict[str, str]:
         if is_remainder(group):
             colors[group] = REMAINDER
             continue
+        if summary_of(group, ordered) is not None:
+            continue
         colors[group] = OKABE_ITO[index % len(OKABE_ITO)]
         index += 1
+    for group in ordered:
+        parent = summary_of(group, ordered)
+        if parent is not None:
+            colors[group] = colors[parent]
     return colors
 
 

@@ -11,5 +11,5 @@ def test_every_desktop_tool_has_learning_content() -> None:
     guides = json.loads(path.read_text(encoding="utf-8"))
     assert set(guides) == set(DESKTOP_TOOLS)
     for guide in guides.values():
-        assert set(guide) == {"what", "how", "question", "interpretation", "limits"}
+        assert set(guide) == {"what", "how", "formula", "question", "interpretation", "limits", "settings", "example"}
         assert all(isinstance(value, str) and len(value) > 60 for value in guide.values())

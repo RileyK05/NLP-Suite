@@ -31,8 +31,9 @@ from typing import Any
 import pandas as pd
 
 from core.result import Diagnostic, Result
-from core.viz.panel_helpers import decimal_year, document_labels, group_of
+from core.viz.panel_helpers import decimal_year, document_labels, group_of, no_axis, positioned
 from core.viz.panelspec import (
+    AXIS,
     Evidence,
     PanelDefinition,
     PanelEdge,
@@ -226,10 +227,15 @@ def _membership_years(  # noqa: PLR0913 - two model tools share this figure; eac
     one says it is about time.
     """
     working = frame.copy()
-    working["_year"] = working[DATE].map(decimal_year) if DATE in working.columns else None
+    working["_year"], axis = positioned(working)
+    if axis.kind == "none":
+        return Result.failure(no_axis(f"Placing each {group_name.lower()}'s documents"))
     dated = working[working["_year"].notna()].copy()
     if dated.empty:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no dated documents to place in time"))
+    if axis.kind == "order":
+        # "When ... are from" asks about time; chapters are asked where they fall.
+        title = title.replace("When", "Where", 1).replace(" are from", f" fall, {axis.along}")
     groups = sorted(dated[group_column].astype(str).unique(), key=lambda value: (len(value), value))
     categories = tuple(f"{group_name} {value}" for value in groups)
     row_of = {value: index for index, value in enumerate(groups)}
@@ -254,9 +260,16 @@ def _membership_years(  # noqa: PLR0913 - two model tools share this figure; eac
         panel=definition.name,
         shape="distribution",
         title=title,
-        subtitle=f"{len(dated)} dated document(s) across {len(groups)} {group_name.lower()}(s)",
+        subtitle=(
+            f"{len(dated)} dated document(s)"
+            if axis.kind == "time"
+            else f"{len(dated)} document(s) with a {axis.noun.lower()} number"
+        )
+        + f" across {len(groups)} {group_name.lower()}(s)",
         marks=marks,
-        x_label="Year of the speech",
+        x_label="Year of the speech" if axis.kind == "time" else axis.noun,
+        x_axis=axis.x_axis,
+        x_noun=axis.x_noun,
         y_label=group_name,
         provenance=provenance,
         data=dated.drop(columns=["_year"]).reset_index(drop=True),
@@ -286,7 +299,7 @@ SHAPE_HC_ERAS = PanelDefinition(
     tool="shape_hc",
     shape="distribution",
     summary="Every speech placed at its date, one row per cluster.",
-    requires=(DOC_ID, DOC, DATE, "Cluster"),
+    requires=(DOC_ID, DOC, AXIS, "Cluster"),
     params=(),
     build=_hc_membership,
     notes=(
@@ -404,10 +417,8 @@ def _scores(
     labels = _label_map(frame[DOC])
     working = frame.copy()
     working["_group"] = [
-        group_of(str(d), when, group_by)
-        for d, when in zip(
-            working[DOC], working[DATE] if DATE in working.columns else [None] * len(working), strict=True
-        )
+        group_of(str(row[DOC]), row[DATE] if DATE in working.columns else None, group_by, row)
+        for _, row in working.iterrows()
     ]
     groups = tuple(sorted(working["_group"].unique()))
     extreme = set(working.assign(_r=(working[x_col] ** 2 + working[y_col] ** 2)).nlargest(8, "_r")[DOC_ID].astype(str))
@@ -449,7 +460,7 @@ def _composition(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Pro
     del params
     components = [column for column in frame.columns if column.startswith("Component ")]
     working = frame.copy()
-    working["_year"] = working[DATE].map(decimal_year) if DATE in working.columns else None
+    working["_year"], _ = positioned(working)
     working = working.sort_values(["_year", DOC_ID], na_position="last", kind="stable").reset_index(drop=True)
     labels = _label_map(working[DOC])
     marks: list[PanelMark] = []
@@ -500,16 +511,21 @@ _GROUP_BY = PanelParam(
     type="choice",
     default="decade",
     choices=("decade", "speaker", "year", "none"),
+    details=True,
     label="Colour documents by",
-    help="Colour each document by its decade or by its speaker (read from the file name).",
+    help=(
+        "Colour each document by its decade, by its speaker, or by a document detail "
+        "(Party, Kind...) the corpus carries."
+    ),
 )
 _LOADING_NOTE = (
     "Each small multiple is one measure through the speech, opening at the left and close at the right; a line "
     "far from zero is the part of the speech that component weights.",
-    "The shape matrix is not standardised: token counts run in the tens and the noun and verb ratios below 1, "
-    "so the components are driven mostly by sentence length. On the real 87-speech run component 1's largest "
-    "token loading was about 100 times its largest ratio loading. Each small multiple has its own scale so "
-    "the ratio panels stay readable, but compare shapes within a panel, not heights across panels.",
+    "The features are standardized (per-feature z-scores) before the reduction, since 0.5.0: token counts run "
+    "in the tens and the noun and verb ratios below 1, and unstandardized component 1 was the size of the "
+    "sentences rather than a shape. Runs made before 0.5.0 give different components. Each small multiple has "
+    "its own scale so the ratio panels stay readable, but compare shapes within a panel, not heights across "
+    "panels.",
 )
 
 
@@ -676,7 +692,7 @@ BERT_TOPIC_ERAS = PanelDefinition(
     tool="bert_topics",
     shape="distribution",
     summary="Every document at its date, one row per assigned topic.",
-    requires=(DOC_ID, DOC, DATE, "Topic", "Distance"),
+    requires=(DOC_ID, DOC, AXIS, "Topic", "Distance"),
     params=(),
     build=_topic_eras,
     notes=(

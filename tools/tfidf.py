@@ -19,8 +19,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--max-df-ratio",
         type=float,
-        default=1.0,
-        help="drop terms appearing in more than this fraction of documents (1.0 keeps all)",
+        default=0.5,
+        help="drop terms appearing in more than this fraction of documents (0.5 since 0.5.0; 1.0 keeps all)",
     )
     p.add_argument("--min-length", type=int, default=1, help="drop tokens shorter than this")
     p.add_argument("--sublinear-tf", action="store_true", help="use 1 + log(count) instead of the raw count")

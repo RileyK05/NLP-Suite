@@ -48,9 +48,30 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from core.corpus_axis import Axis, period_key
 from core.result import Diagnostic, Result
-from core.viz.panel_helpers import GROUPINGS, decimal_year, document_labels, group_of, rolling_median
-from core.viz.panelspec import Evidence, PanelDefinition, PanelMark, PanelParam, PreparedPanel, Provenance
+from core.viz.panel_helpers import (
+    GROUPINGS,
+    POSITION,
+    POSITION_LABEL,
+    AxisInfo,
+    decimal_year,
+    document_labels,
+    group_of,
+    no_axis,
+    positioned,
+    rolling_median,
+)
+from core.viz.panelspec import (
+    AXIS,
+    SUMMARY_SUFFIX,
+    Evidence,
+    PanelDefinition,
+    PanelMark,
+    PanelParam,
+    PreparedPanel,
+    Provenance,
+)
 
 __all__ = [
     "CORPUS_STATISTICS_ALL_MEASURES",
@@ -88,6 +109,8 @@ __all__ = [
 DOC_ID = "Document ID"
 DOC = "Document"
 DATE = "Date"
+#: A document's Speaker detail, when the run carried details (core/profiler/executor.py).
+SPEAKER = "Speaker"
 
 #: A trend needs at least this many dated documents, or "the line" is one or
 #: two points wearing a trend's clothing.
@@ -158,6 +181,10 @@ def _fmt_size(value: object, unit: str) -> str:
 
 
 def _prepare_passthrough(required: tuple[str, ...]) -> Callable[[pd.DataFrame], Result[pd.DataFrame]]:
+    # A date is one way to place a document, not a requirement: a book's
+    # chapters are placed by Position instead (see _axis_columns).
+    required = tuple(column for column in required if column != DATE)
+
     def prepare(frame: pd.DataFrame) -> Result[pd.DataFrame]:
         diags = _missing(frame, required)
         if diags:
@@ -170,12 +197,21 @@ def _prepare_passthrough(required: tuple[str, ...]) -> Callable[[pd.DataFrame], 
 # ------------------------------------------------------- prepare: aggregated --
 
 
+#: The columns that place a document on the corpus's axis, carried through
+#: an aggregation to one row per document when the table has them.
+_AXIS_COLUMNS = (DATE, POSITION, POSITION_LABEL)
+
+
+def _axis_columns(frame: pd.DataFrame) -> dict[str, tuple[str, str]]:
+    """``groupby.agg`` specs keeping each document's Date, Position and Position label."""
+    return {column: (column, "first") for column in _AXIS_COLUMNS if column in frame.columns}
+
+
 def _prepare_sentence_complexity(frame: pd.DataFrame) -> Result[pd.DataFrame]:
     """Median dependency distance et al. per document, from the sentence rows."""
     required = (
         DOC_ID,
         DOC,
-        DATE,
         "Sentence ID",
         "Tokens",
         "Mean Dependency Distance",
@@ -192,7 +228,7 @@ def _prepare_sentence_complexity(frame: pd.DataFrame) -> Result[pd.DataFrame]:
     grouped = working.groupby(DOC_ID, as_index=False).agg(
         **{
             DOC: (DOC, "first"),
-            DATE: (DATE, "first"),
+            **_axis_columns(working),
             "Mean Dependency Distance": ("Mean Dependency Distance", "median"),
             "Max Dependency Distance": ("Max Dependency Distance", "median"),
             "Depth": ("Depth", "median"),
@@ -220,7 +256,7 @@ def _prepare_nominalization(frame: pd.DataFrame) -> Result[pd.DataFrame]:
     nominalization rate this table can produce without the per-word table,
     which belongs to another panel.
     """
-    required = (DOC_ID, DOC, DATE, "Sentence ID", "Words in Sentence", "Nominalizations in Sentence")
+    required = (DOC_ID, DOC, "Sentence ID", "Words in Sentence", "Nominalizations in Sentence")
     diags = _missing(frame, required)
     if diags:
         return Result.failure(*diags)
@@ -230,7 +266,7 @@ def _prepare_nominalization(frame: pd.DataFrame) -> Result[pd.DataFrame]:
     grouped = working.groupby(DOC_ID, as_index=False).agg(
         **{
             DOC: (DOC, "first"),
-            DATE: (DATE, "first"),
+            **_axis_columns(working),
             "_words": ("Words in Sentence", "sum"),
             "_noms": ("Nominalizations in Sentence", "sum"),
             "_n": ("Sentence ID", "count"),
@@ -257,7 +293,7 @@ def _prepare_verb_analysis(frame: pd.DataFrame) -> Result[pd.DataFrame]:
     """Voice/tense/modality rates per document, from ``verb_summary.csv``'s
     raw counts -- a house rule (normalise pooled counts) applied to counts
     that would otherwise just measure how many verbs a speech had."""
-    required = (DOC_ID, DOC, DATE, "Verbs", *_VERB_RATE_COLUMNS.values())
+    required = (DOC_ID, DOC, "Verbs", *_VERB_RATE_COLUMNS.values())
     diags = _missing(frame, required)
     if diags:
         return Result.failure(*diags)
@@ -333,16 +369,20 @@ def _over_time(
         )
 
     working = working.copy()
-    working["_year"] = working[DATE].map(decimal_year)
+    working["_year"], axis = positioned(working)
+    if axis.kind == "none":
+        return Result.failure(no_axis(f"A trend of {measure}"), *diags)
+    working["_place"] = _place_labels(working, axis)
     working[measure] = pd.to_numeric(working[measure], errors="coerce")
     undated = int(working["_year"].isna().sum())
     usable = working.dropna(subset=["_year", measure]).copy()
+    placed, missing = _placed_words(axis)
     if len(usable) < _MIN_DATED:
         return Result.failure(
             Diagnostic.error(
-                "PANEL_TOO_FEW_DATED",
-                f"only {len(usable)} dated document(s) have a usable {measure} value; a trend needs at least "
-                f"{_MIN_DATED}. {undated} document(s) have no usable date and were left off.",
+                "PANEL_TOO_FEW_DATED" if axis.kind == "time" else "PANEL_TOO_FEW_PLACED",
+                f"only {len(usable)} {placed} have a usable {measure} value; a trend needs at least "
+                f"{_MIN_DATED}. {undated} document(s) have no usable {missing} and were left off.",
                 dated=len(usable),
                 undated=undated,
             ),
@@ -352,7 +392,7 @@ def _over_time(
         diags.append(
             Diagnostic.info(
                 "PANEL_UNDATED_DROPPED",
-                f"{undated} document(s) have no usable date and were left off this trend.",
+                f"{undated} document(s) have no usable {missing} and were left off this trend.",
                 dropped=undated,
             )
         )
@@ -360,7 +400,7 @@ def _over_time(
         diags.append(
             Diagnostic.warning(
                 "PANEL_WINDOW_TOO_WIDE",
-                f"window ({window}) is wider than the {len(usable)} dated document(s); no rolling median can be drawn.",
+                f"window ({window}) is wider than the {len(usable)} {placed}; no rolling median can be drawn.",
                 window=window,
                 dated=len(usable),
             )
@@ -368,19 +408,73 @@ def _over_time(
 
     labels = document_labels(usable[DOC])
     marks: list[PanelMark] = []
-    for _, row in usable.iterrows():
+    works = _works(usable, axis)
+    if works:
+        # Two books on one chapter axis: chapter 3 of one is not next to
+        # chapter 3 of the other, so each book has its own points and median.
+        groups: tuple[str, ...] = tuple(works) + tuple(f"{work}{SUMMARY_SUFFIX}" for work in works)
+        for work in works:
+            own = usable[usable[WORK].astype(str) == work]
+            marks += _point_marks(own, measure, labels, tool, work)
+            marks += _median_marks(own, measure, window, labels, f"{work}{SUMMARY_SUFFIX}")
+        points_only: tuple[str, ...] = tuple(works)
+    else:
+        median_group = f"Rolling median ({window} documents)"
+        groups = ("Documents", median_group)
+        marks += _point_marks(usable, measure, labels, tool, "Documents")
+        marks += _median_marks(usable, measure, window, labels, median_group)
+        points_only = ("Documents",)
+
+    prepared = PreparedPanel(
+        panel=definition.name,
+        shape="line_series",
+        title=_along(definition.title, axis),
+        subtitle=f"{len(usable)} {placed} · rolling median over {window} documents"
+        + (f" within each of {len(works)} works" if works else ""),
+        marks=tuple(marks),
+        x_label=axis.x_label,
+        x_axis=axis.x_axis,
+        x_noun=axis.x_noun,
+        y_label=measure,
+        provenance=provenance,
+        data=usable.drop(columns=["_year", "_place"]).reset_index(drop=True),
+        groups=groups,
+        points_only=points_only,
+        line_gap=_line_gap(axis),
+        notes=_notes_for(tool, measure),
+    )
+    return Result.success(prepared, *diags)
+
+
+#: A book cut into chapters carries the book's name in this detail (desktop_backend/sections.py).
+WORK = "Work"
+
+
+def _works(frame: pd.DataFrame, axis: AxisInfo) -> list[str]:
+    """The books sharing this chapter axis, when there are two or more; otherwise none."""
+    if axis.kind != "order" or WORK not in frame.columns:
+        return []
+    names = [str(name) for name in frame[WORK].dropna().astype(str).unique() if str(name).strip()]
+    return sorted(names) if len(names) > 1 else []
+
+
+def _point_marks(
+    frame: pd.DataFrame, measure: str, labels: Mapping[str, str], tool: MeasureTool, group: str
+) -> list[PanelMark]:
+    """One mark per document, in *group*."""
+    marks: list[PanelMark] = []
+    for _, row in frame.iterrows():
         doc_id = str(row[DOC_ID])
         label = labels[str(row[DOC])]
         value = float(row[measure])
-        year = float(row["_year"])
         size_text = _fmt_size(row.get(tool.size_column), tool.size_unit)
         marks.append(
             PanelMark(
                 key=f"doc:{doc_id}",
                 label=label,
-                x=year,
+                x=float(row["_year"]),
                 y=value,
-                group="Documents",
+                group=group,
                 evidence=Evidence(
                     scope="rows",
                     filters=((DOC_ID, doc_id),),
@@ -389,70 +483,88 @@ def _over_time(
                 ),
             )
         )
+    return marks
 
-    median_group = f"Rolling median ({window} documents)"
-    groups = ("Documents", median_group)
-    if window <= len(usable):
-        sortable = sorted(
-            zip(
-                usable["_year"],
-                usable[measure],
-                usable[DOC_ID].astype(str),
-                usable[DOC].astype(str),
-                usable[DATE],
-                strict=True,
-            ),
-            key=lambda item: (item[0], item[1]),
-        )
-        xs = [item[0] for item in sortable]
-        ys = [item[1] for item in sortable]
-        pairs = rolling_median(xs, ys, window)
-        for offset, (mx, my) in enumerate(pairs):
-            covered = sortable[_window_start(offset, window, len(sortable)) :][:window]
-            _center_year, _center_val, center_id, center_doc, _center_date = sortable[offset]
-            center_label = labels.get(center_doc, center_doc)
-            span_dates = sorted(str(item[4]) for item in covered if item[4])
-            span = (
-                f"{span_dates[0]} to {span_dates[-1]}" if span_dates else f"{covered[0][0]:.1f} to {covered[-1][0]:.1f}"
-            )
-            marks.append(
-                PanelMark(
-                    key=f"median:{center_id}:{offset}",
-                    label="Rolling median",
-                    x=float(mx),
-                    y=float(my),
-                    group=median_group,
-                    evidence=Evidence(
-                        scope="rows",
-                        filters=((DOC_ID, center_id),),
-                        count=window,
-                        describe=(
-                            f"Rolling median of {window} documents from {span}: {measure} {my:g} (at {center_label})"
-                        ),
-                    ),
-                )
-            )
 
-    prepared = PreparedPanel(
-        panel=definition.name,
-        shape="line_series",
-        title=definition.title,
-        subtitle=f"{len(usable)} dated document(s) · rolling median over {window} documents",
-        marks=tuple(marks),
-        x_label="Year",
-        y_label=measure,
-        provenance=provenance,
-        data=usable.drop(columns=["_year"]).reset_index(drop=True),
-        groups=groups,
-        points_only=("Documents",),
-        line_gap=_LINE_GAP_YEARS,
-        notes=_notes_for(tool, measure),
+def _median_marks(
+    frame: pd.DataFrame, measure: str, window: int, labels: Mapping[str, str], group: str
+) -> list[PanelMark]:
+    """The rolling median of *frame*'s documents along the axis, in *group*; none when too few."""
+    if window > len(frame):
+        return []
+    sortable = sorted(
+        zip(
+            frame["_year"],
+            frame[measure],
+            frame[DOC_ID].astype(str),
+            frame[DOC].astype(str),
+            frame["_place"],
+            strict=True,
+        ),
+        key=lambda item: (item[0], item[1]),
     )
-    return Result.success(prepared, *diags)
+    xs = [item[0] for item in sortable]
+    ys = [item[1] for item in sortable]
+    marks: list[PanelMark] = []
+    for offset, (mx, my) in enumerate(rolling_median(xs, ys, window)):
+        covered = sortable[_window_start(offset, window, len(sortable)) :][:window]
+        _center_year, _center_val, center_id, center_doc, _center_date = sortable[offset]
+        center_label = labels.get(center_doc, center_doc)
+        # In axis order: the window is sorted by position, and sorting the
+        # labels as text would put "Chapter 11" before "Chapter 3".
+        span_dates = [str(item[4]) for item in covered if item[4]]
+        span = f"{span_dates[0]} to {span_dates[-1]}" if span_dates else f"{covered[0][0]:.1f} to {covered[-1][0]:.1f}"
+        marks.append(
+            PanelMark(
+                key=f"median:{center_id}:{offset}",
+                label="Rolling median",
+                x=float(mx),
+                y=float(my),
+                group=group,
+                evidence=Evidence(
+                    scope="rows",
+                    filters=((DOC_ID, center_id),),
+                    count=window,
+                    describe=f"Rolling median of {window} documents from {span}: {measure} {my:g} (at {center_label})",
+                ),
+            )
+        )
+    return marks
+
+
+#: An order axis breaks its line across a missing step (chapter 7 with no
+#: chapter 8 after it), where a time axis tolerates the usual year apart.
+_LINE_GAP_STEPS = 1.5
+
+
+def _line_gap(axis: AxisInfo) -> float:
+    return _LINE_GAP_YEARS if axis.kind == "time" else _LINE_GAP_STEPS
+
+
+def _along(title: str, axis: AxisInfo) -> str:
+    """A definition's "... over time" title, said along this table's axis ("... across the chapters")."""
+    return title if axis.kind == "time" else title.replace("over time", axis.along)
+
+
+def _placed_words(axis: AxisInfo) -> tuple[str, str]:
+    """How a message counts placed documents, and names what the others lack."""
+    if axis.kind == "time":
+        return "dated document(s)", "date"
+    noun = axis.noun.lower()
+    return f"document(s) with a {noun} number", f"{noun} number"
+
+
+def _place_labels(frame: pd.DataFrame, axis: AxisInfo) -> pd.Series:
+    """What a reader is shown for each document's place: its date, or "Chapter 3"."""
+    if axis.kind == "order" and POSITION_LABEL in frame.columns:
+        return frame[POSITION_LABEL]
+    return frame[DATE] if DATE in frame.columns else pd.Series([None] * len(frame), index=frame.index)
 
 
 def _group_order(working: pd.DataFrame, group_by: str) -> list[str]:
     groups = sorted(set(working["_group"]))
+    if group_by == "period":
+        return sorted(groups, key=period_key)
     if group_by in ("year", "decade"):
 
         def key(name: str) -> tuple[int, int]:
@@ -513,10 +625,65 @@ def _by_group(
             )
         )
 
-    working["_year"] = working[DATE].map(decimal_year)
-    working["_group"] = [
-        group_of(str(doc), when, group_by) for doc, when in zip(working[DOC], working[DATE], strict=True)
-    ]
+    working["_year"], axis = positioned(working)
+    works = _works(working, axis)
+    if works and group_by in ("year", "decade"):
+        # Two books on one chapter axis: blocks of chapters would mix them,
+        # so the natural groups are the books themselves.
+        working["_group"] = working[WORK].astype(str)
+        diags.append(
+            Diagnostic.info(
+                "PANEL_GROUPED_BY_WORK",
+                f"These are chapters of {len(works)} works, so they are grouped by work instead of {group_by}s.",
+            )
+        )
+        group_by = "work"
+    elif axis.kind == "order" and group_by in ("year", "decade"):
+        # Chapters have no years: the same question, asked of blocks of chapters.
+        positions = {
+            str(doc): float(x) for doc, x in zip(working[DOC_ID], working["_year"], strict=True) if pd.notna(x)
+        }
+        periods = Axis("order", axis.noun, positions).periods()
+        missing = f"(no {axis.noun.lower()} number)"
+        working["_group"] = [periods.get(str(doc), missing) for doc in working[DOC_ID]]
+        diags.append(
+            Diagnostic.info(
+                "PANEL_GROUPED_BY_PERIOD",
+                f"These documents are lined up by {axis.noun.lower()}, not dated, so they are grouped into "
+                f"blocks of {axis.along.removeprefix('across the ')} instead of {group_by}s.",
+            )
+        )
+        group_by = "period"
+    elif axis.kind == "none" and group_by in ("year", "decade"):
+        # Undated: a "decade" grouping puts every document in one "(undated)"
+        # box. Speakers still separate documents; failing that, one honest group.
+        named_by = [
+            (str(value) if pd.notna(value) and str(value) else "") or group_of(str(doc), None, "speaker")
+            for value, doc in zip(
+                working[SPEAKER] if SPEAKER in working.columns else [None] * len(working),
+                working[DOC],
+                strict=True,
+            )
+        ]
+        named = {name for name in named_by if not name.startswith("(")}
+        if len(named) >= 2:
+            working["_group"], chosen = named_by, "speaker"
+        else:
+            working["_group"], chosen = ["All documents"] * len(working), "none"
+        diags.append(
+            Diagnostic.info(
+                "PANEL_NO_AXIS_GROUPING",
+                f"These documents have no dates, so they cannot be grouped by {group_by}; "
+                + ("they are grouped by speaker instead. " if chosen == "speaker" else "they are shown as one group. ")
+                + "Add a date or an order on the Corpus page, under Document details, to group them by period.",
+            )
+        )
+        group_by = chosen
+    else:
+        # A detail grouping ("Party", "Kind") reads its column here; "speaker"
+        # reads the Speaker detail when the table has one and the file name
+        # when it does not (run tables from before details existed).
+        working["_group"] = [group_of(str(row[DOC]), row[DATE], group_by, row) for _, row in working.iterrows()]
     order = _group_order(working, group_by)
     index_of = {name: index for index, name in enumerate(order)}
     labels = document_labels(working[DOC])
@@ -565,7 +732,7 @@ def _by_group(
         subtitle=f"{len(working)} document(s) across {len(order)} {group_by} group(s)",
         marks=tuple(marks),
         x_label=measure,
-        y_label=group_by.capitalize(),
+        y_label="" if group_by == "none" else group_by.capitalize(),
         provenance=provenance,
         data=working.drop(columns=["_year", "_group"]).reset_index(drop=True),
         groups=tuple(order) if coloured else (),
@@ -663,15 +830,18 @@ def _all_measures(
     working = canon.unwrap().copy()
     diags = list(canon.diagnostics)
 
-    working["_year"] = working[DATE].map(decimal_year)
+    working["_year"], axis = positioned(working)
+    if axis.kind == "none":
+        return Result.failure(no_axis(f"Every {tool.tool.replace('_', ' ')} measure side by side"), *diags)
     undated = int(working["_year"].isna().sum())
     usable = working.dropna(subset=["_year"]).copy()
+    placed, missing = _placed_words(axis)
     if len(usable) < _MIN_DATED:
         return Result.failure(
             Diagnostic.error(
-                "PANEL_TOO_FEW_DATED",
-                f"only {len(usable)} dated document(s) are available; small multiples need at least {_MIN_DATED}. "
-                f"{undated} document(s) have no usable date and were left off.",
+                "PANEL_TOO_FEW_DATED" if axis.kind == "time" else "PANEL_TOO_FEW_PLACED",
+                f"only {len(usable)} {placed} are available; small multiples need at least {_MIN_DATED}. "
+                f"{undated} document(s) have no usable {missing} and were left off.",
             ),
             *diags,
         )
@@ -679,7 +849,7 @@ def _all_measures(
         diags.append(
             Diagnostic.info(
                 "PANEL_UNDATED_DROPPED",
-                f"{undated} document(s) have no usable date and were left off.",
+                f"{undated} document(s) have no usable {missing} and were left off.",
                 dropped=undated,
             )
         )
@@ -687,60 +857,22 @@ def _all_measures(
     labels = document_labels(usable[DOC])
     window = min(_WINDOW_DEFAULT, len(usable) if len(usable) % 2 else len(usable) - 1)
     window = max(window, 1)
+    works = _works(usable, axis)
+    # Two books on one chapter axis: each has its own points and median.
+    parts = (
+        [(work, f"{work}{SUMMARY_SUFFIX}", usable[usable[WORK].astype(str) == work]) for work in works]
+        if works
+        else [("Documents", "Rolling median", usable)]
+    )
     marks: list[PanelMark] = []
     for facet in tool.facet_measures:
-        facet_values = pd.to_numeric(usable[facet], errors="coerce")
-        facet_frame = usable.assign(_value=facet_values).dropna(subset=["_value"])
-        if facet_frame.empty:
+        if pd.to_numeric(usable[facet], errors="coerce").dropna().empty:
             diags.append(Diagnostic.warning("PANEL_NO_DATA", f"no document has a usable {facet} value; facet skipped."))
             continue
-        for _, row in facet_frame.iterrows():
-            doc_id = str(row[DOC_ID])
-            label = labels[str(row[DOC])]
-            value = float(row["_value"])
-            year = float(row["_year"])
-            size_text = _fmt_size(row.get(tool.size_column), tool.size_unit)
-            marks.append(
-                PanelMark(
-                    key=f"doc:{facet}:{doc_id}",
-                    label=label,
-                    x=year,
-                    y=value,
-                    group="Documents",
-                    facet=facet,
-                    evidence=Evidence(
-                        scope="rows",
-                        filters=((DOC_ID, doc_id),),
-                        count=1,
-                        describe=f"{label}: {facet} {value:g}{size_text}",
-                    ),
-                )
-            )
-        if window <= len(facet_frame) and window >= 3:
-            sortable = sorted(
-                zip(facet_frame["_year"], facet_frame["_value"], facet_frame[DOC_ID].astype(str), strict=True)
-            )
-            xs = [item[0] for item in sortable]
-            ys = [item[1] for item in sortable]
-            pairs = rolling_median(xs, ys, window)
-            for offset, (mx, my) in enumerate(pairs):
-                center_id = sortable[offset][2]
-                marks.append(
-                    PanelMark(
-                        key=f"median:{facet}:{center_id}:{offset}",
-                        label="Rolling median",
-                        x=float(mx),
-                        y=float(my),
-                        group="Rolling median",
-                        facet=facet,
-                        evidence=Evidence(
-                            scope="rows",
-                            filters=((DOC_ID, center_id),),
-                            count=window,
-                            describe=f"Rolling median of {window} documents: {facet} {my:g} (at document id {center_id})",
-                        ),
-                    )
-                )
+        for points_group, median_group, part in parts:
+            # Each book's window fits its own chapters (one book: the same window as before).
+            own = max(1, min(_WINDOW_DEFAULT, len(part) if len(part) % 2 else len(part) - 1))
+            marks += _facet_marks(part, facet, labels, tool, window=own, groups=(points_group, median_group))
 
     if not marks:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no facet had a usable value"), *diags)
@@ -749,20 +881,83 @@ def _all_measures(
         panel=definition.name,
         shape="small_multiples",
         title=definition.title,
-        subtitle=f"{len(usable)} dated document(s) · {len(tool.facet_measures)} measure(s), each its own scale",
+        subtitle=f"{len(usable)} {placed} · {len(tool.facet_measures)} measure(s), each its own scale"
+        + (f" · {len(works)} works drawn apart" if works else ""),
         marks=tuple(marks),
-        x_label="Year",
+        x_label=axis.x_label,
+        x_axis=axis.x_axis,
+        x_noun=axis.x_noun,
         y_label="",
         provenance=provenance,
         data=usable.drop(columns=["_year"]).reset_index(drop=True),
-        groups=("Documents", "Rolling median"),
-        points_only=("Documents",),
+        groups=tuple(points for points, _m, _p in parts) + tuple(median for _p, median, _f in parts),
+        points_only=tuple(points for points, _m, _p in parts),
         facets=tool.facet_measures,
-        line_gap=_LINE_GAP_YEARS,
+        line_gap=_line_gap(axis),
         notes=tuple(tool.general_notes)
         + tuple(tool.notes_by_measure.get(m, "") for m in tool.facet_measures if tool.notes_by_measure.get(m)),
     )
     return Result.success(prepared, *diags)
+
+
+def _facet_marks(  # noqa: PLR0913 - one facet of one set of documents
+    usable: pd.DataFrame,
+    facet: str,
+    labels: Mapping[str, str],
+    tool: MeasureTool,
+    *,
+    window: int,
+    groups: tuple[str, str],
+) -> list[PanelMark]:
+    """One facet's document points and rolling median, for one set of documents (points group, median group)."""
+    points_group, median_group = groups
+    facet_frame = usable.assign(_value=pd.to_numeric(usable[facet], errors="coerce")).dropna(subset=["_value"])
+    marks: list[PanelMark] = []
+    for _, row in facet_frame.iterrows():
+        doc_id = str(row[DOC_ID])
+        label = labels[str(row[DOC])]
+        value = float(row["_value"])
+        size_text = _fmt_size(row.get(tool.size_column), tool.size_unit)
+        marks.append(
+            PanelMark(
+                key=f"doc:{facet}:{doc_id}",
+                label=label,
+                x=float(row["_year"]),
+                y=value,
+                group=points_group,
+                facet=facet,
+                evidence=Evidence(
+                    scope="rows",
+                    filters=((DOC_ID, doc_id),),
+                    count=1,
+                    describe=f"{label}: {facet} {value:g}{size_text}",
+                ),
+            )
+        )
+    if window <= len(facet_frame) and window >= 3:
+        sortable = sorted(
+            zip(facet_frame["_year"], facet_frame["_value"], facet_frame[DOC_ID].astype(str), strict=True)
+        )
+        pairs = rolling_median([item[0] for item in sortable], [item[1] for item in sortable], window)
+        for offset, (mx, my) in enumerate(pairs):
+            center_id = sortable[offset][2]
+            marks.append(
+                PanelMark(
+                    key=f"median:{facet}:{center_id}:{offset}",
+                    label="Rolling median",
+                    x=float(mx),
+                    y=float(my),
+                    group=median_group,
+                    facet=facet,
+                    evidence=Evidence(
+                        scope="rows",
+                        filters=((DOC_ID, center_id),),
+                        count=window,
+                        describe=f"Rolling median of {window} documents: {facet} {my:g} (at document id {center_id})",
+                    ),
+                )
+            )
+    return marks
 
 
 def _notes_for(tool: MeasureTool, measure: str) -> tuple[str, ...]:
@@ -802,8 +997,12 @@ def _group_by_param() -> PanelParam:
         type="choice",
         default="decade",
         choices=tuple(g for g in GROUPINGS if g != "none"),
+        details=True,
         label="Group by",
-        help="How to bucket documents: by year, by decade, or by speaker (parsed from the file name).",
+        help=(
+            "How to bucket documents: by year, by decade, by speaker, or by a document detail "
+            "(Party, Kind...) the corpus carries."
+        ),
     )
 
 
@@ -853,6 +1052,11 @@ def _factory(tool: MeasureTool, *, title_word: str, prefix: str) -> tuple[PanelD
     MEASURE_TOOLS.setdefault(tool.tool, []).append(tool)
     definitions: list[PanelDefinition] = []
     definition_notes = _definition_notes(tool)
+    # A trend needs the documents placed -- by date or by chapter -- not a
+    # date as such (docs/PLAN_0.5.0.md 1.7); a grouping or a length check
+    # needs no axis at all.
+    along_axis = tuple(AXIS if column == DATE else column for column in tool.requires)
+    unplaced = tuple(column for column in tool.requires if column != DATE)
 
     if tool.has_dates:
         holder: dict[str, PanelDefinition] = {}
@@ -869,7 +1073,7 @@ def _factory(tool: MeasureTool, *, title_word: str, prefix: str) -> tuple[PanelD
             shape="line_series",
             summary="Each dated document's score on the chosen measure, plotted over time, with a rolling median.",
             question=f"Has {_in_sentence(title_word)} changed over time in this corpus?",
-            requires=tool.requires,
+            requires=along_axis,
             params=(_measure_param(tool), _window_param()),
             build=build_over_time,
             notes=definition_notes,
@@ -891,7 +1095,7 @@ def _factory(tool: MeasureTool, *, title_word: str, prefix: str) -> tuple[PanelD
         shape="distribution",
         summary="Every document's score on the chosen measure, grouped by decade, speaker or year: box plus points.",
         question=f"How does {_in_sentence(title_word)} differ across decades or speakers?",
-        requires=tool.requires,
+        requires=unplaced,
         params=(_measure_param(tool), _group_by_param()),
         build=build_by_group,
         notes=definition_notes,
@@ -914,7 +1118,7 @@ def _factory(tool: MeasureTool, *, title_word: str, prefix: str) -> tuple[PanelD
             shape="scatter_labelled",
             summary=f"The chosen measure against {tool.length_label.lower()}, to check whether it only tracks length.",
             question=f"Is this {_in_sentence(title_word)} measure actually just a proxy for how long the document is?",
-            requires=tool.requires,
+            requires=unplaced,
             params=(_length_measure_param(tool),),
             build=build_length_check,
             notes=definition_notes,
@@ -937,7 +1141,7 @@ def _factory(tool: MeasureTool, *, title_word: str, prefix: str) -> tuple[PanelD
             shape="small_multiples",
             summary=f"Every {_in_sentence(title_word)} measure over time, each on its own scale, side by side.",
             question=f"How do {_in_sentence(title_word)}'s measures move together across this corpus?",
-            requires=tool.requires,
+            requires=along_axis,
             params=(),
             build=build_all_measures,
             notes=definition_notes,

@@ -1,9 +1,9 @@
 # Full Replacement Plan
 
 This is the post-scaffold roadmap for turning `nlp-suite-ng` into a genuine
-replacement for NLP Suite 1.6.38. `BUILD_PLAN.md` and `CHUNK_LEDGER.md` describe
-the first 52 construction chunks. Those chunks established the new system's
-shape; they did **not** establish complete feature or product parity.
+replacement for NLP Suite 1.6.38. The completed first 52 construction chunks
+established the new system's shape; they did **not** establish complete feature
+or product parity.
 
 "Replacement" means the new suite does the legacy suite's job as a class
 tool — a student runs their whole corpus-analysis workflow in it — while

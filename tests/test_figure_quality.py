@@ -191,6 +191,19 @@ class TestTicks:
         assert tick_labels([1980, 2000, 2020], plain=True) == ["1980", "2000", "2020"]
         assert tick_labels([0, 500_000, 1_000_000]) == ["0", "0.5M", "1.0M"]
 
+    def test_an_order_axis_names_its_whole_steps(self) -> None:
+        """ "Ch. 5", never "2.5": a chapter is not a quantity to divide."""
+        from core.viz.static.text import short_noun, tick_labels
+
+        assert tick_labels([2.0, 4.0, 6.0], noun="Chapter") == ["Ch. 2", "Ch. 4", "Ch. 6"]
+        assert tick_labels([1.5], noun="Chapter") == ["Ch. 1.5"]
+        assert short_noun("Chapter") == "Ch."
+        assert short_noun("Session") == "Ses."
+        assert short_noun("Part") == "Pt."
+        assert short_noun("Part of the tale") == "Pt."
+        assert short_noun("Canto") == "Ca."
+        assert short_noun("") == "Doc."
+
     def test_counts_print_as_counts(self) -> None:
         from core.viz.static.text import format_value
 

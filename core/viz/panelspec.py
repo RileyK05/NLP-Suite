@@ -74,7 +74,7 @@ module is data shapes and validation only.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -85,10 +85,13 @@ if TYPE_CHECKING:
     import pandas as pd
 
 __all__ = [
+    "AXIS",
+    "AXIS_COLUMNS",
     "COLOR_SCALES",
     "EDGE_STYLES",
     "EVIDENCE_SCOPES",
     "PANEL_SHAPES",
+    "SUMMARY_SUFFIX",
     "Annotation",
     "Evidence",
     "PanelBuilder",
@@ -100,10 +103,47 @@ __all__ = [
     "Provenance",
     "Source",
     "counted_on_lemmas",
+    "missing_columns",
+    "requirement_words",
 ]
 
 
 # --------------------------------------------------------------- vocabulary --
+
+#: A requirement that is not a column: "the documents are placed along the
+#: corpus's axis". A panel about change (a trend, an arc) needs *an* order,
+#: not specifically a calendar date, so a book's chapters satisfy it as a
+#: speech's date does (docs/PLAN_0.5.0.md 1.7).
+AXIS = "@axis"
+#: A group named "<group>: rolling median" summarises the declared group
+#: before the colon, and every renderer colours it as that group: two novels
+#: on one chapter axis each have their points and their own median.
+SUMMARY_SUFFIX = ": rolling median"
+#: Any one of these columns places the documents: the run's Position (time
+#: or order), or a Date or Year from runs made before positions existed.
+AXIS_COLUMNS = ("Position", "Date", "Year")
+
+
+def requirement_words(requires: Sequence[str]) -> str:
+    """A panel's requirements as a reader reads them: "Document ID, Document, a date or an order"."""
+    return ", ".join("a date or an order" if need == AXIS else need for need in requires)
+
+
+def missing_columns(requires: Sequence[str], columns: Iterable[object]) -> list[str]:
+    """What of *requires* a table with *columns* lacks, reading :data:`AXIS` as any of :data:`AXIS_COLUMNS`."""
+    present = {str(column) for column in columns}
+    missing = []
+    for need in requires:
+        if need == AXIS:
+            if not present & set(AXIS_COLUMNS):
+                missing.append(
+                    "a date or an order for each document (Position, Date or Year): "
+                    "add one on the Corpus page, under Document details"
+                )
+        elif need not in present:
+            missing.append(need)
+    return missing
+
 
 PanelShape = Literal[
     "scatter_labelled",
@@ -449,6 +489,10 @@ class PanelParam:
     choices: tuple[str, ...] = ()
     minimum: float | None = None
     maximum: float | None = None
+    #: A choice that also names a document detail ("Party", "Kind"): the
+    #: declared choices are the base, the table's details extend them, and the
+    #: desktop offers both. Checked against the table when the panel is built.
+    details: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -459,6 +503,8 @@ class PanelParam:
             raise ValueError(f"choice parameter {self.name!r} needs choices")
         if self.type != "choice" and self.choices:
             raise ValueError(f"only a choice parameter may declare choices ({self.name!r})")
+        if self.details and self.type != "choice":
+            raise ValueError(f"only a choice parameter may take document details ({self.name!r})")
         if not self.help.strip():
             raise ValueError(f"PanelParam {self.name!r} needs help text")
 
@@ -476,6 +522,7 @@ class PanelParam:
             "choices": list(self.choices),
             "minimum": self.minimum,
             "maximum": self.maximum,
+            "details": self.details,
         }
 
 
@@ -534,10 +581,20 @@ class PreparedPanel:
     #: behind a rolling median. Connecting single speeches in date order
     #: draws a trend out of noise.
     points_only: tuple[str, ...] = ()
+    #: What the ``x`` values are: ``"time"`` (decimal years), ``"order"``
+    #: (chapter or session numbers, one step called :attr:`x_noun`), or ``""``
+    #: for a plain quantity. Renderers print year ticks for time and whole
+    #: "Ch. 5"-style ticks for order; ``""`` keeps the calendar-range guess
+    #: older builders shipped without.
+    x_axis: str = ""
+    #: What one step along an order ``x`` is called ("Chapter", "Session").
+    x_noun: str = ""
 
     def __post_init__(self) -> None:
         if self.shape not in PANEL_SHAPES:
             raise ValueError(f"shape must be one of {PANEL_SHAPES}, got {self.shape!r}")
+        if self.x_axis not in ("", "time", "order"):
+            raise ValueError(f"x_axis must be '', 'time' or 'order', got {self.x_axis!r}")
         if self.width < _MIN_DIMENSION or self.height < _MIN_DIMENSION:
             raise ValueError(f"panel dimensions must be at least {_MIN_DIMENSION}px")
         seen: set[str] = set()

@@ -58,6 +58,8 @@ __all__ = [
 
 
 _DIFF_COLUMNS = ["Row", "Column", "Expected", "Actual", "Issue"]
+#: Where a run keeps the figures drawn from its tables (desktop_backend/runner.py).
+FIGURES_DIR = "figures"
 _MAX_DIFF_ROWS = 500
 _PREVIEW_LEN = 120
 
@@ -604,8 +606,13 @@ def _compare_artifact_pair(
             "Issue": f"missing artifact file on disk ({missing_side})",
         }
         return Result.success(([row], 1))
-    if exp_file.suffix.lower() != ".csv":
-        if exp_file.read_bytes() == act_file.read_bytes():
+    # A figure is a drawing of CSVs compared value by value, and its caption
+    # says when it was drawn: two identical runs a second apart differ in
+    # those bytes and nothing else. That both runs have it is checked with
+    # the other artifacts; its bytes are not a result.
+    figure = PurePosixPath(path.replace("\\", "/")).parts[:1] == (FIGURES_DIR,)
+    if figure or exp_file.suffix.lower() != ".csv":
+        if figure or exp_file.read_bytes() == act_file.read_bytes():
             return Result.success(([], 1))
         row = {
             "Row": path,

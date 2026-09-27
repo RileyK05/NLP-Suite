@@ -471,9 +471,9 @@ def _trend(
         points_only=("Observations",),
         line_gap=span,
         notes=(
-            "Mann-Kendall asks whether values tend to rise (or fall) over time, not whether they rise in a straight "
+            "Mann-Kendall asks whether values tend to rise (or fall) along the axis, not whether they rise in a straight "
             "line; Sen's slope is the median of every pairwise slope, so one outlier cannot bend it.",
-            "Kendall's tau and the p-value are in the summary table. A significant trend over speeches is a trend "
+            "Kendall's tau and the p-value are in the summary table. A significant trend across documents is a trend "
             "in these documents, not necessarily in the language of the time.",
         ),
     )
@@ -620,8 +620,8 @@ def _trends(tool: str) -> tuple[PanelDefinition, ...]:
         _definition(
             tool,
             "trend",
-            title="Trend over time",
-            question="Do the values tend to rise or fall over time?",
+            title="Trend along the axis",
+            question="Do the values tend to rise or fall along the way?",
             shape="line_series",
             summary="Every observation, with the Sen's slope trend line.",
             requires=("Trend Line",),

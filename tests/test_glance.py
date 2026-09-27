@@ -48,6 +48,11 @@ class TestRecipe:
         assert glance_key(["b", "a"]) == glance_key(["a", "b"])
         assert glance_key(["a"]) != glance_key(["a", "c"])
 
+    def test_the_key_sees_the_details_and_the_axis(self) -> None:
+        assert glance_key(["a"], "d1") == glance_key(["a"], "d1")
+        assert glance_key(["a"], "d1") != glance_key(["a"], "d2")
+        assert glance_key(["a"], "d1") != glance_key(["a"])
+
     def test_the_summary_says_something_about_each_table(self) -> None:
         stats = pd.DataFrame(
             {"Document": ["1934_roosevelt.txt", "1994_clinton.txt"], "Tokens": [2000, 9000], "Sentences": [90, 400]}
@@ -62,6 +67,63 @@ class TestRecipe:
 
     def test_missing_tables_are_skipped_not_fatal(self) -> None:
         assert summarize({}) == []
+
+    def test_the_span_follows_the_axis(self) -> None:
+        stats = pd.DataFrame({"Document": ["a", "b"], "Tokens": [100, 200], "Sentences": [5, 10], "Year": [1934, 2024]})
+        tables = {"text_statistics": {"text_statistics.csv": stats}}
+        assert "; from 1934 to 2024" in summarize(tables, "time", "Year")[0]
+        chapters = pd.DataFrame(
+            {
+                "Document": ["ch1", "ch2", "ch3"],
+                "Tokens": [100, 200, 300],
+                "Sentences": [5, 10, 15],
+                "Position": [1.0, 2.0, 3.0],
+                "Position label": ["Chapter 1", "Chapter 2", "Chapter 3"],
+            }
+        )
+        assert (
+            "; across 3 chapters"
+            in summarize({"text_statistics": {"text_statistics.csv": chapters}}, "order", "Chapter")[0]
+        )
+
+    def test_a_trend_is_said_along_the_axis(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "Document": [f"ch{i}" for i in range(1, 11)],
+                "Position": [float(i) for i in range(1, 11)],
+                "Compound": [0.1 * i for i in range(1, 11)],
+            }
+        )
+        lines = summarize({"sentiment_vader_anew": {"vader.csv": frame}}, "order", "Chapter")
+        assert "across the chapters it rises" in lines[0]
+
+    def test_a_book_says_its_name_first(self) -> None:
+        """Plan 2.7: "Pride and Prejudice, 61 chapters, 122,000 words"."""
+        chapters = pd.DataFrame(
+            {
+                "Document": [f"ch{i}" for i in range(1, 62)],
+                "Tokens": [2000] * 61,
+                "Sentences": [100] * 61,
+                "Position": [float(i) for i in range(1, 62)],
+                "Work": ["Pride and Prejudice"] * 61,
+            }
+        )
+        lines = summarize({"text_statistics": {"text_statistics.csv": chapters}}, "order", "Chapter")
+        assert lines[0].startswith("Pride and Prejudice, 61 chapters, 122,000 words")
+        assert "the median chapter is 2,000 words" in lines[0]
+
+    def test_two_books_in_one_corpus_keep_the_count(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "Document": ["a1", "a2", "b1"],
+                "Tokens": [100, 100, 100],
+                "Sentences": [5, 5, 5],
+                "Position": [1.0, 2.0, 1.0],
+                "Work": ["Alice", "Alice", "Persuasion"],
+            }
+        )
+        lines = summarize({"text_statistics": {"text_statistics.csv": frame}}, "order", "Chapter")
+        assert lines[0].startswith("3 documents, 300 words")
 
 
 @pytest.mark.skipif(not has_spacy_model(), reason="needs the spaCy English model to parse")

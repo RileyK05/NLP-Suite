@@ -74,6 +74,42 @@ class TestMannKendall:
         assert T.mann_kendall(_trend_frame([1.0] * 10), "Date", "Nope").value is None
 
 
+class TestOrderColumns:
+    """The test is about order, so chapter numbers work as well as a calendar."""
+
+    @staticmethod
+    def _chapters(values: list[float], orders: list[object]) -> pd.DataFrame:
+        return pd.DataFrame({"Order": orders, "Value": values})
+
+    def test_integer_order_column_is_positions_not_1970(self) -> None:
+        # to_datetime would read 1..10 as nanoseconds of 1970; the numbers
+        # must survive as themselves.
+        orders = [*range(1, 11), 20]
+        values = [float(i) for i in range(11)]
+        trend = T.mann_kendall(self._chapters(values, orders), "Order", "Value").unwrap().trend
+        assert trend["Order"].tolist() == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 20.0]
+        assert float(
+            _val(T.mann_kendall(self._chapters(values, orders), "Order", "Value").unwrap().summary, "Kendall's tau")
+        ) == pytest.approx(1.0)
+
+    def test_string_order_numbers_sort_by_number(self) -> None:
+        orders = ["2", "10", "1", "4", "3", "6", "5", "8", "7", "9"]
+        values = [float(i) for i in range(1, 11)]
+        trend = T.mann_kendall(self._chapters(values, orders), "Order", "Value").unwrap().trend
+        assert trend["Order"].tolist() == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+
+    def test_partially_numeric_order_drops_the_gaps_with_counts(self) -> None:
+        orders = [1, 2, 3, "n/a", 5, 6, 7, 8, 9, 10]
+        result = T.mann_kendall(self._chapters([float(i) for i in range(10)], orders), "Order", "Value")
+        assert result.ok
+        assert any(d.code == "MK_DROPPED_DATES" and "1 row(s) dropped" in d.message for d in result.diagnostics)
+        assert len(result.unwrap().trend) == 9
+
+    def test_dates_still_parse_as_dates(self) -> None:
+        trend = T.mann_kendall(_trend_frame([float(i) for i in range(1, 11)]), "Date", "Value").unwrap().trend
+        assert str(trend["Date"].iloc[0]) == "2020-01-31"
+
+
 class TestRankCorrelation:
     def test_spearman_catches_monotonic_nonlinear(self) -> None:
         frame = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0, 5.0], "y": [1.0, 4.0, 9.0, 16.0, 25.0]})

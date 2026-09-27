@@ -70,7 +70,8 @@ def test_live_analyse_route_returns_the_prepared_panel(tmp_path: Path, monkeypat
         def resolved(self, snapshot_id: str | None = None):
             return SimpleNamespace(id="snapshot-1")
 
-        def analyse(self, tool: str, params: dict[str, object]) -> LiveResult:
+        def analyse(self, tool: str, params: dict[str, object], axis: dict[str, str] | None = None) -> LiveResult:
+            assert axis == {"kind": "auto", "noun": "Document"}, "the route passes the project's axis choice"
             return result
 
         def remember(self, result: LiveResult, settings: dict[str, object], snapshot_id: str) -> str:

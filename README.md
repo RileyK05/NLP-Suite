@@ -83,12 +83,12 @@ source.
 | Install, choose the right file, or troubleshoot | [Getting started](docs/GET_STARTED.md) |
 | See desktop features and test evidence | [Desktop status](docs/DESKTOP.md) |
 | Review end-user boundaries and release acceptance | [Desktop hardening](docs/PRODUCTION_HARDENING.md) |
-| Build interactive exploration and corpus selections | [Interactive research plan](docs/INTERACTIVE_RESEARCH_PLAN.md) |
 | Plan question-driven research workflows | [Question-driven NLP plan](docs/QUESTION_DRIVEN_RESEARCH_PLAN.md) |
 | Build a Mac candidate without owning a Mac | [Mac builds](docs/MACOS.md) |
 | Build or publish installers | [Maintainer release guide](docs/DESKTOP_RELEASE.md) |
 | Run from source, use the CLI, or develop | [Developer guide](docs/DEVELOPMENT.md) |
 | Check legacy replacement progress | [Replacement ledger](docs/REPLACEMENT_LEDGER.md) |
+| Browse all current guides and plans | [Documentation index](docs/README.md) |
 
 This is an independent rebuild. The legacy suite is kept separate and used
 read-only as a behavioral reference; implementation progress is not the same as

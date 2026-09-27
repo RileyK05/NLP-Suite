@@ -7,6 +7,7 @@ package needing to be installed first.
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Sequence
 import hashlib
 import math
@@ -22,23 +23,22 @@ import pytest
 
 from core.pipelines.spacy_backend import spacy_model_name
 
+# Windows images without WMIC make loky's physical-core probe warn. The suite
+# treats warnings as errors; one worker is sufficient for its small fixtures.
+if sys.platform == "win32":
+    os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
+
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# This machine's system ``pytest-of-<user>`` temp directory can reject the
-# ``tmp_path`` factory (PermissionError creating it under the system TEMP),
-# which fails every ``tmp_path`` test at setup and quietly costs the suite
-# that coverage. Point ``tempfile`` at a SHORT fresh subdirectory of the
-# system temp instead: the fixture then works everywhere and the poisoned
-# ``pytest-of-<user>`` directory is bypassed. It must stay short -- it is a
-# prefix on every run directory path, and Windows MAX_PATH (260) is already
-# close once ``runs/<tool>__<timestamp>-<uuid>/<artifact>`` is appended.
-# Import-time on purpose -- ``tmp_path_factory`` resolves its base through
-# ``tempfile.gettempdir()`` after conftest import but before any test body.
+# Use a new, short temp root each session. This Windows machine has had
+# unreadable pytest-of-<user> directories in both the system temp and a
+# persistent nlp-tmp subdirectory. A fresh root avoids reusing those ACLs.
+# Import-time is required: tmp_path_factory resolves its base before tests.
 _SYSTEM_TEMP = Path(os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir())
-WORKSPACE_TMP = _SYSTEM_TEMP / "nlp-tmp"
-WORKSPACE_TMP.mkdir(exist_ok=True)
+WORKSPACE_TMP = Path(tempfile.mkdtemp(prefix="n-", dir=_SYSTEM_TEMP))
+atexit.register(shutil.rmtree, WORKSPACE_TMP, ignore_errors=True)
 tempfile.tempdir = str(WORKSPACE_TMP)
 
 # Pretrained models: the suite sees only what a test installs (the tiny

@@ -10,6 +10,7 @@ import pytest
 from conftest import has_spacy_model
 from core.analysis import (
     csv_stats as csv_mod,
+    movement as movement_mod,
     ner as ner_mod,
     sentiment_swn_hedono as swn_mod,
     sentiment_vader_anew as va_mod,
@@ -569,3 +570,65 @@ def test_svo_compare_no_svos() -> None:
     res = svc_mod.compare(df)
     assert res.ok
     assert len(res.unwrap()) == 1
+
+
+def test_ner_ignores_the_names_a_reader_named() -> None:
+    """ "ignore" (plan 5.2): the reviewed stop-entity list is the reader's, applied exactly."""
+    rows = []
+    # One sentence each: bare same-type tokens in one sentence coalesce into
+    # one mention span, which is not what this test is about.
+    for sentence, (form, ner) in enumerate((("Speaker", "PERSON"), ("Chamber", "PERSON"), ("Alice", "PERSON")), 1):
+        rows.append(
+            {
+                "ID": sentence,
+                "Form": form,
+                "Lemma": form.lower(),
+                "POS": "NNP",
+                "NER": ner,
+                "Head": 0,
+                "DepRel": "root",
+                "Sentence ID": sentence,
+                "Document ID": 1,
+                "Document": "a.txt",
+                "Deps": "",
+                "Record ID": sentence,
+                "Clause Tag": "",
+            }
+        )
+    frame = pd.DataFrame(rows)
+    kept = ner_mod.entity_timeline(frame, ignore="speaker, Chamber").unwrap()
+    assert list(kept["Entity"]) == ["Alice"]
+    pairs = movement_mod.movement_tracks(frame, ignore=["speaker"]).unwrap()
+    assert "Speaker" not in set(pairs["Entity"])
+
+
+def test_ner_timeline_carries_each_documents_tokens_so_a_rate_is_possible() -> None:
+    """Backlog 4d-5 (plan 5.5.5): counts alone cannot say 'more attention'."""
+    from core.profiler.executor import BatchContext, _adapt_ner
+
+    rows = []
+    for record, (form, ner) in enumerate(
+        (("Alice", "PERSON"), ("ran", "O"), ("home", "O"), ("Alice", "PERSON"), ("ran", "O")), start=1
+    ):
+        rows.append(
+            {
+                "ID": record,
+                "Form": form,
+                "Lemma": form.lower(),
+                "POS": "PROPN" if ner == "PERSON" else "VERB",
+                "NER": ner,
+                "Head": 0,
+                "DepRel": "dep",
+                "Sentence ID": 1 if record <= 3 else 2,
+                "Document ID": 1,
+                "Document": "a.txt",
+                "Deps": "",
+                "Record ID": record,
+                "Clause Tag": "",
+            }
+        )
+    result = _adapt_ner(BatchContext(table=pd.DataFrame(rows)), {})
+    assert result.ok, result.diagnostics
+    timeline = result.unwrap()["entity_timeline.csv"]
+    assert list(timeline["Tokens"]) == [5]
+    assert list(timeline["Count"]) == [2]

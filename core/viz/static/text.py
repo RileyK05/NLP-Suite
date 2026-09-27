@@ -15,7 +15,36 @@ import textwrap
 
 from matplotlib.ticker import Formatter
 
-__all__ = ["AxisFormatter", "decimals_of", "format_value", "tick_labels", "wrap"]
+__all__ = ["AxisFormatter", "decimals_of", "format_value", "short_noun", "tick_labels", "wrap"]
+
+
+#: The abbreviations a tick label uses ("Ch. 5"); anything else is shortened
+#: by :func:`short_noun`'s own rule. Kept beside the TypeScript copy in
+#: ``desktop/src/panelTicks.ts``; ``tests/test_panel_parity.py`` reads both.
+SHORT_NOUNS: dict[str, str] = {
+    "act": "Act",
+    "book": "Bk.",
+    "chapter": "Ch.",
+    "document": "Doc.",
+    "episode": "Ep.",
+    "order": "Ord.",
+    "part": "Pt.",
+    "scene": "Sc.",
+    "section": "Sec.",
+    "session": "Ses.",
+    "volume": "Vol.",
+}
+
+
+def short_noun(noun: str) -> str:
+    """What a tick label calls one step of an order axis ("Chapter" -> "Ch.")."""
+    word = (noun or "").strip().split(" ", 1)[0]
+    if not word:
+        return "Doc."
+    known = SHORT_NOUNS.get(word.lower())
+    if known:
+        return known
+    return word if len(word) <= 4 else f"{word[:2]}."
 
 
 def decimals_of(value: float) -> int:
@@ -27,11 +56,23 @@ def decimals_of(value: float) -> int:
     return 8
 
 
-def tick_labels(ticks: Sequence[float], *, plain: bool = False) -> list[str]:
-    """Labels for one axis's ticks at one precision (``panelTicks.tickLabels``)."""
+def tick_labels(ticks: Sequence[float], *, plain: bool = False, noun: str = "") -> list[str]:
+    """Labels for one axis's ticks at one precision (``panelTicks.tickLabels``).
+
+    *noun* marks an order axis: every tick is a whole step ("Ch. 5"), never
+    the decimals a measure axis would show.
+    """
     values = [float(tick) for tick in ticks]
     if not values:
         return []
+    if noun:
+        short = short_noun(noun)
+        out = []
+        for v in values:
+            value = _zero(v)
+            number = f"{int(value)}" if float(value).is_integer() else f"{value:g}"
+            out.append(f"{short} {number}")
+        return out
     steps = [abs(b - a) for a, b in pairwise(values) if abs(b - a) > 0]
     step = min(steps) if steps else (abs(values[0]) or 1.0)
     if plain:
@@ -85,14 +126,16 @@ def format_value(value: float) -> str:
 class AxisFormatter(Formatter):
     """Matplotlib tick formatter applying :func:`tick_labels` to a whole axis."""
 
-    def __init__(self, *, plain: bool = False) -> None:
+    def __init__(self, *, plain: bool = False, noun: str = "") -> None:
         self.plain = plain
+        #: An order axis ("Chapter"): ticks are whole steps labelled "Ch. 5".
+        self.noun = noun
 
     def __call__(self, x: float, pos: int | None = None) -> str:
-        return tick_labels([x], plain=self.plain)[0]
+        return tick_labels([x], plain=self.plain, noun=self.noun)[0]
 
     def format_ticks(self, values: Sequence[float]) -> list[str]:
-        return tick_labels(values, plain=self.plain)
+        return tick_labels(values, plain=self.plain, noun=self.noun)
 
 
 def wrap(text: str, width: int) -> str:

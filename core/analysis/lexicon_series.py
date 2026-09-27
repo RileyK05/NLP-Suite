@@ -35,11 +35,30 @@ from datetime import date
 import pandas as pd
 
 from core.conll.schema import Col, validate_columns
+from core.corpus_axis import Axis
+from core.io.document_fields import FIELD_VALUE_PREFIX
 from core.result import Diagnostic, Result
 
-__all__ = ["BY_CHOICES", "facet_labels", "lexicon_series", "parse_lexicon"]
+__all__ = [
+    "BY_CHOICES",
+    "BY_FIELD_PREFIX",
+    "RAW_WORD",
+    "facet_labels",
+    "lexicon_series",
+    "parse_lexicon",
+    "raw_sentences",
+    "raw_text_series",
+    "term_hits",
+]
 
-BY_CHOICES: tuple[str, ...] = ("year", "decade", "document", "pattern")
+#: What counts are grouped along. ``order`` is each chapter or session value;
+#: ``period`` is the axis cut into blocks ("Chapters 1-15"); ``field:<name>``
+#: (any name, see :data:`BY_FIELD_PREFIX`) is one document detail's values.
+BY_CHOICES: tuple[str, ...] = ("year", "decade", "document", "pattern", "order", "period")
+
+#: A ``by`` of ``field:Party`` groups by the Party detail. The prefix keeps a
+#: detail named "pattern" from being read as one of :data:`BY_CHOICES`.
+BY_FIELD_PREFIX = FIELD_VALUE_PREFIX
 
 # Categories are separated by a semicolon or a newline so the whole lexicon fits
 # on one line of a form and also survives being pasted in from a file.
@@ -96,15 +115,32 @@ def facet_labels(
     by: str,
     *,
     group_pattern: str = "",
+    details: Mapping[str, Mapping[str, str]] | None = None,
+    positions: Mapping[str, float] | None = None,
+    noun: str = "",
 ) -> Result[dict[str, str]]:
     """Label each document with the group it belongs to on this axis.
 
     Documents that cannot be labelled are left out and reported, never given a
     fallback label. A speech with no readable date silently filed under "0000"
     or "unknown" would sit in the chart as if it were evidence.
+
+    ``details`` is document name -> its document details, for ``field:<name>``
+    (``by="field:Party"``); ``positions`` is document name -> its Order value,
+    for ``order`` and ``period``; ``noun`` names one order step ("Chapter"),
+    so a period reads "Chapters 1-15".
     """
-    if by not in BY_CHOICES:
-        return Result.failure(Diagnostic.error("LEXICON_BAD_BY", f"by must be one of {BY_CHOICES}, got {by!r}"))
+    field_name = by[len(BY_FIELD_PREFIX) :].strip() if by.startswith(BY_FIELD_PREFIX) else ""
+    if by not in BY_CHOICES and not field_name:
+        return Result.failure(
+            Diagnostic.error(
+                "LEXICON_BAD_BY", f"by must be one of {BY_CHOICES} or '{BY_FIELD_PREFIX}<detail name>', got {by!r}"
+            )
+        )
+    if by in ("order", "period") and not positions:
+        return Result.failure(Diagnostic.error("LEXICON_NO_ORDER", f"by={by!r} needs each document's Order detail"))
+    if field_name and not details:
+        return Result.failure(Diagnostic.error("LEXICON_NO_DETAILS", f"by={by!r} needs the documents' details"))
     pattern: re.Pattern[str] | None = None
     if by == "pattern":
         if not group_pattern.strip():
@@ -115,6 +151,7 @@ def facet_labels(
             pattern = re.compile(group_pattern)
         except re.error as exc:
             return Result.failure(Diagnostic.error("LEXICON_BAD_REGEX", f"invalid group-pattern regex: {exc}"))
+    periods = _periods(positions or {}, documents, noun) if by == "period" else {}
 
     labels: dict[str, str] = {}
     undated: list[str] = []
@@ -131,6 +168,24 @@ def facet_labels(
                 # The first capture group when there is one, so a pattern can
                 # name the group; otherwise whatever matched.
                 labels[name] = (found.group(1) if found.groups() else found.group(0)).strip()
+        elif by == "order":
+            at = (positions or {}).get(name)
+            if at is None:
+                unmatched.append(name)
+            else:
+                labels[name] = f"{noun} {_step(at)}" if noun else _step(at)
+        elif by == "period":
+            bucket = periods.get(name)
+            if bucket is None:
+                unmatched.append(name)
+            else:
+                labels[name] = bucket
+        elif field_name:
+            detail_value = (details or {}).get(name, {}).get(field_name)
+            if detail_value:
+                labels[name] = detail_value
+            else:
+                unmatched.append(name)
         elif when is None:
             undated.append(name)
         elif by == "year":
@@ -148,10 +203,11 @@ def facet_labels(
             )
         )
     if unmatched:
+        why = "did not match group-pattern" if by == "pattern" else f"have no value to group by ({by})"
         notes.append(
             Diagnostic.warning(
                 "LEXICON_UNMATCHED",
-                f"{len(unmatched)} document name(s) did not match group-pattern and are left out: "
+                f"{len(unmatched)} document name(s) {why} and are left out: "
                 + ", ".join(unmatched[:3])
                 + ("…" if len(unmatched) > 3 else ""),
             )
@@ -162,6 +218,19 @@ def facet_labels(
             (*notes, Diagnostic.error("LEXICON_NO_FACET", "no document could be placed on this axis")),
         )
     return Result.success(labels, *notes)
+
+
+def _step(value: float) -> str:
+    """An order value as a label: "3", never "3.0"."""
+    return f"{int(value)}" if float(value).is_integer() else f"{value:g}"
+
+
+def _periods(positions: Mapping[str, float], documents: Sequence[tuple[str, date | None]], noun: str) -> dict[str, str]:
+    """The axis's period labels ("Chapters 1-15"), by document name."""
+    if positions:
+        return Axis("order", noun.strip() or "Document", dict(positions)).periods()
+    years = {name: float(when.year) for name, when in documents if when is not None}
+    return Axis("time", "Year", years).periods()
 
 
 def _index(lexicon: Mapping[str, Sequence[str]]) -> dict[str, list[tuple[tuple[str, ...], str]]]:
@@ -323,3 +392,92 @@ def lexicon_series(
             )
         )
     return Result.success(table, *notes)
+
+
+def term_hits(words: Sequence[str], lexicon: Mapping[str, Sequence[str]]) -> dict[str, int]:
+    """How many times each group's terms occur in one sentence's lowercased *words*.
+
+    The matcher both counts use, exposed for callers that need hits per
+    sentence (the script library's passages) rather than totals, so a passage
+    is found by exactly the rule that counted it.
+    """
+    return _hits(list(words), _index(lexicon))
+
+
+#: What the raw-text count calls a word: a run of ASCII letters, lowercased.
+#: The rule the hand-written research scripts used (``re.findall(r"[A-Za-z]+",
+#: text.lower())``), kept so their published numbers can be reproduced exactly.
+#: "don't" is two words here, "covid-19" is one, and numbers are not words.
+RAW_WORD = re.compile(r"[a-z]+")
+_RAW_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def raw_sentences(text: str) -> list[str]:
+    """*text* cut into sentences the raw way: after ``.``, ``!`` or ``?`` and a space.
+
+    Crude on purpose (titles like "Mr." end a sentence here), because it is the
+    rule the raw count uses; a passage has to be cut where the count cut it.
+    """
+    return [part.strip() for part in _RAW_SENTENCE_END.split(text) if part.strip()]
+
+
+def raw_text_series(texts: Mapping[str, str], lexicon: Mapping[str, Sequence[str]]) -> Result[pd.DataFrame]:
+    """The same table as :func:`lexicon_series`, counted in raw text, one row per document.
+
+    Parsed counting (``lexicon_series``) reads the parser's tokens and, by
+    default, their lemmas: "immigrants" is counted as "immigrant". Raw counting
+    reads the text as written, lowercased, split into runs of letters, with no
+    parser at all. The two give different numbers for the same word list, and
+    neither is wrong -- a paper has to say which it used. This one exists so a
+    script written the raw way (and figures already published from one) can be
+    reproduced to the last digit.
+
+    *texts* maps a document name to its text. Phrases match consecutive words
+    within a sentence (sentences end at ``.``, ``!`` or ``?`` followed by
+    space); single words match anywhere.
+    """
+    if not lexicon:
+        return Result.failure(Diagnostic.error("LEXICON_EMPTY", "no word groups to count"))
+    if not texts:
+        return Result.failure(Diagnostic.error("LEXICON_EMPTY_FRAME", "no documents to count"))
+    index = _index(lexicon)
+    categories = list(lexicon)
+    notes: list[Diagnostic] = []
+    unmatchable = sorted(
+        {term for terms in lexicon.values() for term in terms if not all(RAW_WORD.fullmatch(w) for w in term.split())}
+    )
+    if unmatchable:
+        notes.append(
+            Diagnostic.warning(
+                "LEXICON_RAW_UNMATCHABLE",
+                "raw counting only sees runs of letters, so these terms can never match: "
+                + ", ".join(unmatchable[:5])
+                + ("…" if len(unmatchable) > 5 else ""),
+            )
+        )
+    rows: list[dict[str, object]] = []
+    for name, text in texts.items():
+        sentences = [RAW_WORD.findall(part.lower()) for part in raw_sentences(text)]
+        sentences = [words for words in sentences if words]
+        tokens = sum(len(words) for words in sentences)
+        occurrences = dict.fromkeys(categories, 0)
+        matching = dict.fromkeys(categories, 0)
+        for words in sentences:
+            for category, count in _hits(words, index).items():
+                occurrences[category] += count
+                matching[category] += 1
+        for category in categories:
+            rows.append(
+                {
+                    "Facet": name,
+                    "Category": category,
+                    "Documents": 1,
+                    "Sentences": len(sentences),
+                    "Tokens": tokens,
+                    "Occurrences": occurrences[category],
+                    "Per 1000": round(1000 * occurrences[category] / tokens, 6) if tokens else 0.0,
+                    "Matching Sentences": matching[category],
+                    "Sentence Percent": round(100 * matching[category] / len(sentences), 6) if sentences else 0.0,
+                }
+            )
+    return Result.success(pd.DataFrame(rows), *notes)

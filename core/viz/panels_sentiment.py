@@ -332,6 +332,7 @@ def annual_sentiment_scores(  # noqa: PLR0913 - annual builder inputs are explic
         subtitle=f"Annual arithmetic mean of document scores · {len(marks)} year(s) · sample size varies by year",
         marks=tuple(marks),
         x_label="Year",
+        x_axis="time",
         y_label=f"Mean {score_column} ({unit})",
         provenance=provenance,
         data=annual,

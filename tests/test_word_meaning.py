@@ -474,16 +474,16 @@ class TestTheSenseFigures:
 
 
 def test_periods_are_decades_or_years_when_there_are_two() -> None:
-    from core.profiler.executor import _periods
+    """The rule meaning-over-time uses, now the time axis's (core/corpus_axis.py)."""
+    from core.corpus_axis import axis_of
 
     class Doc:
         def __init__(self, doc_id: int, when: date | None) -> None:
-            self.doc_id, self.date = doc_id, when
+            self.doc_id, self.date, self.details = doc_id, when, {}
 
-    class Corpus:
-        def __init__(self, *docs: Doc) -> None:
-            self.docs = list(docs)
+    def periods(*docs: Doc) -> dict[str, str]:
+        return axis_of(list(docs)).periods()
 
-    assert _periods(Corpus(Doc(1, date(1941, 1, 6)), Doc(2, date(1985, 2, 6)))) == {"1": "1940s", "2": "1980s"}  # type: ignore[arg-type]
-    assert _periods(Corpus(Doc(1, date(1981, 1, 6)), Doc(2, date(1985, 2, 6)))) == {"1": "1981", "2": "1985"}  # type: ignore[arg-type]
-    assert _periods(Corpus(Doc(1, date(1981, 1, 6)), Doc(2, None))) == {}  # type: ignore[arg-type]
+    assert periods(Doc(1, date(1941, 1, 6)), Doc(2, date(1985, 2, 6))) == {"1": "1940s", "2": "1980s"}
+    assert periods(Doc(1, date(1981, 1, 6)), Doc(2, date(1985, 2, 6))) == {"1": "1981", "2": "1985"}
+    assert periods(Doc(1, date(1981, 1, 6)), Doc(2, None)) == {}

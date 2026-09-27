@@ -288,7 +288,8 @@ def test_project_archive_roundtrip(client: TestClient, workspace: Workspace) -> 
     runner = client.app.state.runner
     job = runner.submit(project["id"], "readability", {}, "spacy")
     runner.close()
-    assert workspace.jobs(project["id"])[0]["state"] == "DONE"
+    finished = workspace.jobs(project["id"])[0]
+    assert finished["state"] == "DONE", finished
     archive = client.get(f"/api/projects/{project['id']}/backup")
     assert archive.status_code == 200
     restored = client.post("/api/projects/restore", content=archive.content)

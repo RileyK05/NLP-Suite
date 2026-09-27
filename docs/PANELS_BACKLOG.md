@@ -7,8 +7,8 @@ Read [`docs/viz-panels.md`](viz-panels.md) first. It is the contract, and it
 now covers the three mistakes most likely to be repeated: naming the wrong
 tool, assuming one table per run, and inventing test fixtures.
 
-**Nothing is committed.** Everything below is in the working tree of
-`NLP-Suite` (git, branch `main`).
+Status notes below were written during individual implementation passes.
+Check the code and the dated progress entries before treating a queue item as open.
 
 ---
 
@@ -300,7 +300,7 @@ and new ideas that came out of the work:
   reads only the last, and pays for stacking the rest. Export a second graph
   (or a second output) and pick it when `layer == -1`. Measure first: a clean,
   interleaved benchmark per precision on an idle machine is owed
-  (`docs/PLAN_0.4.0.md`, Progress).
+  (identified during the 0.4.0 implementation).
 - **Word senses beyond two.** `wsi_senses` asks "one meaning or two?". A
   silhouette search over k = 2..4 would find "bank" (money, river, and the
   verb "to bank on"). Needs the same guard against small groups.
@@ -349,11 +349,128 @@ dated corpora); the two word-senses figures. Next:
   figure only; when it refuses (too few words for eight groups) it should fall
   back to the next, as the live bench now does.
 
+### 4d-9. Scripts: notebooks over the suite (2026-09-25, release 0.5.0)
+
+Built: the Scripts page (WORKSHOP group), the `nlpsuite` library, one kernel
+per open notebook, Run and save, export, the AI chatbot guide. Next:
+
+- **Kernel-driven completion.** Completion is static today (library names
+  after `nlp.`, column names inside quotes). A kernel `complete` op would
+  offer the notebook's own variables and a DataFrame's real columns.
+- **Markdown colouring in text cells.** Dropped because
+  `@codemirror/lang-markdown` brings the HTML, CSS and JavaScript parsers and
+  doubled the app bundle. A Markdown-only grammar (`@lezer/markdown` without
+  the HTML embedding) would bring it back for a few KB.
+- **The Scripts chunk is 442 KB** (150 KB gzipped): CodeMirror core and
+  Python, loaded only when the page opens. The plan estimated 150 KB.
+  Measure what the autocomplete and search packages cost before adding more.
+- **Interrupting a cell without losing variables.** Stop ends the kernel,
+  because Windows has no way to interrupt Python code from outside. A cell
+  that checks a flag between tool calls (`nlp.run` loops) could stop cleanly;
+  pure Python loops still cannot.
+- **More templates**: "Chapter arc" and "Who is named, when" (plan 4.7) wait
+  for document details and books (sections 1 and 2); "Find passages by
+  meaning" waits for the vector cache (plan 5.4) so `nlp.similar` is quick.
+- **The guide, tested on real chatbots** (plan 4.10): paste it into two
+  chatbots with five requests each, record how many answers ran unchanged,
+  and fix the guide where they went wrong. Needs a person at a browser.
+- **An API key for a built-in assistant, or a local code model** -- not
+  doing: Riley decided (2026-09-25) that people use the chatbot they already
+  have; it keeps the app offline, with no key storage and no model to ship.
+  Revisit only if users ask.
+
+### 4d-10. Compare and document details (2026-09-26, release 0.5.0)
+
+Built: document details (from file names, a CSV, a split, or typed), the
+`contrast` tool, and the Compare page (WORKSHOP group). Next:
+
+- **Carried-over passages and the meaning map.** Both need the sentence-vector
+  cache (plan 5.4) and are shown as unavailable until it exists. Carryover
+  with "Read in context" of both speeches is plan 3.11's second done-when item.
+- **A text parameter that names a value in the data should offer the
+  values.** The focus figure's "Word group" is a blank text box; the groups
+  are in the table. A `PreparedPanel` could carry each such parameter's
+  values, and the desktop could render a list instead of a box. The same
+  applies to every panel with a term, entity or group parameter.
+- **Per-document parse cache (plan 5.1).** A comparison re-parses the joined
+  corpus the first time even when each project's parse is cached, because
+  the cache is keyed by the whole corpus. 96 s first run, 24 s after, on
+  SOTU (87) against Inaugural (31). The precondition is now verified safe
+  (`tests/test_parse_per_document.py`): parsing documents apart gives the
+  same tokens as parsing them together, and Sentence ID (restarts per
+  document), Record ID (dense across documents) and Document ID are all
+  rewritable per document. What is left is the implementation: key the
+  cache per document sha, parse only the missing ones, concatenate with
+  offset ids, and cap the cache with a Settings "Clear".
+- **"William Mckinley".** File-name speakers are title-cased word by word, so
+  Mc and Mac names lose their inner capital. The same rule `speaker_of` has
+  always used; a small exception list or a typed detail fixes it.
+- **Grouped bars used to overlay.** Every ranked-bars figure with two series
+  drew them overlaid at half opacity, which blended into a colour neither
+  series has. They now share each row one under the other, from one baseline,
+  in both the app and the publication figure. Worth a look at every panel
+  that uses two series (relevance/saliency, subject/object) on real data.
+
+### 4d-11. The corpus axis and details in figures (2026-09-26, release 0.5.0)
+
+Built: the axis (time, order, none), the 61 figures along it, group-by any
+detail, "Ch. 5" ticks in both renderers, lexicon counts per chapter, a
+period or a detail, detail filters and an order window in the run dialog.
+Next:
+
+- **Runs made before a detail existed cannot be grouped by it.** Tables keep
+  the details they had when they ran, so "group by Kind" on an older SOTU
+  run is refused with "run readability again". Joining the project's current
+  details at draw time would answer at once, but then the figure no longer
+  reads only its own run's table; decide which is more honest.
+- **A table read back from its CSV forgets which columns are details.** The
+  executor marks them in `DataFrame.attrs`, which a CSV does not keep, so a
+  detail-taking choice accepts any column name. Writing the detail names
+  into the run's envelope would let the panels list exactly the details.
+- **Panel tabs still say "over time" on a book.** The prepared title says
+  "across the chapters", but the declared titles in the panel list are
+  fixed text.
+- **Lexicon by period or by detail draws only the heatmap.** A period has a
+  middle chapter and could be a point on the line; a detail has no order and
+  is right as a heatmap.
+- **The script library reads the automatic axis,** not the one chosen on the
+  Corpus page.
+- **A reload racing a project switch** asked once for the previous project's
+  run panels (a 404, nothing shown). Not reproduced with a plain switch.
+
+### 4d-11. Books walk findings (2026-09-26, release 0.5.0)
+
+Found splitting real novels (Pride and Prejudice 61 chapters, Alice 12) and
+walking every formerly figure-less tool over them:
+
+- **"Speeches" wording is a class of about 153 occurrences** in
+  `core/viz/panels*.py` -- quote_annotator's "the number of speeches each
+  comes from" on a novel, "dated speeches" on chapters, and so on. Fixing it
+  needs a corpus-aware noun (the axis noun or a `Work`-aware word), and it
+  would change the locked dated digests (`tests/fixtures/axis/
+  dated_outputs.json` and the figure snapshots). **Riley's decision**: change
+  the wording and re-lock the digests, or keep the wording and live with
+  novels being called speeches. The axis nouns ("across the chapters") are
+  already right since 1.7; this is the prose around them.
+- **Point labels show stored names** ("Alice in Wonderland__010") rather
+  than document names in some figures' hover text. The stored name is what
+  the corpus file is called; `document_labels` prefers the imported name.
+  Worth one pass over every builder's `label=` and `describe=`.
+- **`gender_annotator` needs NLTK's `names` corpus downloaded** on the
+  machine (setup, not figures); until then it fails on every project. A
+  Setup-page check for it would say so in words.
+
 ### 4e. Observed, not investigated
 
 Each desktop job showed "Parsing English documents" for minutes even with the
 parse cache copied alongside. The runner may not be reusing the annotation
 cache across jobs. Worth measuring.
+
+**Answered (2026-09-25, 0.5.0 P1):** it was not. Published runs never read the
+cache; only the live bench did. `desktop_backend/project_corpus.py` now gives
+runs, the bench and notebook kernels one parse cache: two identical
+`corpus_statistics` runs over 20 speeches took 66.7 s then 1.1 s (before:
+57.6 s and 49.4 s).
 
 ---
 

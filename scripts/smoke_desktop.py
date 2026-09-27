@@ -88,8 +88,16 @@ def main() -> None:
                     flush=True,
                 )
             else:
-                for name, text in fixtures:
-                    request(base + "/documents?name=" + name, text.encode())
+                for index, (name, text) in enumerate(fixtures):
+                    imported = request(base + "/documents?name=" + name, text.encode())
+                    if index == 0:
+                        context = request(
+                            base + f"/documents/{imported['id']}/context",
+                            {"passage": "Alice visited New York."},
+                        )
+                        if not context["found"] or "Alice visited New York." not in context["excerpt"]:
+                            raise RuntimeError(f"Source context lookup failed: {context}")
+                        print("PASS source passage context", flush=True)
             if args.with_parser:
                 # Live exploration parses once and keeps the parse as parquet.
                 # The frozen build once excluded pyarrow, and every live load
@@ -176,6 +184,31 @@ def main() -> None:
                                 if "xl/workbook.xml" not in workbook.namelist() or workbook.testzip() is not None:
                                     raise RuntimeError("Invalid Excel workbook export")
                 print(f"PASS {tool}: computation, provenance, table, ZIP", flush=True)
+            # A notebook kernel is the same executable started with
+            # --script-kernel; its first line imports a package nothing else in
+            # the app imports at the top, which a frozen build can leave out.
+            notebook = request(base + "/notebooks", {"name": "Packaged kernel smoke"})
+            kernel = f"{base}/notebooks/{notebook['id']}/kernel"
+            started = request(
+                kernel + "/exec",
+                {"cell": "1", "code": "import nlpsuite as nlp\nprint(len(nlp.tools()))\nnlp.corpus().documents"},
+            )
+            deadline = time.monotonic() + args.job_timeout
+            cursor, seen = started["after"], []
+            while time.monotonic() < deadline:
+                state = request(f"{kernel}/events?after={cursor}")
+                cursor = state["next"]
+                seen.extend(event for event in state["events"] if event.get("id") == started["exec"])
+                if any(event.get("event") == "done" for event in seen):
+                    break
+                time.sleep(0.3)
+            done = next((event for event in seen if event.get("event") == "done"), None)
+            if done is None or not done["ok"]:
+                raise RuntimeError(f"Notebook kernel failed: {done or 'no answer'}")
+            if not any(event.get("kind") == "table" for event in seen):
+                raise RuntimeError("Notebook kernel showed no table for corpus.documents")
+            request(kernel + "/stop", {})
+            print("PASS notebook kernel: import nlpsuite, list tools, show the corpus", flush=True)
             restored = request("/projects/restore", request(base + "/backup"))
             if restored["id"] == project["id"] or restored["documents"] != expected_documents:
                 raise RuntimeError("Project backup/restore failed")

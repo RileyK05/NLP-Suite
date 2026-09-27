@@ -9,7 +9,7 @@ name = "nlp-suite-ng"
 # tauri.conf.json and src-tauri/Cargo.toml. test_desktop_release_versions_stay_in_sync
 # enforces it -- this file drifted to 0.1.0 while the desktop moved to 0.3.0
 # because the test did not cover it.
-version = "0.4.0"
+version = "0.5.0"
 description = "Ground-up rebuild of the NLP Suite: headless corpus NLP toolkit"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -97,6 +97,12 @@ line-length = 120
 target-version = "py312"
 extend-exclude = ["out", "legacy", "assets", "scripts", "desktop/.toolchain", "desktop/node_modules", "desktop/src-tauri/target", "desktop/src-tauri/gen"]
 
+[tool.ruff.format]
+# Code blocks in the design documents are sketches (signatures ending in
+# `...`, comments aligned by hand to read as a table). `ruff format .`
+# rewrote the 0.5.0 plan's blocks, a change nobody asked for in a document.
+exclude = ["docs/**/*.md"]
+
 [tool.ruff.lint]
 select = [
     "E", "W",   # pycodestyle
@@ -132,10 +138,25 @@ ignore = [
 "app/**/*.py" = ["T201"]
 # Desktop composition lazily imports model libraries in worker processes;
 # the worker loop's stdout is a job protocol, not human chatter.
-"desktop_backend/runner.py" = ["PLC0415", "PLR0915", "T201"]
+"desktop_backend/runner.py" = ["PLC0415", "PLR0911", "PLR0915", "T201"]
 # Live analysis imports the engine and the parser backends lazily: the
 # server must start without paying for spaCy, and most sessions never parse.
 "desktop_backend/live.py" = ["PLC0415"]
+# Shared by the runner, the bench and the script kernel: the parser stack loads
+# only when a corpus is actually parsed, never when the module is imported.
+"desktop_backend/project_corpus.py" = ["PLC0415"]
+# The scripting library: `import nlpsuite` must be instant (a kernel imports it
+# before the first cell), so the engine loads on the first call that needs it.
+# show() mirrors the chart settings it accepts, one keyword each.
+"core/script/*.py" = ["PLC0415", "PLR0913"]
+# Notebooks and their kernels: the server must start (and a kernel print
+# "ready") before the engine, matplotlib or pandas load; routes register as a
+# declarative composition root like server.py; running a notebook is a staged
+# lifecycle like run_job.
+"desktop_backend/kernel.py" = ["PLC0415"]
+"desktop_backend/notebooks.py" = ["PLC0415", "PLR0912"]
+"desktop_backend/notebook_export.py" = ["PLC0415"]
+"desktop_backend/notebook_routes.py" = ["PLC0415", "PLR0913", "PLR0915", "PLR0917"]
 "desktop_backend/archives.py" = ["PLR0912"]
 "desktop_backend/tables.py" = ["PLC0415", "PLR0911", "PLR0912", "PLR0913", "PLR0917", "PLR0915"]
 # API route registration is a declarative composition root; stdout carries the native handshake.
@@ -222,7 +243,7 @@ testpaths = ["tests"]
 #   python -m pytest -m model_integration
 # faulthandler_timeout dumps all-thread tracebacks if any test exceeds 120s,
 # so a hang is diagnosable instead of silent (no plugin needed — pytest core).
-addopts = "-q --strict-markers -m 'not model_integration'"
+addopts = "-q --strict-markers -m 'not model_integration' -p no:cacheprovider"
 faulthandler_timeout = 120
 filterwarnings = ["error"]
 markers = [

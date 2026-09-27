@@ -75,6 +75,12 @@ def as_parser(name: str) -> Parser:
 # about the file itself would say so.
 SCHEMA_VERSION = 1
 
+#: How much disk the parse cache may hold before the least recently used
+#: tables are dropped. A 113,000-word corpus is 1.7 MB as parquet, so 2 GiB is
+#: on the order of a thousand of them -- or many times that in single
+#: documents, which is how the per-document cache of plan 5.1 stores them.
+MAX_CACHE_BYTES = 2 * 1024**3
+
 # One warmed corpus is held in memory at a time. A 113,000-word parse is about
 # 68 MB as a frame; holding several would trade a lot of memory for the 750 ms
 # it costs to read one back from disk.
@@ -143,7 +149,7 @@ class Annotations:
         if not target.is_file():
             return None
         try:
-            return pd.read_parquet(target)
+            frame = pd.read_parquet(target)
         except ImportError:
             # No parquet engine in this runtime: the cache is an optimisation,
             # so parse again rather than fail the load.
@@ -153,6 +159,10 @@ class Annotations:
             # not a reason to fail. Drop it so the next run does not retry it.
             target.unlink(missing_ok=True)
             return None
+        # Read is use: the cap drops what nobody has asked for lately.
+        with contextlib.suppress(OSError):
+            target.touch()
+        return frame
 
     def store(self, key: str, frame: pd.DataFrame) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -167,6 +177,31 @@ class Annotations:
         except (OSError, ValueError):
             staging.unlink(missing_ok=True)
             raise
+        with contextlib.suppress(OSError):
+            self.prune()
+
+    def size_bytes(self) -> int:
+        """How much disk the cached tables hold right now."""
+        return sum(stale.stat().st_size for stale in self.root.glob("*.parquet") if stale.is_file())
+
+    def prune(self, limit: int | None = None) -> int:
+        """Drop the least recently used tables until the cache fits *limit* bytes.
+
+        Every cached table can be recomputed; keeping a thousand forgotten
+        parses at the cost of a fresh one would be the wrong trade. Returns
+        how many files were dropped.
+        """
+        if limit is None:
+            limit = MAX_CACHE_BYTES
+        files = sorted(self.root.glob("*.parquet"), key=lambda stale: stale.stat().st_mtime)
+        held = sum(stale.stat().st_size for stale in files)
+        removed = 0
+        while held > limit and files:
+            oldest = files.pop(0)
+            held -= oldest.stat().st_size
+            oldest.unlink(missing_ok=True)
+            removed += 1
+        return removed
 
     def forget(self) -> int:
         """Delete every cached parse. Costs time to recompute and nothing else."""
@@ -292,82 +327,47 @@ class Bench:
         different selection of documents is a different key and gets its own
         parse rather than a wrong hit.
         """
-        from core.config import NLPConfig
-        from core.pipelines.cache import PipelineCache
-        from core.pipelines.resolve import resolve_pipeline
+        from desktop_backend.project_corpus import parse_cached, resolve_parser
 
-        def report(text: str) -> None:
-            if stage is not None:
-                stage(text)
-
-        report("Preparing the parser")
-        resolved = resolve_pipeline(PipelineCache(), NLPConfig(parser=as_parser(parser), language="en"))
+        if stage is not None:
+            stage("Preparing the parser")
+        resolved = resolve_parser(parser)
         if resolved.value is None:
             raise ValueError("; ".join(d.message for d in resolved.diagnostics))
         pipeline = resolved.unwrap()
-        identity = parser_identity(pipeline)
-        key = annotation_key(corpus.sha256, identity)
-        # Captured here, where the pipeline is already resolved, and carried on
-        # the Warm. Re-resolving it at question time would reload the model.
-        tokenizer_name = f"{identity['backend']}/{identity['model'] or identity['language']}"
-
-        def tokenize(text: str) -> Sequence[str]:
-            return pipeline.tokenize(text)
-
-        already = self.held(key)
+        already = self.held(annotation_key(corpus.sha256, parser_identity(pipeline)))
         if already is not None:
             return replace(already, source="memory")
-
-        cached = self.annotations.load(key)
-        if cached is not None:
-            report("Reading the parse from an earlier run")
-            return self._hold(
-                Warm(
-                    corpus=corpus,
-                    key=key,
-                    identity=identity,
-                    table=cached,
-                    diagnostics=tuple(resolved.diagnostics),
-                    source="disk",
-                    tokenize=tokenize,
-                    tokenizer_name=tokenizer_name,
-                )
-            )
-
-        report(f"Parsing {len(corpus.docs)} document{'' if len(corpus.docs) == 1 else 's'}")
-        started = time.perf_counter()
-        parsed = pipeline.parse(corpus)
-        if parsed.value is None:
-            raise ValueError("; ".join(d.message for d in parsed.diagnostics))
-        table = parsed.unwrap()
-        elapsed = int((time.perf_counter() - started) * 1000)
-
-        report("Keeping the parse so the next question is quick")
-        # Failing to cache is not failing to parse. The reader still gets their
-        # analysis; the next warm just pays for the parse again.
-        with contextlib.suppress(OSError, ValueError):
-            self.annotations.store(key, table)
+        # The same cache a published run reads (desktop_backend.project_corpus),
+        # so a question asked here after a run -- or a run after a question --
+        # costs a read of the parse, not the parse.
+        parsed = parse_cached(self.annotations.root.parent, corpus, pipeline, stage=stage)
         return self._hold(
             Warm(
                 corpus=corpus,
-                key=key,
-                identity=identity,
-                table=table,
+                key=parsed.key,
+                identity=parsed.identity,
+                table=parsed.table,
                 diagnostics=(*resolved.diagnostics, *parsed.diagnostics),
-                parse_ms=elapsed,
-                tokenize=tokenize,
-                tokenizer_name=tokenizer_name,
+                source=parsed.source,
+                parse_ms=parsed.parse_ms,
+                # Carried on the Warm: re-resolving the pipeline at question
+                # time would reload the model.
+                tokenize=parsed.tokenize,
+                tokenizer_name=parsed.tokenizer_name,
             )
         )
 
-    def analyse(self, warm: Warm, tool: str, params: dict[str, Any]) -> LiveResult:
+    def analyse(self, warm: Warm, tool: str, params: dict[str, Any], axis: dict[str, str] | None = None) -> LiveResult:
         """Run one analysis over an already-parsed corpus.
 
         The same :func:`execute` a published run calls, given the same corpus
-        and the same table, so the rows returned are the rows that would be
-        published. That equality is the point: a preview worth acting on has
-        to be the thing itself, not a likeness of it.
+        and the same table -- and the same axis, the project's choice
+        (``{"kind", "noun"}``) -- so the rows returned are the rows that would
+        be published. That equality is the point: a preview worth acting on
+        has to be the thing itself, not a likeness of it.
         """
+        from core.corpus_axis import axis_of
         from core.profiler.executor import execute
         from core.profiler.plan import build_plan
 
@@ -394,6 +394,7 @@ class Bench:
             table=warm.table if plan.needs_parse else None,
             parse_diagnostics=warm.diagnostics if plan.needs_parse else (),
             tokenizer=warm.tokenizer if plan.needs_parse else None,
+            axis=axis_of(warm.corpus, (axis or {}).get("kind"), (axis or {}).get("noun", "")),
         )
         elapsed = int((time.perf_counter() - started) * 1000)
         outcome = batch.outcomes[0]
@@ -642,8 +643,8 @@ class Session:
                 )
             return snapshot
 
-    def analyse(self, tool: str, params: dict[str, Any]) -> LiveResult:
-        return self.bench.analyse(self.resolved().warm, tool, params)
+    def analyse(self, tool: str, params: dict[str, Any], axis: dict[str, str] | None = None) -> LiveResult:
+        return self.bench.analyse(self.resolved().warm, tool, params, axis)
 
     def cancel_analysis(self, request_id: str) -> dict[str, Any]:
         """Record that nobody is waiting for this answer any more (R-C8).

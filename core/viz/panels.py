@@ -46,6 +46,7 @@ import pandas as pd
 from core.result import Diagnostic, Result
 from core.viz.panel_plotters import IMPLEMENTED_SHAPES
 from core.viz.panels_collocations import COLLOCATION_STRENGTH
+from core.viz.panels_contrast import CONTRAST_PANELS
 from core.viz.panels_document_measures import DOCUMENT_MEASURES_PANELS
 from core.viz.panels_embeddings import (
     WORD2VEC_BERT_NEIGHBOURS,
@@ -75,7 +76,15 @@ from core.viz.panels_terms import TERMS_PANELS
 from core.viz.panels_time_positions import TIME_POSITIONS_PANELS
 from core.viz.panels_verb_profiles import VERB_PROFILE_PANELS
 from core.viz.panels_word_meaning import WORD_MEANING_PANELS
-from core.viz.panelspec import PanelDefinition, PanelParam, PreparedPanel, Provenance, Source
+from core.viz.panelspec import (
+    AXIS,
+    PanelDefinition,
+    PanelParam,
+    PreparedPanel,
+    Provenance,
+    Source,
+    missing_columns,
+)
 
 __all__ = [
     "PANELS",
@@ -128,6 +137,8 @@ PANELS: tuple[PanelDefinition, ...] = (
     *EXTRAS_PANELS,
     # doc_embeddings: documents by meaning (sentence models, core/models).
     *MEANING_PANELS,
+    # contrast: two or more document sets compared (the Compare page).
+    *CONTRAST_PANELS,
 )
 
 
@@ -207,7 +218,7 @@ def prepare_panel(
         return Result[PreparedPanel].failure(
             Diagnostic.error("PANEL_EMPTY", f"{name}: the source table has no rows", panel=name)
         )
-    missing = [column for column in definition.requires if column not in frame.columns]
+    missing = missing_columns(definition.requires, frame.columns)
     if missing:
         return Result[PreparedPanel].failure(
             Diagnostic.error(
@@ -223,6 +234,9 @@ def prepare_panel(
     if resolved.value is None:
         return Result[PreparedPanel](None, resolved.diagnostics)
     values = resolved.unwrap()
+    refused = _check_details_choice(definition, values, frame)
+    if refused is not None:
+        return Result[PreparedPanel].failure(refused)
 
     provenance = Provenance(
         tool=definition.tool,
@@ -282,11 +296,11 @@ def best_table(definition: _Requires, tables: Iterable[tuple[str, Iterable[str]]
     and the figure counted passages as speeches. The table written for a
     figure carries little else, so the closest fit is the intended one.
     """
-    needed = set(definition.requires)
+    needed = set(definition.requires) - {AXIS}
     best: tuple[int, int, str] | None = None
     for position, (name, columns) in enumerate(tables):
         present = set(columns)
-        if not needed <= present:
+        if missing_columns(definition.requires, present):
             continue
         candidate = (len(present - needed), position, name)
         if best is None or candidate < best:
@@ -346,6 +360,41 @@ def _resolve_params(definition: PanelDefinition, given: Mapping[str, Any]) -> Re
     return Result.success(values)
 
 
+def _check_details_choice(
+    definition: PanelDefinition, values: Mapping[str, Any], frame: pd.DataFrame
+) -> Diagnostic | None:
+    """A choice that names a document detail must name one this table has.
+
+    The declared choices are the base; the table's details extend them, and
+    only the table knows which names exist ("Party" on one run, "Chapter" on
+    the next). A name that fits neither is refused here, with the list the
+    figure could have drawn.
+    """
+    from core.viz.panel_helpers import groupings
+
+    for param in definition.params:
+        if not param.details or param.type != "choice":
+            continue
+        value = values.get(param.name)
+        if not isinstance(value, str) or not value or value in param.choices:
+            continue
+        # Any column is accepted: a table read back from its CSV no longer
+        # knows which of its columns are details. The refusal lists only the
+        # groupings, never the measures, and says why a detail can be missing.
+        columns = {str(column) for column in frame.columns}
+        if value not in set(param.choices) | set(groupings(frame)) | columns:
+            listed = list(dict.fromkeys([*param.choices, *groupings(frame)]))
+            return Diagnostic.error(
+                "PANEL_BAD_PARAM",
+                f"This run's table has no {value!r} column, so it cannot be grouped by it. A run keeps the "
+                f"document details it had when it ran; run {definition.tool} again to group by a detail added "
+                f"since. It can be grouped by: {', '.join(listed)}.",
+                panel=definition.name,
+                param=param.name,
+            )
+    return None
+
+
 def _check_param(panel: str, param: PanelParam, raw: Any) -> Result[Any]:
     """One parameter against its declaration: type first, then bounds."""
 
@@ -373,7 +422,10 @@ def _check_param(panel: str, param: PanelParam, raw: Any) -> Result[Any]:
             return bad("must be a number")
         value = float(raw)
     elif param.type == "choice":
-        if not isinstance(raw, str) or raw not in param.choices:
+        # A detail-taking choice ("group by Party") extends its declared
+        # choices with the table's own details; prepare_panel checks the name
+        # against the table, where its columns are known.
+        if not isinstance(raw, str) or (raw not in param.choices and not param.details):
             return bad(f"must be one of {', '.join(param.choices)}")
     elif not isinstance(raw, str):
         return bad("must be text")

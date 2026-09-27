@@ -1109,7 +1109,8 @@ _SIMILARITY_HEATMAP_NOTES: tuple[str, ...] = (
     "Similarity is TF-IDF cosine similarity (0-100%) over the whole document, ignoring word order -- two "
     "speeches sharing the same stock phrases and topics score high even if their arguments differ.",
     "Documents are ordered by the date in their file name when every document in the run has one; otherwise "
-    "by name. The order used is stated in the subtitle.",
+    "by name, which keeps chapter files named chapter_01, chapter_02 ... in order. The order used is stated "
+    "in the subtitle.",
 )
 _NEIGHBOURS_NOTES: tuple[str, ...] = (
     "An edge is drawn if EITHER endpoint counts the other among its top-k, so a document can end up with more "

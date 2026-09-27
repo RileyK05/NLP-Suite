@@ -38,6 +38,7 @@ from matplotlib.transforms import blended_transform_factory
 import numpy as np
 import pandas as pd
 
+from core.corpus_axis import plural
 from core.viz.panelspec import PanelMark, PreparedPanel
 from core.viz.static.labels import LabelRequest, freeze_layout, note_dropped, place_labels
 from core.viz.static.stats import decade_of, rolling_band
@@ -51,6 +52,7 @@ from core.viz.static.style import (
     UNGROUPED,
     color_of,
     group_colors,
+    summary_of,
 )
 from core.viz.static.text import AxisFormatter, format_value, is_year_axis, tick_labels, wrap
 
@@ -88,9 +90,15 @@ def _grouped(prepared: PreparedPanel) -> tuple[dict[str, list[PanelMark]], list[
     return buckets, ordered
 
 
-def _formatters(ax: Axes, xs: Sequence[float] = (), ys: Sequence[float] = ()) -> None:
-    ax.xaxis.set_major_formatter(AxisFormatter(plain=is_year_axis(xs)))
+def _formatters(
+    ax: Axes, xs: Sequence[float] = (), ys: Sequence[float] = (), *, x_axis: str = "", x_noun: str = ""
+) -> None:
+    """Tick labels for both axes; an order x gets whole "Ch. 5" steps, never decimals."""
+    order = x_noun if x_axis == "order" else ""
+    ax.xaxis.set_major_formatter(AxisFormatter(plain=is_year_axis(xs), noun=order))
     ax.yaxis.set_major_formatter(AxisFormatter(plain=is_year_axis(ys)))
+    if order:
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
 
 def _pad(low: float, high: float, fraction: float = 0.06) -> tuple[float, float]:
@@ -275,7 +283,7 @@ def draw_scatter(prepared: PreparedPanel) -> Drawn:
     extra_y = [a.value for a in prepared.annotations if a.kind == "hline"]
     ax.set_xlim(*_pad(min(xs + extra_x), max(xs + extra_x), 0.06))
     ax.set_ylim(*_pad(min(ys + extra_y), max(ys + extra_y), 0.08))
-    _formatters(ax, xs, ys)
+    _formatters(ax, xs, ys, x_axis=prepared.x_axis, x_noun=prepared.x_noun)
     if prepared.x_log10:
         _log_ticks(ax, *ax.get_xlim())
     ax.set_xlabel(prepared.x_label)
@@ -342,16 +350,18 @@ def _series_panels(prepared: PreparedPanel, buckets: dict[str, list[PanelMark]],
         ax.set_title(group, loc="left", fontsize=9, fontweight="bold", color=color)
         ax.set_xlim(*_pad(min(xs), max(xs), 0.02))
         ax.set_ylim(*_limits(ys, floor_zero=True))
-        _formatters(ax, xs, ys)
+        _formatters(ax, xs, ys, x_axis=prepared.x_axis, x_noun=prepared.x_noun)
         ax.grid(axis="x", visible=False)
     for index in range(len(ordered), rows * columns):
         axes[index // columns][index % columns].set_visible(False)
     fig.supxlabel(prepared.x_label, fontsize=9, color=MUTED)
     fig.supylabel(prepared.y_label, fontsize=9, color=MUTED)
     freeze_layout(fig)
+    # Stems are whatever one step of x is: a year, or a chapter on an order axis.
+    step = (prepared.x_noun or "document").lower() if prepared.x_axis == "order" else "year"
     return fig, [
-        f"One panel per series on a shared scale: stems are single years, the dark line a {_SERIES_WINDOW}-year "
-        "rolling median of the years present."
+        f"One panel per series on a shared scale: stems are single {plural(step)}, the dark line a "
+        f"{_SERIES_WINDOW}-{step} rolling median of the {plural(step)} present."
     ]
 
 
@@ -387,20 +397,38 @@ def draw_line_series(prepared: PreparedPanel) -> Drawn:
         names.append(group)
     for group in summaries:
         marks = buckets[group]
-        color = color_of(colors, group) if not documents else INK
+        # One set of points: its median is ink. Several (two books on one
+        # chapter axis): each median wears its book's colour, and its band is
+        # read from that book's points alone.
+        parent = summary_of(group, prepared.groups)
+        own_points = buckets.get(parent, []) if parent in documents else point_marks
+        color = color_of(colors, group) if not documents or parent in documents else INK
         window = _summary_window(marks) if documents else 0
         if documents and window:
-            band = rolling_band([m.x for m in point_marks], [m.y for m in point_marks], window)
+            band = rolling_band([m.x for m in own_points], [m.y for m in own_points], window)
             if band:
                 bx, lo, hi = zip(*band, strict=True)
-                handles.append(
-                    ax.fill_between(bx, lo, hi, color=color_of(colors, documents[0]), alpha=0.16, linewidth=0, zorder=2)
+                shaded = ax.fill_between(
+                    bx,
+                    lo,
+                    hi,
+                    color=color_of(colors, parent if parent in documents else documents[0]),
+                    alpha=0.16,
+                    linewidth=0,
+                    zorder=2,
                 )
-                names.append(f"Middle half of the same {window} documents (IQR)")
-                notes.append(
+                # Several books: each band wears its book's colour, so the
+                # legend names the books and medians only; one entry per band
+                # made the legend wider than the plot.
+                if len(documents) == 1:
+                    handles.append(shaded)
+                    names.append(f"Middle half of the same {window} documents (IQR)")
+                note = (
                     f"The shaded band is the interquartile range of the same {window}-document windows as the "
                     "rolling median: half of the documents in each window fall inside it."
                 )
+                if note not in notes:
+                    notes.append(note)
         zero_share = sum(1 for m in marks if m.y == 0) / len(marks)
         segments = _segments(marks, prepared.line_gap)
         if not documents and zero_share >= 0.5 and len(marks) > 10:
@@ -441,7 +469,7 @@ def draw_line_series(prepared: PreparedPanel) -> Drawn:
         names.append(group)
     ax.set_ylim(*_limits(ys, floor_zero=True))
     ax.set_xlim(*_pad(min(xs), max(xs), 0.015))
-    _formatters(ax, xs, ys)
+    _formatters(ax, xs, ys, x_axis=prepared.x_axis, x_noun=prepared.x_noun)
     ax.set_xlabel(prepared.x_label)
     ax.set_ylabel(prepared.y_label)
     ax.grid(axis="x", visible=False)
@@ -467,7 +495,8 @@ def draw_line_series(prepared: PreparedPanel) -> Drawn:
             bbox_to_anchor=(0.0, 1.01),
             borderaxespad=0.0,
             fontsize=7.5,
-            ncol=min(4, len(names)),
+            # Several books: two columns, so each book's points and median share a row.
+            ncol=2 if len(documents) > 1 else min(4, len(names)),
         )
     renderer = freeze_layout(fig)
     if point_marks:
@@ -841,7 +870,7 @@ def draw_small_multiples(prepared: PreparedPanel) -> Drawn:
         values = [m.y for m in facet]
         if values:
             ax.set_ylim(*_limits(values, top=0.1))
-        _formatters(ax, xs, values)
+        _formatters(ax, xs, values, x_axis=prepared.x_axis, x_noun=prepared.x_noun)
         ax.yaxis.set_major_locator(MaxNLocator(4))
         ax.grid(axis="x", visible=False)
     for index in range(len(names), rows * columns):
@@ -1000,7 +1029,7 @@ def draw_stream(prepared: PreparedPanel) -> Drawn:
     )
     ax.set_xlim(axis[0], axis[-1] if len(axis) > 1 else axis[0] + 1)
     ax.set_ylim(0, float(stack.sum(axis=0).max()) * 1.04 or 1.0)
-    _formatters(ax, axis, [])
+    _formatters(ax, axis, [], x_axis=prepared.x_axis, x_noun=prepared.x_noun)
     ax.set_xlabel(prepared.x_label)
     ax.set_ylabel(prepared.y_label)
     ax.grid(axis="x", visible=False)

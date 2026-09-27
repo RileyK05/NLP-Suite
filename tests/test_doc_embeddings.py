@@ -6,6 +6,7 @@ mean nothing; the shapes, contracts and plumbing are what is checked).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -145,3 +146,53 @@ class TestAdapter:
             "doc_map.csv",
             "search_results.csv",
         }
+
+
+class TestVectorCache:
+    """Plan 5.4: a second run over the same documents calls no model."""
+
+    def _shas(self) -> dict[str, str]:
+        return {str(i): f"sha-{i}" for i in range(1, 6)}
+
+    def test_a_second_run_reads_the_cache(self, granite: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from core.analysis import doc_embeddings as mod
+        from core.models.vector_cache import VectorCache
+
+        cache = VectorCache(tmp_path)
+        first = embed_corpus(frame(), shas=self._shas(), cache=cache, unit="sentence")
+        assert first.ok, first.diagnostics
+        assert cache.size_bytes() > 0, "the first run must leave its vectors"
+        calls = {"n": 0}
+        real = mod.embed_sentences
+
+        def counting(*args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(mod, "embed_sentences", counting)
+        second = embed_corpus(frame(), shas=self._shas(), cache=cache, unit="sentence")
+        assert second.ok, second.diagnostics
+        assert calls["n"] == 0, "a cached run must not call the model"
+        pd.testing.assert_frame_equal(first.unwrap().vectors, second.unwrap().vectors)
+
+    def test_a_changed_document_is_recomputed_while_the_rest_are_not(
+        self, granite: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from core.analysis import doc_embeddings as mod
+        from core.models.vector_cache import VectorCache
+
+        cache = VectorCache(tmp_path)
+        embed_corpus(frame(), shas=self._shas(), cache=cache, unit="sentence")
+        changed = self._shas()
+        changed["1"] = "sha-changed"
+        calls = {"n": 0}
+        real = mod.embed_sentences
+
+        def counting(*args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(mod, "embed_sentences", counting)
+        result = embed_corpus(frame(), shas=changed, cache=cache, unit="sentence")
+        assert result.ok, result.diagnostics
+        assert calls["n"] == 1, "only the changed document is embedded again"

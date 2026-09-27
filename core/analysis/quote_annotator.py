@@ -19,7 +19,8 @@ Intentional limitations (documented, not silent):
   spans; an unclosed opening quote is dropped with a WARNING;
 - quote text is rebuilt from the token stream (punctuation rejoined where it
   is obviously attached), so spacing is token spacing;
-- stage 1's X is the adjacent word -- "he said" can name "he" -- and stage 2
+- stage 1's X is the adjacent word -- a pronoun is marked ``(pronoun)``
+  rather than named ("he said" cannot name "he", plan 5.5.3) -- and stage 2
   contributes only its nearest token, so "Harry Potter" speaks as "Potter".
 """
 
@@ -32,7 +33,7 @@ import pandas as pd
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
-__all__ = ["annotate_quotes", "summarize_quotes"]
+__all__ = ["PRONOUN_MARKER", "annotate_quotes", "summarize_quotes"]
 
 _QUOTE_COLUMNS = ["Document", "Document ID", "Quote ID", "Quote", "Speaker", "Cue", "Sentence ID"]
 _SUMMARY_COLUMNS = ["Document", "Document ID", "Quotes", "Attributed", "Unattributed", "Words"]
@@ -41,6 +42,46 @@ _SUMMARY_COLUMNS = ["Document", "Document ID", "Quotes", "Attributed", "Unattrib
 #: the model around them).
 CUE_VERBS: frozenset[str] = frozenset(
     {"said", "asked", "replied", "answered", "whispered", "shouted", "exclaimed", "continued", "muttered"}
+)
+
+#: What a pronoun as speaker is marked as (plan 5.5.3): named as not-a-name,
+#: never dropped, and hidden by the figures.
+PRONOUN_MARKER = "(pronoun)"
+
+_PRONOUNS: frozenset[str] = frozenset(
+    {
+        "i",
+        "me",
+        "my",
+        "mine",
+        "myself",
+        "we",
+        "us",
+        "our",
+        "ours",
+        "ourselves",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "yourselves",
+        "he",
+        "him",
+        "his",
+        "himself",
+        "she",
+        "her",
+        "hers",
+        "herself",
+        "it",
+        "its",
+        "itself",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "themselves",
+    }
 )
 
 _DOUBLE = '"'
@@ -72,9 +113,19 @@ def _is_person(tag: object) -> bool:
     return text.upper() == "PERSON"
 
 
-def _name_like(form: str) -> bool:
-    """Candidate speaker word: has letters/digits and is not punctuation."""
-    return any(ch.isalnum() for ch in form)
+def _name_like(form: str) -> str | None:
+    """Candidate speaker word: has letters/digits and is not punctuation.
+
+    A pronoun is not a name ("he said" cannot name "he", plan 5.5.3): it
+    becomes ``"(pronoun)"`` -- marked, never dropped, and hidden by the
+    figures. The bundled coreference clusters noun lemmas and cannot resolve
+    a pronoun to its antecedent, so resolution is not "available" here; a
+    real coref model would substitute the name before this marker.
+    """
+    text = form.strip()
+    if not text or not any(ch.isalnum() for ch in text):
+        return None
+    return PRONOUN_MARKER if text.casefold() in _PRONOUNS else text
 
 
 class _Sentence:
@@ -103,12 +154,12 @@ def _cue_in_sentence(forms: list[str], sentence: _Sentence) -> tuple[str, str] |
     for i in range(sentence.start, sentence.end + 1):
         if forms[i].lower() not in CUE_VERBS:
             continue
-        if i - 1 >= sentence.start and _name_like(forms[i - 1]):
-            return (forms[i - 1], "said")
-        if i + 2 <= sentence.end and forms[i + 1].lower() == "to" and _name_like(forms[i + 2]):
-            return (forms[i + 2], "said-to")
-        if i + 1 <= sentence.end and forms[i + 1].lower() != "to" and _name_like(forms[i + 1]):
-            return (forms[i + 1], "said")
+        if i - 1 >= sentence.start and (name := _name_like(forms[i - 1])):
+            return (name, "said")
+        if i + 2 <= sentence.end and forms[i + 1].lower() == "to" and (name := _name_like(forms[i + 2])):
+            return (name, "said-to")
+        if i + 1 <= sentence.end and forms[i + 1].lower() != "to" and (name := _name_like(forms[i + 1])):
+            return (name, "said")
     return None
 
 

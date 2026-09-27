@@ -43,6 +43,9 @@ def test_frozen_engine_keeps_every_core_dependency(tmp_path: Path) -> None:
     assert not wanted & excluded, f"core dependencies excluded from the desktop engine: {wanted & excluded}"
     hidden = {args[i + 1] for i, arg in enumerate(args) if arg == "--hidden-import"}
     assert "pyarrow.parquet" in hidden
+    # A notebook's first line is `import nlpsuite as nlp`, in a kernel of the frozen engine.
+    collected = {args[i + 1] for i, arg in enumerate(args) if arg == "--collect-submodules"}
+    assert {"nlpsuite", "core.script"} <= collected
 
 
 def test_macos_minimum_matches_the_documented_floor() -> None:

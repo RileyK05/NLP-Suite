@@ -24,6 +24,7 @@ from core.io.reader import (
     Document,
     corpus_fingerprint,
     date_from_filename,
+    details_fingerprint,
     hash_file,
     hash_text,
     read_corpus,
@@ -191,6 +192,37 @@ class TestReadCorpus:
         first = read_corpus(corpus_dir).unwrap().sha256
         (corpus_dir / "01.txt").write_text("different", encoding="utf-8")
         assert read_corpus(corpus_dir).unwrap().sha256 != first
+
+
+class TestDetailsFingerprint:
+    """Caches that read details must see a detail or axis change; text-only caches must not."""
+
+    def test_the_same_details_and_axis_hash_the_same(self) -> None:
+        first = details_fingerprint({"1": {"Speaker": "Truman", "Kind": "sotu"}}, "time:Year")
+        assert first == details_fingerprint({"1": {"Kind": "sotu", "Speaker": "Truman"}}, "time:Year")
+
+    def test_a_changed_value_is_a_new_hash(self) -> None:
+        before = details_fingerprint({"1": {"Speaker": "Truman"}}, "time:Year")
+        assert details_fingerprint({"1": {"Speaker": "Eisenhower"}}, "time:Year") != before
+
+    def test_the_axis_counts_too(self) -> None:
+        assert details_fingerprint({"1": {"Order": "3"}}, "order:Chapter") != details_fingerprint(
+            {"1": {"Order": "3"}}, "none:"
+        )
+
+    def test_documents_and_a_mapping_agree(self) -> None:
+        """The mapping form is what the store's details look like; documents carry the same pairs."""
+        doc = Document(doc_id=1, path=Path("a.txt"), text="hi", fields=(("Speaker", "Truman"), ("Kind", "sotu")))
+        assert details_fingerprint((doc,), "time:Year") == details_fingerprint(
+            {"a.txt": {"Speaker": "Truman", "Kind": "sotu"}}, "time:Year"
+        )
+
+    def test_order_of_documents_does_not_matter(self) -> None:
+        docs = (
+            Document(doc_id=1, path=Path("a.txt"), text="", fields=(("Kind", "sotu"),)),
+            Document(doc_id=2, path=Path("b.txt"), text="", fields=(("Kind", "ina"),)),
+        )
+        assert details_fingerprint(docs) == details_fingerprint(tuple(reversed(docs)))
 
 
 class TestDocumentShape:

@@ -7,6 +7,7 @@ import sys
 
 from core.analysis.lexicon_series import BY_CHOICES, facet_labels, lexicon_series, parse_lexicon
 from core.conll.schema import Col
+from core.io.document_fields import document_order
 from core.io.reader import read_corpus
 from tools._cli import build_common_parser, get_pipeline, handle_result_states, make_writer, resolve_config
 
@@ -18,7 +19,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="word groups, e.g. 'Iraq: iraq, iraqi, saddam; Vietnam: vietnam, hanoi' (phrases allowed)",
     )
-    p.add_argument("--by", choices=list(BY_CHOICES), default="year", help="the axis to count along")
+    p.add_argument(
+        "--by",
+        default="year",
+        help=(
+            "the axis to count along: "
+            + ", ".join(BY_CHOICES)
+            + ", or 'field:<detail name>' for a document detail's values"
+        ),
+    )
     p.add_argument(
         "--group-pattern",
         default="",
@@ -62,7 +71,13 @@ def main(argv: list[str] | None = None) -> int:
     for d in corpus_result.diagnostics:
         print(d, file=sys.stderr)
     corpus = corpus_result.unwrap()
-    labels = facet_labels([(doc.name, doc.date) for doc in corpus.docs], args.by, group_pattern=args.group_pattern)
+    labels = facet_labels(
+        [(doc.name, doc.date) for doc in corpus.docs],
+        args.by,
+        group_pattern=args.group_pattern,
+        details={doc.name: dict(doc.fields) for doc in corpus.docs},
+        positions={doc.name: value for doc in corpus.docs if (value := document_order(doc.details)) is not None},
+    )
     if labels.value is None:
         for d in labels.diagnostics:
             print(d, file=sys.stderr)

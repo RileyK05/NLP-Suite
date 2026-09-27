@@ -126,12 +126,16 @@ class TestRegistry:
         the tool registry imports this one, and the reverse import would
         cycle."""
         from core.profiler.registry import tool_names
+        from desktop_backend.comparisons import CONTRAST_TOOL
+        from desktop_backend.runner import QUESTION_PUBLISHERS
         from desktop_backend.tables import TABLE_TOOLS
 
         # The desktop's table workflows write their envelopes under their own
         # names (``OutputWriter(tool="table_chi2")`` in ``run_table``), so a
-        # panel for a table tool is reachable by that name too.
-        registered = set(tool_names()) | set(TABLE_TOOLS)
+        # panel for a table tool is reachable by that name too. So do the
+        # runner's private publishers, which have their own pages instead of a
+        # catalog entry: saved questions, and comparisons (Compare).
+        registered = set(tool_names()) | set(TABLE_TOOLS) | set(QUESTION_PUBLISHERS) | {CONTRAST_TOOL}
         for definition in PANELS:
             assert definition.tool in registered, (
                 f"{definition.name} names tool {definition.tool!r}, which is not registered; "
@@ -715,14 +719,19 @@ class TestRankedBars:
         figure = build_panel_figure(self._panel()).unwrap()
         assert list(figure.layout.yaxis.categoryarray) == ["shall", "war", "freedom"]
 
-    def test_the_two_series_share_a_baseline(self) -> None:
-        """Side-by-side half-width bars turn "how far apart are these two
-        readings?" into a comparison across a gap."""
+    def test_the_two_series_share_a_row_and_a_baseline(self) -> None:
+        """Overlaid at half opacity, two bars blended into a colour neither
+        series has. Grouped horizontal bars both start at zero, so the lengths
+        are still read from one baseline."""
         pytest.importorskip("plotly")
         figure = build_panel_figure(self._panel()).unwrap()
-        assert figure.layout.barmode == "overlay"
-        assert [trace.name for trace in figure.data] == ["Relevance", "Saliency"]
-        assert figure.data[1].opacity < figure.data[0].opacity, "the second series must not hide the first"
+        assert figure.layout.barmode == "group"
+        # Traces go in reversed so the first series is each row's top bar;
+        # the legend is reversed back so it still reads first series first.
+        assert [trace.name for trace in figure.data] == ["Saliency", "Relevance"]
+        assert figure.layout.legend.traceorder == "reversed"
+        assert all(trace.opacity in (None, 1.0) for trace in figure.data), "no series is drawn see-through"
+        assert all(trace.base is None for trace in figure.data), "every bar grows from zero"
 
     def test_bars_are_horizontal_and_carry_their_evidence(self) -> None:
         pytest.importorskip("plotly")

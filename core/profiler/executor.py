@@ -34,7 +34,7 @@ from core.analysis.dispersion import dispersion as dispersion_measures
 from core.analysis.doc_duplicates import exact_groups, fuzzy_pairs, normalized_groups
 from core.analysis.doc_similarity import find_duplicates, pairwise_similarity
 from core.analysis.k_sentences import run as k_sentences
-from core.analysis.keyness import keyness as keyness_scores
+from core.analysis.keyness import detail_groups, keyness as keyness_scores
 from core.analysis.knowledge_graph import build as kg_build
 from core.analysis.kwic import concordance as kwic_concordance
 from core.analysis.lda import fit_lda, segment_tokens_for, tokens_from_frame
@@ -64,7 +64,9 @@ from core.analysis.tfidf import tfidf as tfidf_terms
 from core.analysis.topic_stability import topic_stability
 from core.analysis.word_embeddings import project_tsne, train as train_w2v
 from core.conll.schema import Col
+from core.corpus_axis import Axis, axis_of
 from core.file_ops.search import search_in_text
+from core.io.document_fields import DETAIL_PREFIX, document_order
 from core.io.reader import Corpus, display_names
 from core.narrative.arcs import emotion_arc, length_arc
 from core.narrative.characters import character_arcs, character_mentions
@@ -99,6 +101,12 @@ class BatchContext:
     #: the same defect in the same corpus, differing only by which door the
     #: question came through.
     tokenizer: Tokenization | None = None
+    #: How the documents line up (time, order or none), for the tools that
+    #: compare periods and for the Position columns every per-document table gets.
+    axis: Axis | None = None
+    #: Where cached embedding vectors live (plan 5.4), shared across runs,
+    #: benches and kernels; None means "compute afresh, store nothing".
+    vectors: VectorCache | None = None
 
 
 #: The column every per-document result carries, and the key the corpus is
@@ -159,12 +167,121 @@ def _dated(frame: pd.DataFrame, dates: dict[str, date]) -> pd.DataFrame:
     return out
 
 
-def _with_dates(frames: dict[str, pd.DataFrame], corpus: Corpus | None) -> dict[str, pd.DataFrame]:
-    """Every per-document frame a tool produced, dated where the corpus can."""
+ORDER = "Order"
+POSITION = "Position"
+POSITION_LABEL = "Position label"
+# A detail whose name a tool's own column already uses is added under
+# DETAIL_PREFIX ("Detail: Tokens", from core.io.document_fields), so a detail
+# never overwrites the tool's count. Re-exported: this module writes those
+# columns.
+#: Details the axis already reports (as Date/Year and Order), or that name a
+#: document's place in a comparison the comparison's own tables carry.
+_NOT_REPEATED = frozenset({"date", "order"})
+
+
+def _document_details(corpus: Corpus | None) -> dict[str, dict[str, str]]:
+    """Each document's details other than Date and Order, by document id."""
+    if corpus is None:
+        return {}
+    return {
+        str(doc.doc_id): {name: value for name, value in doc.fields if name.casefold() not in _NOT_REPEATED and value}
+        for doc in corpus.docs
+    }
+
+
+def _detailed(
+    frame: pd.DataFrame,
+    orders: dict[str, float],
+    axis: Axis | None,
+    details: dict[str, dict[str, str]],
+    renamed: set[str],
+) -> pd.DataFrame:
+    """One per-document frame with Order, Position and the documents' details beside Date and Year.
+
+    The same narrow rule as :func:`_dated`: only frames with a ``Document ID``,
+    and no column that matches nothing. A detail whose name a tool's column
+    already has is skipped when the values agree (a comparison's own ``Side``)
+    and added as ``Detail: <name>`` when they differ; *renamed* collects those
+    names so the run can say so once.
+    """
+    if DOCUMENT_ID not in frame.columns:
+        return frame
+    keys = frame[DOCUMENT_ID].astype(str)
+    out = frame
+    added: list[tuple[str, list[object]]] = []
+    if orders and ORDER not in frame.columns:
+        values = keys.map(orders)
+        if not values.isna().all():
+            added.append((ORDER, [None if pd.isna(v) else float(v) for v in values]))
+    if axis is not None and axis.placed and POSITION not in frame.columns:
+        positions = keys.map(axis.positions)
+        if not positions.isna().all():
+            added.append((POSITION, [None if pd.isna(v) else float(v) for v in positions]))
+            added.append((POSITION_LABEL, list(keys.map(axis.labels).where(positions.notna(), None))))
+    names = sorted({name for mine in details.values() for name in mine}, key=str.casefold)
+    shown: list[str] = []
+    for name in names:
+        values = [details.get(key, {}).get(name) for key in keys]
+        if all(value is None for value in values):
+            continue
+        column = name
+        if name in frame.columns:
+            if [str(v) for v in frame[name]] == [str(v) for v in values]:
+                continue
+            column = DETAIL_PREFIX + name
+            renamed.add(name)
+        added.append((column, values))
+        shown.append(name)
+    if not added:
+        return frame
+    out = frame.copy()
+    anchor = next((column for column in (YEAR, DATE, DOCUMENT, DOCUMENT_ID) if column in out.columns), DOCUMENT_ID)
+    at = int(out.columns.get_loc(anchor)) + 1
+    for offset, (column, values) in enumerate(added):
+        out.insert(at + offset, column, values)
+    # What this table's details are called as groupings ("Party", "Kind"):
+    # the figures list them beside year and decade, and a name that lost its
+    # column to the DETAIL_PREFIX rule is still named as the grouping it is.
+    if shown:
+        out.attrs["details"] = shown
+    return out
+
+
+def _with_details(
+    frames: dict[str, pd.DataFrame], corpus: Corpus | None, axis: Axis | None
+) -> tuple[dict[str, pd.DataFrame], tuple[Diagnostic, ...]]:
+    """Every per-document frame a tool produced, with what the corpus knows about each document.
+
+    ``Date`` and ``Year`` exactly as before (:func:`_dated`), then ``Order``,
+    ``Position`` and ``Position label`` (one column a figure can put on x,
+    whatever the axis), then one column per detail -- Speaker, Kind, Party --
+    so any table can be grouped by any detail without a join.
+    """
     dates = _document_dates(corpus)
-    if not dates:
-        return frames
-    return {name: _dated(frame, dates) for name, frame in frames.items()}
+    if dates:
+        frames = {name: _dated(frame, dates) for name, frame in frames.items()}
+    orders: dict[str, float] = {}
+    if corpus is not None:
+        for doc in corpus.docs:
+            value = document_order(doc.details)
+            if value is not None:
+                orders[str(doc.doc_id)] = value
+    details = _document_details(corpus)
+    if not orders and not details and (axis is None or not axis.placed):
+        return frames, ()
+    renamed: set[str] = set()
+    out = {name: _detailed(frame, orders, axis, details, renamed) for name, frame in frames.items()}
+    notes: tuple[Diagnostic, ...] = ()
+    if renamed:
+        listed = ", ".join(sorted(renamed))
+        notes = (
+            Diagnostic.info(
+                "DETAILS_COLUMN_RENAMED",
+                f"the detail(s) {listed} share a name with this tool's own column; they are shown as "
+                f"'{DETAIL_PREFIX}<name>'",
+            ),
+        )
+    return out, notes
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +306,7 @@ Adapter = Callable[[BatchContext, dict[str, object]], Result[dict[str, pd.DataFr
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only; the modules load lazily
     from core.analysis.shape_reduction import ReductionResult, ShapeMatrix
+    from core.models.vector_cache import VectorCache
 
 
 def _int(params: dict[str, object], key: str, default: int) -> int:
@@ -804,20 +922,33 @@ def _adapt_clause_svo(ctx: BatchContext, params: dict[str, object]) -> Result[di
 
 
 def _adapt_ner(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
-    _ = params
     if ctx.table is None:
         return _missing_input("ner", "table")
-    timeline = entity_timeline(ctx.table)
+    from core.analysis.ner import parse_ignore
+
+    ignored = parse_ignore(_str(params, "ignore", ""))
+    timeline = entity_timeline(ctx.table, ignore=ignored)
     if timeline.value is None:
         return Result.failure(*timeline.diagnostics)
-    locations = location_tracking(ctx.table)
+    locations = location_tracking(ctx.table, ignore=ignored)
     if locations.value is None:
         return Result.failure(*locations.diagnostics)
     frames = {"entity_timeline.csv": timeline.unwrap(), "locations.csv": locations.unwrap()}
     diags = [*timeline.diagnostics, *locations.diagnostics]
+    # Each document's length beside its rows (backlog 4d-5): without it a
+    # mention count can only be a count, never a rate -- a longer speech says
+    # nothing about attention. Added here, as was done for the name tables.
+    table = frames["entity_timeline.csv"]
+    if not table.empty and DOCUMENT_ID in ctx.table.columns:
+        tokens = ctx.table.assign(_doc=ctx.table[DOCUMENT_ID].astype(str)).groupby("_doc").size()
+        table = table.copy()
+        table["Tokens"] = (
+            pd.to_numeric(table[DOCUMENT_ID].astype(str).map(tokens), errors="coerce").fillna(0).astype(int)
+        )
+        frames["entity_timeline.csv"] = table
     # CAP-NER-03: person-location co-occurrence pairs (no geocode in batch;
-    # the offline KB would silently bound the place list — CLI --geocode for it).
-    tracks = movement_tracks(ctx.table, geocode=False)
+    # the offline KB would silently bound the place list -- CLI --geocode for it).
+    tracks = movement_tracks(ctx.table, geocode=False, ignore=ignored)
     diags.extend(tracks.diagnostics)
     if tracks.value is not None:
         pairs = tracks.unwrap()
@@ -849,6 +980,44 @@ def _adapt_ngrams(ctx: BatchContext, params: dict[str, object]) -> Result[dict[s
     if colloc.value is None:
         return Result.failure(*colloc.diagnostics)
     return Result.success({"ngrams.csv": grams.unwrap(), "collocations.csv": colloc.unwrap()}, *grams.diagnostics)
+
+
+def _adapt_contrast(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+    """Compare the sides the corpus's documents carry in their ``Side`` detail (docs/PLAN_0.5.0.md 3.4).
+
+    The methods run the suite's own tools through this module's adapters, on
+    the same context, so a comparison's readability is the readability tool's.
+    """
+    from core.contrast import ContrastSpec, contrast
+
+    if ctx.corpus is None:
+        return _missing_input("contrast", "corpus")
+
+    def listed(name: str, fallback: object) -> object:
+        raw = _str(params, name, "")
+        try:
+            return json.loads(raw) if raw else fallback
+        except ValueError:
+            return fallback
+
+    sides = listed("sides", [])
+    methods = listed("methods", ["measures", "keyness", "tone"])
+    focus = listed("focus", {})
+    if not isinstance(sides, list) or not isinstance(methods, list) or not isinstance(focus, dict):
+        return Result.failure(Diagnostic.error("CONTRAST_BAD_PARAMS", "sides, methods and focus must be JSON"))
+    spec = ContrastSpec(
+        sides=tuple(str(side) for side in sides),
+        alignment=_str(params, "alignment", "none"),
+        methods=tuple(str(method) for method in methods),
+        focus={str(name): [str(term) for term in terms] for name, terms in focus.items()},
+        match=_str(params, "match", "lemma"),
+        topics=_int(params, "topics", 8),
+    )
+
+    def run_tool(name: str, tool_params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+        return ADAPTERS[name](ctx, tool_params)
+
+    return contrast(ctx.table, ctx.corpus, spec, run_tool, vector_cache=ctx.vectors)
 
 
 def _adapt_phrase_distribution(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
@@ -1225,7 +1394,7 @@ def _adapt_tfidf(ctx: BatchContext, params: dict[str, object]) -> Result[dict[st
         field=field,
         top_n=_int(params, "top-n", 20),
         min_df=_int(params, "min-df", 1),
-        max_df_ratio=_float(params, "max-df-ratio", 1.0),
+        max_df_ratio=_float(params, "max-df-ratio", 0.5),
         min_length=_int(params, "min-length", 1),
         sublinear_tf=_bool(params, "sublinear-tf", False),
         normalize=not _bool(params, "no-normalize", False),
@@ -1259,12 +1428,39 @@ def _adapt_keyness(ctx: BatchContext, params: dict[str, object]) -> Result[dict[
     if ctx.table is None:
         return _missing_input("keyness", "table")
     field = Col.FORM if params.get("field", "lemma") == "form" else Col.LEMMA
-    pattern = params.get("group-pattern")
+    pattern = params.get("group-pattern") or ""
     if not isinstance(pattern, str):
         raise TypeError(f"param 'group-pattern' must be str, got {pattern!r}")
+    detail = _str(params, "group-field", "").strip()
+    groups: dict[str, str] | None = None
+    labels = ("Group A", "Group B")
+    if detail:
+        # By a detail (Kind = sotu against Kind = ina): no regex to write, and
+        # the columns say what was compared. The pattern is then not used.
+        if ctx.corpus is None:
+            return _missing_input("keyness", "corpus")
+        named = {}
+        for doc in ctx.corpus.docs:
+            # The parse names a document by its file name or its label; either finds it.
+            for name in {doc.path.name, doc.name}:
+                named[name] = doc.details
+        chosen = detail_groups(named, detail, _str(params, "group-a", ""), _str(params, "group-b", ""))
+        if chosen.value is None:
+            return Result.failure(*chosen.diagnostics)
+        groups, labels = chosen.unwrap()
+    elif not pattern.strip():
+        return Result.failure(
+            Diagnostic.error(
+                "KEYNESS_NO_GROUPS",
+                "say which documents are group A: a detail and its value (group-field, group-a), "
+                "or a pattern over document names (group-pattern)",
+            )
+        )
     result = keyness_scores(
         ctx.table,
         pattern,
+        groups=groups,
+        labels=labels,
         field=field,
         smoothing=_float(params, "smoothing", 0.5),
         top_n=_int(params, "top-n", 200),
@@ -1296,6 +1492,9 @@ def _adapt_lexicon_series(ctx: BatchContext, params: dict[str, object]) -> Resul
         [(doc.name, doc.date) for doc in ctx.corpus.docs],
         _str(params, "by", "year"),
         group_pattern=_str(params, "group-pattern", ""),
+        details={doc.name: dict(doc.fields) for doc in ctx.corpus.docs},
+        positions={doc.name: value for doc in ctx.corpus.docs if (value := document_order(doc.details)) is not None},
+        noun=ctx.axis.noun if ctx.axis is not None else "",
     )
     if labels.value is None:
         return Result.failure(*labels.diagnostics)
@@ -1489,7 +1688,19 @@ def _adapt_ngram_viewer(ctx: BatchContext, params: dict[str, object]) -> Result[
     doc_tokens = frame_tokens(ctx.table)
     # Same key as _document_dates: str(doc.doc_id), the id every result
     # reports a document under. frame_tokens keys match it.
-    dates = {str(doc.doc_id): (doc.date.year if doc.date is not None else None) for doc in ctx.corpus.docs}
+    dates: dict[str, object] = {
+        str(doc.doc_id): (doc.date.year if doc.date is not None else None) for doc in ctx.corpus.docs
+    }
+    # A book lined up by chapter counts per chapter: the same series, with
+    # the chapter number where the year was (whole steps; 1.5 is chapter 1).
+    by_order = ctx.axis is not None and ctx.axis.kind == "order" and ctx.axis.placed
+    if by_order and ctx.axis is not None:
+        dates = {
+            str(doc.doc_id): (
+                int(ctx.axis.positions[str(doc.doc_id)]) if str(doc.doc_id) in ctx.axis.positions else None
+            )
+            for doc in ctx.corpus.docs
+        }
     result = ngram_series(
         doc_tokens,
         dates,
@@ -1500,9 +1711,18 @@ def _adapt_ngram_viewer(ctx: BatchContext, params: dict[str, object]) -> Result[
     if result.value is None:
         return Result.failure(*result.diagnostics)
     series = result.unwrap()
+    counted = series
+    if by_order and ctx.axis is not None and "Year" in series.columns:
+        noun = ctx.axis.noun
+        series = series.rename(columns={"Year": POSITION})
+        series.insert(
+            int(series.columns.get_loc(POSITION)) + 1,
+            POSITION_LABEL,
+            [f"{noun} {int(value)}" for value in series[POSITION]],
+        )
     from core.viz.ngram_viewer import ngram_viewer_html
 
-    chart = ngram_viewer_html(series)
+    chart = ngram_viewer_html(counted, x_label=ctx.axis.noun if by_order and ctx.axis is not None else "Year")
     if chart.value is None:
         return Result.failure(*result.diagnostics, *chart.diagnostics)
     return Result.success(
@@ -1805,8 +2025,6 @@ def _tsne_with_counts(tsne: pd.DataFrame, vectors: pd.DataFrame) -> pd.DataFrame
 #: content words the groups are found among.
 _MAP_GROUPS = 8
 _MAP_GROUP_WORDS = 2000
-#: A before and an after.
-_PERIODS_NEEDED = 2
 
 
 def _meaning_columns(
@@ -1839,18 +2057,15 @@ def _meaning_columns(
     frames["tsne.csv"] = tsne.assign(Group=tsne["Word"].astype(str).str.lower().map(group_of).fillna(""))
 
 
-def _periods(corpus: Corpus | None) -> dict[str, str]:
-    """Each dated document's period: its decade, or its year when all share one decade.
+def _periods(ctx: BatchContext) -> dict[str, str]:
+    """Each placed document's period along the batch's axis (:meth:`Axis.periods`).
 
-    Empty when fewer than two periods would result: change needs a before
-    and an after.
+    Time: its decade, or its year when all share one decade. Order: blocks of
+    chapters. Empty when fewer than two periods would result: change needs a
+    before and an after.
     """
-    dates = _document_dates(corpus)
-    decades = {doc: f"{when.year // 10 * 10}s" for doc, when in dates.items()}
-    if len(set(decades.values())) >= _PERIODS_NEEDED:
-        return decades
-    years = {doc: str(when.year) for doc, when in dates.items()}
-    return years if len(set(years.values())) >= _PERIODS_NEEDED else {}
+    axis = ctx.axis if ctx.axis is not None else axis_of(ctx.corpus)
+    return axis.periods()
 
 
 def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
@@ -1869,7 +2084,7 @@ def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result
         field=field,
         model=_str(params, "model", "bert-base-uncased"),
         min_count=_int(params, "min-count", 2),
-        periods=_periods(ctx.corpus),
+        periods=_periods(ctx),
     )
     if trained.value is None:
         return Result.failure(*trained.diagnostics)
@@ -1930,12 +2145,15 @@ def _adapt_doc_embeddings(ctx: BatchContext, params: dict[str, object]) -> Resul
     if ctx.table is None:
         return _missing_input("doc_embeddings", "table")
     model = _str(params, "model", DEFAULT_MODEL)
+    shas = {str(doc.doc_id): str(doc.sha256) for doc in ctx.corpus.docs} if ctx.corpus is not None else None
     embedded = embed_corpus(
         ctx.table,
         model=model,
         unit=_str(params, "unit", "document"),
         top_n=_int(params, "top-n", 5),
         seed=_int(params, "seed", 42),
+        shas=shas,
+        cache=ctx.vectors,
     )
     if embedded.value is None:
         return Result.failure(*embedded.diagnostics)
@@ -1979,6 +2197,7 @@ ADAPTERS: dict[str, Adapter] = {
     "bert_extract": _adapt_bert_extract,
     "ngrams": _adapt_ngrams,
     "phrase_distribution": _adapt_phrase_distribution,
+    "contrast": _adapt_contrast,
     "ngram_cooccurrence": _adapt_ngram_cooccurrence,
     "conll_wordlist": _adapt_conll_wordlist,
     "corpus_statistics": _adapt_corpus_statistics,
@@ -2039,6 +2258,7 @@ ADAPTER_NEEDS: dict[str, Needs] = {
     "bert_extract": frozenset({"table"}),
     "ngrams": frozenset({"table"}),
     "phrase_distribution": frozenset({"table", "corpus"}),
+    "contrast": frozenset({"table", "corpus"}),
     "ngram_cooccurrence": frozenset({"table"}),
     "conll_wordlist": frozenset({"table"}),
     "corpus_statistics": frozenset({"table"}),
@@ -2075,20 +2295,28 @@ ADAPTER_NEEDS: dict[str, Needs] = {
 }
 
 
-def execute(
+def execute(  # noqa: PLR0913 -- keyword-only inputs of one batch, each optional
     plan: Plan,
     *,
     corpus: Corpus | None = None,
     table: pd.DataFrame | None = None,
     parse_diagnostics: tuple[Diagnostic, ...] = (),
     tokenizer: Tokenization | None = None,
+    axis: Axis | None = None,
+    vectors: VectorCache | None = None,
 ) -> BatchResult:
     """Run every planned tool; a failure isolates to its own outcome.
 
     *tokenizer* belongs to whatever produced *table*, and callers that parsed
-    the corpus themselves should pass it: see :class:`BatchContext`.
+    the corpus themselves should pass it: see :class:`BatchContext`. *axis*
+    is the project's choice of how its documents line up; absent, it is
+    chosen from what the documents carry (:func:`core.corpus_axis.axis_of`).
+    *vectors* is the shared embedding cache (plan 5.4); absent, embeddings
+    are computed afresh.
     """
-    ctx = BatchContext(corpus=corpus, table=table, tokenizer=tokenizer)
+    if axis is None:
+        axis = axis_of(corpus)
+    ctx = BatchContext(corpus=corpus, table=table, tokenizer=tokenizer, axis=axis, vectors=vectors)
     outcomes: list[ToolOutcome] = []
     for tool in plan.tools:
         adapter = ADAPTERS.get(tool.name)
@@ -2143,13 +2371,14 @@ def execute(
                 ToolOutcome(name=tool.name, ok=False, seconds=seconds, diagnostics=tuple(result.diagnostics))
             )
         else:
+            frames, notes = _with_details(dict(result.value), corpus, axis)
             outcomes.append(
                 ToolOutcome(
                     name=tool.name,
                     ok=result.ok,
-                    frames=_with_dates(dict(result.value), corpus),
+                    frames=frames,
                     seconds=seconds,
-                    diagnostics=tuple(result.diagnostics),
+                    diagnostics=(*result.diagnostics, *notes),
                 )
             )
     parsed_names = {tool.name for tool in plan.tools if tool.requires_parse}

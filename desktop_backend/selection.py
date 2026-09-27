@@ -8,13 +8,13 @@ side-effect-free policy boundary for the API and its tests.
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
+import math
 import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
-from core.io.reader import date_from_filename
+from core.io.document_fields import document_date, document_order, field_value
 
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _MAX_DOCUMENTS = 2000
@@ -34,6 +34,27 @@ class CorpusSelection(BaseModel):
     date_from: StrictStr | None = None
     date_to: StrictStr | None = None
     include_undated: bool = False
+    #: The same window along an order axis: chapters or sessions by their
+    #: Order value, with ``include_unordered`` for documents that have none.
+    order_from: float | None = None
+    order_to: float | None = None
+    include_unordered: bool = False
+    #: Keep documents whose detail is one of the listed values, ANDed across
+    #: details: ``{"Kind": ["sotu"], "Speaker": ["Harry S Truman"]}``.
+    #: ``"(empty)"`` selects documents without that detail.
+    fields: dict[StrictStr, list[StrictStr]] | None = Field(default=None, max_length=40)
+
+    @field_validator("fields")
+    @classmethod
+    def _valid_fields(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+        if value is None:
+            return None
+        for name, allowed in value.items():
+            if not name.strip():
+                raise ValueError("A detail filter needs the detail's name")
+            if not allowed:
+                raise ValueError(f"The filter on “{name}” lists no values; remove it or choose at least one")
+        return value
 
     @field_validator("document_ids")
     @classmethod
@@ -59,6 +80,13 @@ class CorpusSelection(BaseModel):
             raise ValueError("dates must be real calendar dates") from exc
         return value
 
+    @field_validator("order_from", "order_to")
+    @classmethod
+    def _finite_order(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("order bounds must be real numbers")
+        return value
+
     def bounds(self) -> tuple[date | None, date | None]:
         """Return validated date bounds and reject an inverted interval."""
 
@@ -68,9 +96,17 @@ class CorpusSelection(BaseModel):
             raise ValueError("date_from must be on or before date_to")
         return lower, upper
 
+    def order_bounds(self) -> tuple[float | None, float | None]:
+        """Return validated order bounds and reject an inverted interval."""
+        lower, upper = self.order_from, self.order_to
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError("order_from must be on or before order_to")
+        return lower, upper
+
 
 def _document_date(doc: dict[str, Any]) -> date | None:
-    return date_from_filename(Path(str(doc.get("name", ""))))
+    """The effective Date detail (typed, imported or from the name), else the name's date."""
+    return document_date(doc.get("fields"), str(doc.get("name", "")))
 
 
 def document_metadata(doc: dict[str, Any]) -> dict[str, Any]:
@@ -85,8 +121,47 @@ def document_metadata(doc: dict[str, Any]) -> dict[str, Any]:
     result = dict(doc)
     found = _document_date(doc)
     result["document_date"] = found.isoformat() if found else None
-    result["date_source"] = "filename" if found else None
+    # Where the date came from: "filename" (read from the name), or the source
+    # of a Date detail someone set ("user", "csv", "split").
+    sources = {name.casefold(): source for name, source in (doc.get("field_sources") or {}).items()}
+    result["date_source"] = (sources.get("date") or "filename") if found else None
+    result["document_order"] = document_order(doc.get("fields"))
     return result
+
+
+_EMPTY = "(empty)"
+
+
+def _matches_fields(doc: dict[str, Any], wanted: dict[str, list[str]]) -> bool:
+    fields = doc.get("fields") or {}
+    for name, allowed in wanted.items():
+        value = field_value(fields, name)
+        choices = {choice.casefold() for choice in allowed}
+        if (value.casefold() if value else _EMPTY.casefold()) not in choices:
+            return False
+    return True
+
+
+def _check_field_names(documents: list[dict[str, Any]], wanted: dict[str, list[str]]) -> None:
+    known = {name.casefold(): name for doc in documents for name in (doc.get("fields") or {})}
+    unknown = [name for name in wanted if name.casefold() not in known]
+    if unknown:
+        listed = ", ".join(sorted(known.values(), key=str.casefold)) or "none yet"
+        raise ValueError(f"No document has the detail {', '.join(map(repr, unknown))}. Details here: {listed}.")
+
+
+def _within_dates(found: date | None, lower: date | None, upper: date | None, include_undated: bool) -> bool:
+    """Inside the bounds; an undated document passes only when no bound is set or undated ones are asked for."""
+    if found is None:
+        return (lower is None and upper is None) or include_undated
+    return not ((lower is not None and found < lower) or (upper is not None and found > upper))
+
+
+def _within_orders(found: float | None, lower: float | None, upper: float | None, include_unordered: bool) -> bool:
+    """The same window over Order values, for chapters and sessions."""
+    if found is None:
+        return (lower is None and upper is None) or include_unordered
+    return not ((lower is not None and found < lower) or (upper is not None and found > upper))
 
 
 def resolve_selection(documents: list[dict[str, Any]], selection: CorpusSelection | None) -> list[dict[str, Any]]:
@@ -98,6 +173,7 @@ def resolve_selection(documents: list[dict[str, Any]], selection: CorpusSelectio
 
     chosen = selection or CorpusSelection()
     lower, upper = chosen.bounds()
+    order_lower, order_upper = chosen.order_bounds()
     by_id = {str(doc.get("id")): doc for doc in documents}
     if chosen.document_ids is not None:
         unknown = [identifier for identifier in chosen.document_ids if identifier not in by_id]
@@ -106,20 +182,19 @@ def resolve_selection(documents: list[dict[str, Any]], selection: CorpusSelectio
         allowed = set(chosen.document_ids)
     else:
         allowed = None
+    if chosen.fields:
+        _check_field_names(documents, chosen.fields)
 
     resolved: list[dict[str, Any]] = []
     for doc in documents:
         if allowed is not None and str(doc.get("id")) not in allowed:
             continue
-        found = _document_date(doc)
-        if found is None:
-            if (lower is not None or upper is not None) and not chosen.include_undated:
-                continue
-        else:
-            if lower is not None and found < lower:
-                continue
-            if upper is not None and found > upper:
-                continue
+        if chosen.fields and not _matches_fields(doc, chosen.fields):
+            continue
+        if not _within_dates(_document_date(doc), lower, upper, chosen.include_undated):
+            continue
+        if not _within_orders(document_order(doc.get("fields")), order_lower, order_upper, chosen.include_unordered):
+            continue
         resolved.append(document_metadata(doc))
 
     if not resolved:

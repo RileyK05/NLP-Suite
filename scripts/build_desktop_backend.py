@@ -77,6 +77,11 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
     for module in ("onnxruntime", "tokenizers"):
         args.extend(["--hidden-import", module])
     args.extend(["--collect-binaries", "onnxruntime"])
+    # Notebook kernels (desktop_backend/kernel.py) run code that does
+    # `import nlpsuite`; no module of the app imports it at the top level, and
+    # the library's functions reach core.script's modules lazily.
+    for module in ("nlpsuite", "core.script"):
+        args.extend(["--collect-submodules", module])
     # Bundled models (core.models.registry, bundled=True) ship inside the
     # engine at models/<id>/, where core.models.locate looks first.
     for model in bundled_model_dirs(root):

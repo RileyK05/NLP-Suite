@@ -72,6 +72,9 @@ class TestNoVendoring:
             rel = path.relative_to(ROOT).as_posix()
             # models/ and .model-work/ hold exported model files (a
             # tokenizer.json each): git-ignored, published as release assets.
+            # Original in-app help is source content, not a third-party lexicon.
+            if rel == "desktop/src/toolGuides.json":
+                continue
             if rel.startswith(("tests/fixtures/", "out/", "models/", ".model-work/")) or "package" in rel:
                 continue
             if path.stat().st_size > MAX_INLINE_BYTES:

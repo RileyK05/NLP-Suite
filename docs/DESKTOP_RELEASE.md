@@ -9,7 +9,7 @@ There is no universal EXE. Build the same source separately for each target:
 
 | Computer | Artifact | Native build runner |
 | --- | --- | --- |
-| Windows x64 | `NLP Suite_0.3.0_x64-setup.exe` | Windows 2022 |
+| Windows x64 | `NLP Suite_<version>_x64-setup.exe` | Windows 2022 |
 | Apple Silicon Mac | ARM64 DMG | macOS 15 ARM64 |
 | Intel Mac | x64 DMG | macOS 15 Intel |
 | Linux x64 | DEB and AppImage | Ubuntu 22.04 |
@@ -24,8 +24,10 @@ Recipients do not install Python, Node, Rust or pip packages. The complete
 installer includes the Python engine, English spaCy model, VADER, Gensim,
 WordNet and document converters. Windows also includes the offline WebView2
 installer. Do not hand off the small launcher EXE from `target/release` alone:
-it requires its packaged resources. Restricted lexicons, transformer models,
-Stanza models, OCR and legacy binary DOC conversion are not bundled.
+it requires its packaged resources. Restricted lexicons, optional research
+models, Stanza models, OCR and legacy binary DOC conversion are not bundled.
+The frozen engine includes the neural sentiment and topic models exercised by
+its smoke test.
 
 ## Build the release candidates
 
@@ -66,12 +68,13 @@ not a release artifact and may be incomplete after an interrupted build.
 From the repository root, validate and collect:
 
 ```text
-python scripts/verify_desktop_payload.py
-python scripts/collect_desktop_release.py --destination out/distribution-0.3.0
+python scripts/verify_desktop_payload.py --stage out/installed-payload-0.5.0-check
+python scripts/collect_desktop_release.py --destination out/distribution-0.5.0
 ```
 
 Use a fresh verification/collection directory for each attempt. The payload
-validator uses `out/installed-payload-check` and refuses to reuse it. On a local
+validator defaults to `out/installed-payload-check` and refuses to reuse its
+stage directory. On a local
 Windows machine this checks the assembled launcher/runtime without replacing
 your installed application; only isolated GitHub runners use the CI-only silent
 installer option. Mac mounts the DMG read-only, copies and audits the APP, then
@@ -96,7 +99,7 @@ are free; the private repository has no Actions minutes):
 | Run the full test gate on dev | CI | tick **from_dev** |
 | Ship a release | Publish dev to public | **release** ticked (default) |
 
-To ship: bump the version in dev (`python scripts/bump_version.py 0.4.0`),
+To ship 0.5.0: bump the version in dev (`python scripts/bump_version.py 0.5.0`),
 commit and push dev, then run **Publish dev to public**. It commits the
 snapshot to public `main`, CI runs on it, and the desktop build drafts the
 release. Open the draft on the
@@ -151,9 +154,9 @@ complete notarization pipeline. Configure signing for both the nested Python
 payload and the enclosing app, then verify the final signed/notarized artifact.
 Do not advise recipients to disable their OS security protections.
 
-The project's own distribution license still needs the owner's decision.
-Review `LICENSE_REVIEW.md` and the generated third-party notices before public
-distribution. Packaging work does not grant rights to restricted research data.
+The original code is MIT-licensed. Review `LICENSE_REVIEW.md` and the generated
+third-party notices before public distribution. Packaging work does not grant
+rights to restricted research data.
 
 ## Clean-machine acceptance (required before promising “just works”)
 

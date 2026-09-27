@@ -39,6 +39,7 @@ import re
 import numpy as np
 import pandas as pd
 
+from core.corpus_axis import period_key
 from core.result import Diagnostic, Result
 
 __all__ = [
@@ -406,7 +407,8 @@ def meaning_over_time(
     per word: one minus the cosine between its first and last period vectors
     (``Change``), with its nearest words then and now.
 
-    Periods sort as labels ("1930s" < "1940s"; years likewise).
+    Periods sort in reading order (:func:`core.corpus_axis.period_key`): "1930s" < "1940s",
+    "Chapters 1-3" < "Chapters 10-12".
     """
     excluded = {str(word).casefold() for word in exclude}
     pool = candidates(space, exclude=excluded)
@@ -420,7 +422,7 @@ def meaning_over_time(
     timeline: list[dict[str, object]] = []
     changes: list[dict[str, object]] = []
     for word in sorted(per_word):
-        rows = sorted(per_word[word], key=lambda row: row[0])
+        rows = sorted(per_word[word], key=lambda row: period_key(row[0]))
         if len(rows) < 2:
             continue
         own = int(np.flatnonzero(pool == space.index[word])[0]) if space.index[word] in pool else -1

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import math
 from os import PathLike
 
+from core.io.document_fields import FIELD_VALUE_PREFIX
 from core.models.registry import get_model
 from core.profiler.registry import TOOL_REGISTRY, ParamSpec, ToolSpec, get_tool
 from core.result import Diagnostic, Result
@@ -95,7 +96,13 @@ def _check_value(tool: str, param: ParamSpec, value: object) -> Diagnostic | Non
         return Diagnostic.error(
             "PROFILER_BAD_PARAM", f"{tool}.{name} must be {kind}, got {value!r}", tool=tool, param=name
         )
-    if param.choices and value not in param.choices:
+    if (
+        param.choices
+        and value not in param.choices
+        # A detail-taking choice ("field:Party") extends its base choices with
+        # the documents' details; the tool checks the name against them.
+        and not (param.details and isinstance(value, str) and value.startswith(FIELD_VALUE_PREFIX))
+    ):
         return Diagnostic.error(
             "PROFILER_BAD_PARAM",
             f"{tool}.{name} must be one of {list(param.choices)}, got {value!r}",
