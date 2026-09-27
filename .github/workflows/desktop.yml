@@ -173,7 +173,16 @@ jobs:
           /usr/bin/ditto "$APP" "$STAGE/$(basename "$APP")"
           ln -s /Applications "$STAGE/Applications"
           rm -f "$DMG"
-          /usr/bin/hdiutil create -volname "NLP Suite" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          # hdiutil fails now and then with "Resource busy" on hosted Macs
+          # (something still holds the fresh files); a retry after a pause
+          # clears it. Five tries, then fail for real.
+          for attempt in 1 2 3 4 5; do
+            /usr/bin/hdiutil create -volname "NLP Suite" -srcfolder "$STAGE" -ov -format UDZO "$DMG" && break
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            echo "hdiutil create failed (attempt $attempt); retrying in 15 s"
+            rm -f "$DMG"
+            sleep 15
+          done
           # The updater archive has the same problem as the DMG: Tauri packed
           # it before the re-signing. Repack the re-signed app and sign again.
           UPDATE="$APP.tar.gz"
@@ -269,7 +278,9 @@ jobs:
           RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           row() {  # platform label, glob, file hint
             local match
-            match=$(cd release && ls $2 2>/dev/null | head -1)
+            # || true: with pipefail, ls's "no such file" would end the step,
+            # and a missing platform must get its row, not stop the draft.
+            match=$(cd release && ls $2 2>/dev/null | head -1) || true
             if [ -n "$match" ]; then
               echo "| $1 | \`$match\` |"
             else

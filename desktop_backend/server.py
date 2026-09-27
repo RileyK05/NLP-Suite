@@ -727,15 +727,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         for a hundred thousand words, once. It runs off the event loop so the
         rest of the app stays alive, and reports its stage while it works.
         """
-        from core.io.reader import (
-            Corpus,
-            Document,
-            corpus_fingerprint,
-            date_from_filename,
-            hash_file,
-            hash_text,
-            read_text,
-        )
+        from desktop_backend.project_corpus import load_corpus
 
         # Checked here, before a single document is read: a parser nobody has
         # is a mistake in the request, not a failure of the parse, and it
@@ -746,33 +738,17 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             [document_metadata(d) for d in workspace.documents(project_id)],
             body.selection,
         )
-        project_dir = workspace.project_dir(project_id)
-        documents = []
-        for index, item in enumerate(chosen, 1):
-            path = project_dir / "corpus" / item["stored_name"]
-            if hash_file(path) != item["sha256"]:
-                raise ValueError(f"{item['name']} has changed since it was imported. Reimport it.")
-            text = read_text(path).unwrap()
-            documents.append(
-                Document(
-                    doc_id=index,
-                    path=path,
-                    text=text,
-                    sha256=hash_text(text),
-                    date=date_from_filename(Path(item["name"])),
-                    source_id=str(item["id"]),
-                    label=str(item["name"]),
-                )
-            )
-        if not documents:
-            raise ValueError("No readable documents in that selection.")
-        docs = tuple(documents)
-        corpus = Corpus(docs, corpus_fingerprint(docs))
+        # The corpus a published run would read (desktop_backend.project_corpus):
+        # the documents' details (Speaker, an edited Date), and the project's
+        # text cleaning. Built separately here, the preview lost all three
+        # and stopped matching the run it previews.
+        corpus, _diagnostics = load_corpus(workspace, project_id, chosen)
+        docs = corpus.docs
         summary = {
             "documents": len(docs),
             "words": sum(len(d.text.split()) for d in docs),
             "names": [d.name for d in docs[:12]],
-            "ids": [str(item["id"]) for item in chosen],
+            "ids": [d.source_id for d in docs],
         }
         held = session(project_id)
         return await run_in_threadpool(held.warm, corpus, body.parser, selection=summary)
