@@ -122,13 +122,24 @@ jobs:
           # is the supported install path (START-HERE.txt documents it).
           # Tauri's updater cannot update a deb, so Linux gets no update files.
           if [ "$RUNNER_OS" = "Linux" ]; then
-            npm run package -- --config src-tauri/tauri.linux.conf.json
+            config=(--config src-tauri/tauri.linux.conf.json)
           elif [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$TAURI_UPDATER_PUBKEY" ]; then
             python -c "import json, os; print(json.dumps({'bundle': {'createUpdaterArtifacts': True}, 'plugins': {'updater': {'pubkey': os.environ['TAURI_UPDATER_PUBKEY']}}}))" > "$RUNNER_TEMP/updater.conf.json"
-            npm run package -- --config "$RUNNER_TEMP/updater.conf.json"
+            config=(--config "$RUNNER_TEMP/updater.conf.json")
           else
-            npm run package
+            config=()
           fi
+          # Bundling reaches outside the build: the NSIS bundler downloads its
+          # helpers from GitHub (an HTTP 500 there failed a Windows release),
+          # and bundle_dmg.sh's hdiutil hits "Resource busy" on hosted Macs.
+          # Three tries, 30 s apart; the Rust build is cached after the first,
+          # so a retry only bundles again.
+          for attempt in 1 2 3; do
+            npm run package -- "${config[@]}" && break
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "Packaging failed (attempt $attempt); retrying in 30 s"
+            sleep 30
+          done
       - name: Deep-sign the Mac application and rebuild its DMG
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
