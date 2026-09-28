@@ -59,7 +59,7 @@ Build the foundation once, in section 1, and the other two stand on it.
 
 ### 0.1 Rules (the same as always, plus a few for this release)
 
-- Work on dev `main` in `C:\Users\moomi\personal_projects\NLP-Suite-rework\New_NLP_Suite`. Run `git pull` before you start and `git push` when you finish. Committing and pushing to dev main is allowed without asking.
+- Work on dev `main` in `%USERPROFILE%\personal_projects\NLP-Suite-rework\New_NLP_Suite`. Run `git pull` before you start and `git push` when you finish. Committing and pushing to dev main is allowed without asking.
 - Never build or push code in the public repo (RileyK05/NLP-Suite). It changes only through the Publish workflow.
 - Before each push, run all of:
   - `ruff check .`

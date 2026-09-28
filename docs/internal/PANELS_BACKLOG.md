@@ -326,7 +326,7 @@ quality for as many tools as can support one: the general plan (a figure kit
 for scripts, showcase figures per tool, project events) is
 [`SHOWCASE_FIGURES_PLAN.md`](SHOWCASE_FIGURES_PLAN.md). Reference implementations
 (standalone matplotlib over suite output + MALLET CLI) are in
-`C:\Users\moomi\Downloads\LDA`: `lda_lambda_figure.py`, `mallet_what_it_does.py`,
+`%USERPROFILE%\Downloads\LDA`: `lda_lambda_figure.py`, `mallet_what_it_does.py`,
 `gensim_vs_mallet.py`, `mallet_events.py`, `lda_tiles.py`,
 `lda_misses_the_break.py`. What each needs, cheapest first:
 

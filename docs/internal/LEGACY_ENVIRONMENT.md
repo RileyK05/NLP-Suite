@@ -4,7 +4,7 @@ Frozen oracle record for the NLP Suite 1.6.x reference tree. Regenerate with `py
 
 ## Identity
 
-- oracle dir: `C:\Users\moomi\personal_projects\NLP-Suite-rework\NLP-Suite-1.6.38`
+- oracle dir: `%USERPROFILE%\personal_projects\NLP-Suite-rework\NLP-Suite-1.6.38`
 - git checkout: yes
 - HEAD: `ref: refs/heads/redesign`
 - commit: `b4a50870c98b8c9e85d14e7ae7bbb9d59dc89736`
@@ -38,12 +38,12 @@ Frozen oracle record for the NLP Suite 1.6.x reference tree. Regenerate with `py
 
 | Software | Install path | Download |
 |---|---|---|
-| Stanford CoreNLP | `C:\Users\moomi\NLP_Software\stanford-corenlp-4.5.8` | https://stanfordnlp.github.io/CoreNLP/download.html |
+| Stanford CoreNLP | `%USERPROFILE%\NLP_Software\stanford-corenlp-4.5.8` | https://stanfordnlp.github.io/CoreNLP/download.html |
 | Gephi | `C:\Program Files\Gephi-0.10.1` | https://gephi.org/users/download/ |
 | Google Earth Pro | `C:\Program Files\Google\Google Earth Pro` | https://www.google.com/earth/download/gep/agree.html?hl=en-GB |
 | Java (JDK) | `Java version "21.0.9" installed` | https://www.oracle.com/java/technologies/downloads/archive/ |
-| MALLET | `C:\Users\moomi\NLP_Software\mallet-2.0.8` | http://mallet.cs.umass.edu/download.php |
-| WordNet | `C:\Users\moomi\NLP_Software\WordNet-3.0` | https://wordnet.princeton.edu/download/current-version |
+| MALLET | `%USERPROFILE%\NLP_Software\mallet-2.0.8` | http://mallet.cs.umass.edu/download.php |
+| WordNet | `%USERPROFILE%\NLP_Software\WordNet-3.0` | https://wordnet.princeton.edu/download/current-version |
 
 ## lib/ inventory (top level)
 

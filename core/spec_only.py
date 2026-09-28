@@ -61,7 +61,7 @@ SPEC_ONLY_REGISTRY: tuple[SpecOnlyEntry, ...] = (
     SpecOnlyEntry(
         capability_id="CAP-PARSE-03",
         # C6-16: the reviewer was right — a bounded probe showed Java 21.0.9
-        # + CoreNLP 4.5.8 (installed at C:/Users/moomi/NLP_Software/) serves
+        # + CoreNLP 4.5.8 (installed in the user's NLP_Software folder) serves
         # requests on localhost (HTTP 200, JSON with parse + dependencies
         # for "The cat sat."). UNREACHABLE was wrong; the blocker is only
         # that CI/offline environments lack the server. A REAL golden can be

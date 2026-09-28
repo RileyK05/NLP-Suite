@@ -29,6 +29,12 @@ NEVER_PUBLIC = re.compile(r"(^|/)[^/]*(hw\d|homework|syllabus)[^/]*(/|$)|(^|/)re
 PUBLIC_DESPITE_NAME = frozenset({"tests/fixtures/syllabus_tools.json"})
 
 
+# A home folder in a path (C:\\Users\\<name>\\, /Users/<name>/, /home/<name>/) names
+# whoever wrote it; public files may use a placeholder, never a real account.
+HOME_PATH = re.compile(r"(?:\b[A-Za-z]:[\\/]{1,2}Users|(?<![\w.])/Users|(?<![\w.])/home)[\\/]{1,2}([A-Za-z0-9._-]+)[\\/]")
+PLACEHOLDER_ACCOUNTS = frozenset({"...", "someone", "user", "username", "you", "name", "runner", "public", "shared"})
+
+
 def patterns(dev: Path) -> list[str]:
     source = dev / ".publicignore"
     if not source.is_file():
@@ -55,6 +61,20 @@ def public_files(tracked: list[str], rules: list[str]) -> list[str]:
             "Refusing to publish personal-looking files; add them to .publicignore:\n  " + "\n  ".join(leaks)
         )
     return chosen
+
+
+def personal_paths(dev: Path, files: list[str]) -> list[str]:
+    """``file: path`` for every home-folder path naming a real account."""
+    found = []
+    for name in files:
+        try:
+            text = (dev / name).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for match in HOME_PATH.finditer(text):
+            if match.group(1).casefold() not in PLACEHOLDER_ACCOUNTS:
+                found.append(f"{name}: {match.group(0)}")
+    return found
 
 
 def tracked_files(dev: Path) -> list[str]:
@@ -97,6 +117,9 @@ def main() -> None:
         files = public_files(tracked_files(args.dev), patterns(args.dev))
     except ValueError as exc:
         sys.exit(str(exc))
+    leaks = personal_paths(args.dev, files)
+    if leaks:
+        sys.exit("Refusing to publish a path naming a real account; use a placeholder:\n  " + "\n  ".join(leaks))
     copied, removed = mirror(args.dev.resolve(), args.out.resolve(), files)
     print(f"Public tree: {copied} files from dev, {removed} stale files removed")
 

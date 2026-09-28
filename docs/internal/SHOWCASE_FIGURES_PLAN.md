@@ -6,7 +6,7 @@ as the reference MALLET figure for as many tools as can support one, and a scrip
 toolkit good enough to build the rest.
 
 **Reference figures**, drawn outside the app from suite output (and the
-MALLET command line), in `C:\Users\moomi\Downloads\LDA`: `mallet_what_it_does.py`
+MALLET command line), in `%USERPROFILE%\Downloads\LDA`: `mallet_what_it_does.py`
 (the model for this plan), `gensim_vs_mallet.py`, `mallet_events.py`,
 `lda_lambda_figure.py`, `lda_tiles.py`, `lda_misses_the_break.py`. Read one before
 building anything here; the plan is mostly a generalisation of what they do by
