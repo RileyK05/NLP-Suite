@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import hashlib
 import io
+import re
 from typing import Any
 
 import pandas as pd
@@ -1269,10 +1270,33 @@ def render_showcase(  # noqa: PLR0913 - provenance travels as keywords, like ren
         return Result.failure(
             Diagnostic.error("SHOWCASE_FAILED", f"{showcase.name}: save failed: {type(exc).__name__}: {exc}")
         )
+    saved = buffer.getvalue()
     return Result.success(
-        buffer.getvalue(),
+        _stable_svg_ids(saved) if fmt == "svg" else saved,
         *(
             Diagnostic.warning(f"STATIC_{problem.code}", f"{showcase.name}: {problem.message}", showcase=showcase.name)
             for problem in problems
         ),
     )
+
+
+#: matplotlib's SVG clip-path ids: "p" and ten hex digits of a hash of the clip
+#: rectangle's exact floats, in the definition and in each reference to it.
+_SVG_CLIP_ID = re.compile(rb'(id="|url\(#)(p[0-9a-f]{10})')
+
+
+def _stable_svg_ids(svg: bytes) -> bytes:
+    """Number the clip-path ids in order of appearance (clip1, clip2, ...).
+
+    The hash covers the rectangle's full-precision floats, and on macOS those
+    differ in the last bits between two renders of the same figure, so the
+    same drawing got different ids and a different file. Numbering them keeps
+    every reference pointing at its definition and makes the bytes repeat.
+    """
+    names: dict[bytes, bytes] = {}
+
+    def rename(match: re.Match[bytes]) -> bytes:
+        name = names.setdefault(match.group(2), b"clip%d" % (len(names) + 1))
+        return match.group(1) + name
+
+    return _SVG_CLIP_ID.sub(rename, svg)
