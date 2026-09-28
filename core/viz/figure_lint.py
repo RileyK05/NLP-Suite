@@ -3,7 +3,7 @@
 A figure can be *correct* -- every number traceable to its rows -- and still
 unreadable: labelled "sentence 7", captioned with a measure the reader did not
 pick, or carrying eighty labels nobody can separate. Those are the problems a
-person finds by looking, and ``docs/FIGURE_QUALITY_PLAN.md`` lists the classes
+person finds by looking, and ``docs/internal/FIGURE_RECIPES.md`` (Part 2) lists the classes
 they came in (C1-C8). This module finds the engine-side ones by machine, from
 the :class:`PreparedPanel` alone, so a test can run it over every registered
 panel with every choice of every parameter.

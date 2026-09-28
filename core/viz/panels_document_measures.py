@@ -1053,7 +1053,7 @@ def _factory(tool: MeasureTool, *, title_word: str, prefix: str) -> tuple[PanelD
     definitions: list[PanelDefinition] = []
     definition_notes = _definition_notes(tool)
     # A trend needs the documents placed -- by date or by chapter -- not a
-    # date as such (docs/PLAN_0.5.0.md 1.7); a grouping or a length check
+    # date as such (docs/internal/PLAN_0.5.0.md 1.7); a grouping or a length check
     # needs no axis at all.
     along_axis = tuple(AXIS if column == DATE else column for column in tool.requires)
     unplaced = tuple(column for column in tool.requires if column != DATE)

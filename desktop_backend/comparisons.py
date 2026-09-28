@@ -1,4 +1,4 @@
-"""Saved corpus comparisons (docs/PLAN_0.5.0.md section 3).
+"""Saved corpus comparisons (docs/internal/PLAN_0.5.0.md section 3).
 
 A comparison is two to six *sides* -- each a name, a project and a selection
 within it -- plus how to line them up, what to focus on, and which methods to

@@ -9,7 +9,7 @@ name = "nlp-suite-ng"
 # tauri.conf.json and src-tauri/Cargo.toml. test_desktop_release_versions_stay_in_sync
 # enforces it -- this file drifted to 0.1.0 while the desktop moved to 0.3.0
 # because the test did not cover it.
-version = "0.5.0"
+version = "0.5.1"
 description = "Ground-up rebuild of the NLP Suite: headless corpus NLP toolkit"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -85,7 +85,14 @@ nlp-doctor = "tools.doctor:main"
 nlp-suite = "tools.unified:main"
 
 [tool.setuptools.packages.find]
-include = ["core*", "tools*", "app*", "desktop_backend*"]
+# `nlpsuite` is the name a notebook imports (`import nlpsuite as nlp`); the
+# functions live in `core.script`, but a wheel that omits this package has no
+# `nlpsuite` module at all, so an exported notebook could not run outside the
+# app even with the suite installed -- exactly what the guide tells readers to
+# do. The desktop build already collects `nlpsuite` explicitly (see
+# scripts/build_desktop_backend.py); this is the packaging half of the same
+# promise. tests/test_distribution.py holds it here.
+include = ["core*", "tools*", "app*", "desktop_backend*", "nlpsuite*"]
 
 # ---------------------------------------------------------------------------
 # Ruff â€” strict. There is no legacy backlog here, so no legacy suppressions.
@@ -172,6 +179,11 @@ ignore = [
 # registry or a tool list never pays for it.
 "core/models/*.py" = ["PLC0415"]
 "core/viz/*.py" = ["PLC0415", "PLR0912", "PLR0911", "PLR0915", "F401", "PLR2004"]
+# The figure kit (core/viz/kit): a drawing piece takes the data plus its
+# keyword-only options (labels, colors, background, order, threshold), which is
+# inherent to a chart primitive, and matplotlib imports are deferred per R1 so
+# `import nlpsuite` stays instant.
+"core/viz/kit/*.py" = ["PLC0415", "PLR0913", "PLR0911", "PLR0912", "PLR0915"]
 "core/data/*.py" = ["I001", "RUF022", "RUF046", "SIM108", "PLR0912"]
 "core/pcace/*.py" = ["I001"]
 # universal_to_penn is a linguistic dispatch table (Universal tag -> Penn tag),

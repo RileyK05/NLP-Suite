@@ -197,7 +197,12 @@ export function Learn({
           <code>nlp.run(&quot;readability&quot;, corpus)</code> — and{" "}
           <code>nlp.tools()</code> lists them,{" "}
           <code>nlp.describe(&quot;tool&quot;)</code> explains one,{" "}
-          <code>nlp.figure(fig, &quot;name&quot;)</code> keeps a figure and{" "}
+          <code>nlp.figure(fig, &quot;name&quot;)</code> keeps a figure,{" "}
+          <code>
+            nlp.chart(table, kind=&quot;sankey&quot;, x=..., y=..., group=...)
+          </code>{" "}
+          draws an interactive chart (a flow, a sunburst, a radar and every
+          other kind the engine knows), and{" "}
           <code>nlp.note(&quot;text&quot;)</code> writes a remark into the
           results. Keep things with{" "}
           <code>nlp.save(table, &quot;name&quot;)</code> rather than writing

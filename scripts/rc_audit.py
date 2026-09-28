@@ -23,11 +23,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 REQUIRED_DOCS = (
     "docs/MIGRATION.md",
-    "docs/PERFORMANCE.md",
+    "docs/internal/PERFORMANCE.md",
     "docs/SECURITY.md",
     "docs/LICENSE_REVIEW.md",
-    "docs/USABILITY_TEST.md",
-    "docs/PCACE_DECOMPOSITION.md",
+    "docs/internal/FULL_REPLACEMENT_PLAN.md",  # includes the usability protocol and PC-ACE decomposition
     "docs/INSTALL.md",
 )
 
@@ -39,11 +38,11 @@ def audit_docs(root: Path = ROOT) -> list[str]:
 
 def audit_ledger_files(root: Path = ROOT) -> list[str]:
     """Every `code` path named in a `review` ledger row exists on disk."""
-    ledger = root / "docs" / "REPLACEMENT_LEDGER.md"
+    ledger = root / "docs" / "internal" / "REPLACEMENT_LEDGER.md"
     try:
         text = ledger.read_text(encoding="utf-8")
     except OSError:
-        return ["missing docs/REPLACEMENT_LEDGER.md"]
+        return ["missing docs/internal/REPLACEMENT_LEDGER.md"]
     failures: list[str] = []
     for line in text.splitlines():
         if "| review |" not in line:
@@ -64,11 +63,11 @@ def audit_capabilities(root: Path = ROOT) -> list[str]:
     record. A spec claiming an ID the ledger does not define means the tool is
     reporting coverage that nothing tracks, so it is a drift failure here.
     """
-    ledger = root / "docs" / "REPLACEMENT_LEDGER.md"
+    ledger = root / "docs" / "internal" / "REPLACEMENT_LEDGER.md"
     try:
         text = ledger.read_text(encoding="utf-8")
     except OSError:
-        return ["missing docs/REPLACEMENT_LEDGER.md"]
+        return ["missing docs/internal/REPLACEMENT_LEDGER.md"]
     defined = set(re.findall(r"\|\s*(CAP-[A-Z]+-\d+)\s*\|", text))
     sys.path.insert(0, str(root))
     try:

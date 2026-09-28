@@ -1,4 +1,4 @@
-"""Cutting a book into its chapters, as documents (docs/PLAN_0.5.0.md 2.4).
+"""Cutting a book into its chapters, as documents (docs/internal/PLAN_0.5.0.md 2.4).
 
 :mod:`core.file_ops.sections` finds the cuts; this stores them. Each section
 becomes a document of its own -- a new file holding exactly its slice of the

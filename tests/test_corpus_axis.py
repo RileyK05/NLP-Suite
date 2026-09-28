@@ -1,4 +1,4 @@
-"""How a corpus lines up: time, order or none (docs/PLAN_0.5.0.md 1.2, 1.6)."""
+"""How a corpus lines up: time, order or none (docs/internal/PLAN_0.5.0.md 1.2, 1.6)."""
 
 from __future__ import annotations
 

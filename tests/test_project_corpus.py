@@ -81,6 +81,41 @@ def test_a_different_selection_is_a_different_parse(tmp_path: Path, pipeline: Co
     assert pipeline.parses == 1
 
 
+def test_the_same_documents_in_another_order_are_another_parse(tmp_path: Path, pipeline: CountingPipeline) -> None:
+    """Order matters in a parse: its ids are positions.
+
+    The fingerprint is order-independent (a restored project is the same
+    snapshot), but the *table* is not: Document/Sentence/Record IDs are
+    positions. Keying the parse cache by the order-free hash meant a corpus
+    read back the table of a different ordering -- the same documents numbered
+    the other way -- so ids 1..N named the wrong documents, and
+    ``nlp.keyness(a, b)`` compared b against a. The second ordering must not
+    reuse the first ordering's table.
+    """
+    from dataclasses import replace
+
+    from core.io.reader import Corpus, corpus_fingerprint
+
+    workspace, project_id = _project(tmp_path)
+    documents = workspace.documents(project_id)
+    forward, _ = load_corpus(workspace, project_id, documents)
+    reversed_docs = tuple(replace(doc, doc_id=i) for i, doc in enumerate(reversed(forward.docs), 1))
+    backward = Corpus(reversed_docs, corpus_fingerprint(reversed_docs))
+    assert forward.sha256 == backward.sha256, "the premise: the order-free hash is the same"
+
+    first = parse_cached(workspace.root, forward, pipeline)
+    second = parse_cached(workspace.root, backward, pipeline)
+    # A different corpus key: the reordered table is not the forward table.
+    assert first.key != second.key
+    # The reordered parse describes the reordered corpus: its first document
+    # id names the document that is first in that order.
+    labels = second.table.drop_duplicates("Document ID").set_index("Document ID")["Document"]
+    assert labels["1"] == backward.docs[0].name
+    # Both orderings share the per-document entries (5.1), so nothing was
+    # parsed twice -- the reused slices were just renumbered into the new order.
+    assert pipeline.parses == 1
+
+
 def test_a_comparison_only_parses_the_documents_it_has_not_seen(tmp_path: Path, pipeline: CountingPipeline) -> None:
     """The regression 5.1 exists for: a joined corpus reuses both sides' parses."""
     workspace, project_id = _project(tmp_path)

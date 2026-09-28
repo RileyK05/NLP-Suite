@@ -15,8 +15,8 @@ class TestAudit:
         assert audit_capabilities() == []
 
     def test_capabilities_flags_id_with_no_ledger_row(self, tmp_path: Path) -> None:
-        docs = tmp_path / "docs"
-        docs.mkdir()
+        docs = tmp_path / "docs" / "internal"
+        docs.mkdir(parents=True)
         # A ledger that defines nothing: every registry claim is then unbacked.
         (docs / "REPLACEMENT_LEDGER.md").write_text("| ID | Capability |", encoding="utf-8")
         failures = audit_capabilities(tmp_path)
@@ -28,8 +28,8 @@ class TestAudit:
         assert any("MIGRATION.md" in f for f in failures)
 
     def test_ledger_flags_missing_path(self, tmp_path: Path) -> None:
-        docs = tmp_path / "docs"
-        docs.mkdir()
+        docs = tmp_path / "docs" / "internal"
+        docs.mkdir(parents=True)
         (docs / "REPLACEMENT_LEDGER.md").write_text(
             "| FR-9.9 | Nope | review | — | — | NEW `core/nope.py` done |\n", encoding="utf-8"
         )
@@ -39,16 +39,16 @@ class TestAudit:
     def test_ledger_strips_symbol_refs(self, tmp_path: Path) -> None:
         (tmp_path / "core").mkdir()
         (tmp_path / "core" / "real.py").write_text("x = 1\n", encoding="utf-8")
-        docs = tmp_path / "docs"
-        docs.mkdir()
+        docs = tmp_path / "docs" / "internal"
+        docs.mkdir(parents=True)
         (docs / "REPLACEMENT_LEDGER.md").write_text(
             "| FR-9.9 | Yup | review | — | — | `core/real.py::thing` done |\n", encoding="utf-8"
         )
         assert audit_ledger_files(tmp_path) == []
 
     def test_ledger_ignores_non_review_rows(self, tmp_path: Path) -> None:
-        docs = tmp_path / "docs"
-        docs.mkdir()
+        docs = tmp_path / "docs" / "internal"
+        docs.mkdir(parents=True)
         (docs / "REPLACEMENT_LEDGER.md").write_text(
             "| FR-9.9 | Nope | todo | — | — | NEW `core/nope.py` planned |\n", encoding="utf-8"
         )

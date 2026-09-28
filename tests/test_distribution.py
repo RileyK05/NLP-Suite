@@ -17,8 +17,12 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
-#: The only packages that belong to the product.
-SHIPPED_PACKAGES = ("core", "tools", "app", "desktop_backend")
+#: The only packages that belong to the product. ``nlpsuite`` is the
+#: notebook-facing import name (its functions live in ``core.script``); a wheel
+#: without it has no ``nlpsuite`` module, so the guide's "open it in Jupyter
+#: with the suite installed" would fail on the very import it tells readers to
+#: write.
+SHIPPED_PACKAGES = ("core", "tools", "app", "desktop_backend", "nlpsuite")
 
 #: Directories that are development or personal material, never distributed.
 NOT_SHIPPED = ("tests", "scripts", "docs", "desktop", "assets", ".github", ".opencode")
@@ -34,6 +38,23 @@ def _pyproject() -> dict:
 def test_only_the_product_packages_are_distributed() -> None:
     include = _pyproject()["tool"]["setuptools"]["packages"]["find"]["include"]
     assert include == [f"{name}*" for name in SHIPPED_PACKAGES], include
+
+
+def test_the_documented_import_name_is_actually_packaged() -> None:
+    """`import nlpsuite as nlp` must work from an installed wheel.
+
+    The include list names it, but setuptools only ships a package it can
+    actually find (an ``__init__.py``, on the path). The include list read
+    "core*, tools*, app*, desktop_backend*" and the wheel had no ``nlpsuite``
+    module at all -- so the guide's "open it in Jupyter with the suite
+    installed" failed on the first line it tells readers to write.
+    """
+    import setuptools
+
+    include = _pyproject()["tool"]["setuptools"]["packages"]["find"]["include"]
+    found = set(setuptools.find_packages(where=str(ROOT), include=include))
+    assert "nlpsuite" in found, f"setuptools would not ship nlpsuite; it found {sorted(found)}"
+    assert (ROOT / "nlpsuite" / "__init__.py").is_file()
 
 
 def test_manifest_excludes_development_and_personal_material() -> None:
@@ -60,7 +81,7 @@ def test_product_code_never_references_the_owners_coursework() -> None:
 
 def test_personal_files_live_outside_the_shipped_packages() -> None:
     """Personal notes may stay in the repo, but never inside a shipped package."""
-    for personal in (ROOT / "review_first.md", ROOT / "docs" / "HOMEWORK2_WORKING_PLAN.md"):
+    for personal in (ROOT / "review_first.md", ROOT / "docs" / "internal" / "HOMEWORK2_WORKING_PLAN.md"):
         if not personal.exists():
             continue  # removing them entirely is also a valid answer
         top = personal.relative_to(ROOT).parts[0]

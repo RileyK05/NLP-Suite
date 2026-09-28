@@ -1,4 +1,4 @@
-"""A transcript cut by speaker (docs/PLAN_0.5.0.md 2.5, 2.9).
+"""A transcript cut by speaker (docs/internal/PLAN_0.5.0.md 2.5, 2.9).
 
 The fixture is a three-speaker town hall with a role in parentheses, turns
 broken across lines, a speaker who talks twice in a row, and four kinds of

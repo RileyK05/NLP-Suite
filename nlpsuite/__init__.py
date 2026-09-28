@@ -6,10 +6,12 @@ rather than ``core.script.api.term_rates(...)``, and so the name can outlive a
 reorganisation of ``core``.
 """
 
+from core.script import viz
 from core.script.api import (
     Corpus,
     RunResult,
     SuiteError,
+    chart,
     corpus,
     describe,
     entities,
@@ -35,6 +37,7 @@ __all__ = [
     "Corpus",
     "RunResult",
     "SuiteError",
+    "chart",
     "corpus",
     "describe",
     "entities",
@@ -54,4 +57,5 @@ __all__ = [
     "tools",
     "topics",
     "use_folder",
+    "viz",
 ]

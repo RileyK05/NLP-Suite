@@ -938,7 +938,17 @@ class TestContract:
         # "bubble" joined the list when the legacy Excel bubble chart was made
         # reachable; tests/test_chart_kind_parity.py holds this in step with
         # the desktop and the Excel exporter.
-        assert CHART_KINDS[6:] == ("pie", "sunburst", "treemap", "violin", "radar", "waffle", "calendar", "bubble")
+        assert CHART_KINDS[6:] == (
+            "pie",
+            "sunburst",
+            "treemap",
+            "violin",
+            "radar",
+            "waffle",
+            "calendar",
+            "bubble",
+            "sankey",
+        )
         assert AGG_FUNCS == ("sum", "mean", "median", "count")
 
     def test_wrap_label(self) -> None:

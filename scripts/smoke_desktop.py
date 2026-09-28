@@ -207,8 +207,35 @@ def main() -> None:
                 raise RuntimeError(f"Notebook kernel failed: {done or 'no answer'}")
             if not any(event.get("kind") == "table" for event in seen):
                 raise RuntimeError("Notebook kernel showed no table for corpus.documents")
+            # A figure: nlp.figure keeps PNG + SVG, and matplotlib loads its SVG
+            # writer only when saving -- a frozen build that left the backend
+            # out failed here at run time, showing nothing under the cell.
+            figure = request(
+                kernel + "/exec",
+                {
+                    "cell": "2",
+                    "code": "import matplotlib.pyplot as plt\nimport nlpsuite as nlp\n"
+                    "fig, ax = plt.subplots()\nax.plot([1, 2, 3])\nnlp.figure(fig, 'smoke')",
+                },
+            )
+            deadline = time.monotonic() + args.job_timeout
+            cursor, seen = figure["after"], []
+            while time.monotonic() < deadline:
+                state = request(f"{kernel}/events?after={cursor}")
+                cursor = state["next"]
+                seen.extend(event for event in state["events"] if event.get("id") == figure["exec"])
+                if any(event.get("event") == "done" for event in seen):
+                    break
+                time.sleep(0.3)
+            done = next((event for event in seen if event.get("event") == "done"), None)
+            if done is None or not done["ok"]:
+                raise RuntimeError(f"Notebook figure failed: {done or 'no answer'}")
+            if not any(event.get("kind") == "figure" and event.get("png") for event in seen):
+                raise RuntimeError("Notebook figure was shown without a PNG")
+            if not any(event.get("kind") == "figure" and event.get("svg") for event in seen):
+                raise RuntimeError("Notebook figure was shown without an SVG (backend_svg missing from the runtime?)")
             request(kernel + "/stop", {})
-            print("PASS notebook kernel: import nlpsuite, list tools, show the corpus", flush=True)
+            print("PASS notebook kernel: import nlpsuite, tables and a figure (PNG + SVG)", flush=True)
             restored = request("/projects/restore", request(base + "/backup"))
             if restored["id"] == project["id"] or restored["documents"] != expected_documents:
                 raise RuntimeError("Project backup/restore failed")

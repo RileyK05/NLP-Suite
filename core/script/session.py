@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "FigureOutput",
     "FolderSource",
+    "HtmlOutput",
     "NoteOutput",
     "Output",
     "ParsedTable",
@@ -120,11 +121,31 @@ class TableOutput:
 
 @dataclass(frozen=True)
 class FigureOutput:
-    """A matplotlib figure, rendered once to PNG and SVG."""
+    """A matplotlib figure, rendered to PNG (and SVG, when it can be made).
+
+    ``svg`` is None when the SVG writer was unavailable: a packaged runtime
+    can lack matplotlib's lazily-imported SVG backend, and a figure kept
+    without its SVG is still the figure the reader came to see.
+    """
 
     name: str
     png: bytes
-    svg: bytes
+    svg: bytes | None = None
+
+
+@dataclass(frozen=True)
+class HtmlOutput:
+    """A self-contained interactive HTML fragment a cell asked to show.
+
+    ``html`` is a fragment (no ``<html>``/``<body>``) meant to be shown in a
+    sandboxed frame under the cell and, when the notebook is saved as a run,
+    written beside the tables as ``<name>.html``. Produced by
+    :func:`core.script.api.chart` (the engine's plotly renderer), so it carries
+    the same interactive chart the Analyze page draws.
+    """
+
+    name: str
+    html: str
 
 
 @dataclass(frozen=True)
@@ -134,7 +155,7 @@ class NoteOutput:
     text: str
 
 
-Output = TableOutput | FigureOutput | NoteOutput
+Output = TableOutput | FigureOutput | HtmlOutput | NoteOutput
 
 
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
@@ -160,13 +181,26 @@ class Session:
     calls: list[Call] = field(default_factory=list)
     _parses: dict[str, ParsedTable] = field(default_factory=dict)
     _names: set[str] = field(default_factory=set)
+    #: One-off sentences already said (a missing SVG backend is worth saying
+    #: once, not once for every figure a notebook draws).
+    _said_once: set[str] = field(default_factory=set)
 
     def parse(self, corpus: Corpus) -> ParsedTable:
-        """Parse once per corpus per session; the source may also have it on disk."""
-        found = self._parses.get(corpus.sha256)
+        """Parse once per corpus per session; the source may also have it on disk.
+
+        Keyed by the documents *in order*: a parse is a table of positions
+        (``Document ID``, ``Sentence ID``, ``Record ID``), so the same
+        documents in a different order is a different table. The order-free
+        :attr:`Corpus.sha256` would let one ordering's ids be read back for
+        another.
+        """
+        from core.io.reader import ordered_fingerprint
+
+        key = ordered_fingerprint(corpus.docs)
+        found = self._parses.get(key)
         if found is None:
             found = self.source.parse(corpus)
-            self._parses[corpus.sha256] = found
+            self._parses[key] = found
         return found
 
     def start_cell(self) -> None:
@@ -196,6 +230,12 @@ class Session:
         self.outputs.append(output)
         if self.on_output is not None:
             self.on_output(output)
+
+    def note_once(self, text: str) -> None:
+        """Emit *text* as a note the first time it is raised in this session."""
+        if text not in self._said_once:
+            self._said_once.add(text)
+            self.emit(NoteOutput(text))
 
     def record(self, function: str, arguments: dict[str, Any], started: float, rows: int | None = None) -> None:
         shown = {key: _short(value) for key, value in arguments.items()}

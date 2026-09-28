@@ -1,4 +1,4 @@
-"""Keyness by a document detail: "Kind = sotu against Kind = ina" with no regex (docs/PLAN_0.5.0.md 1.6.5)."""
+"""Keyness by a document detail: "Kind = sotu against Kind = ina" with no regex (docs/internal/PLAN_0.5.0.md 1.6.5)."""
 
 from __future__ import annotations
 

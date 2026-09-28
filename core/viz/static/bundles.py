@@ -6,7 +6,7 @@ only answerable on paper: how every measure a tool computes moves with every
 other; whether a measure is just document length in disguise, with both
 distributions at the margins; which topic each decade leaned on; where each
 speech sits among all the others. These are the "bundles" of
-``docs/FIGURE_QUALITY_PLAN.md`` (4.3).
+``docs/internal/FIGURE_RECIPES.md`` (Part 2, "Figure bundles").
 
 Each :class:`Bundle` names the columns it reads, like a panel, so the same
 ``best_table`` rule picks its table; it draws a matplotlib figure and the

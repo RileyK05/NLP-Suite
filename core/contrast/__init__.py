@@ -1,4 +1,4 @@
-"""Comparing document sets: sides, measures, words, focus, topics and tone (docs/PLAN_0.5.0.md 3.4).
+"""Comparing document sets: sides, measures, words, focus, topics and tone (docs/internal/PLAN_0.5.0.md 3.4).
 
 Pure analysis over one parse of the joined corpus. Every document carries its
 side in its details (``Side``), set by whoever built the corpus -- the runner

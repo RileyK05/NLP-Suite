@@ -327,6 +327,7 @@ class Bench:
         different selection of documents is a different key and gets its own
         parse rather than a wrong hit.
         """
+        from core.io.reader import ordered_fingerprint
         from desktop_backend.project_corpus import parse_cached, resolve_parser
 
         if stage is not None:
@@ -335,7 +336,9 @@ class Bench:
         if resolved.value is None:
             raise ValueError("; ".join(d.message for d in resolved.diagnostics))
         pipeline = resolved.unwrap()
-        already = self.held(annotation_key(corpus.sha256, parser_identity(pipeline)))
+        # Order-sensitive, like the on-disk key: a different ordering of the
+        # same documents is a different parse (its Document IDs are positions).
+        already = self.held(annotation_key(ordered_fingerprint(corpus.docs), parser_identity(pipeline)))
         if already is not None:
             return replace(already, source="memory")
         # The same cache a published run reads (desktop_backend.project_corpus),

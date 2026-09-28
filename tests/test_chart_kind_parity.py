@@ -282,7 +282,8 @@ class TestNoKindIsImpossibleToDraw:
         return prepare_chart_data(frame, ChartSpec(kind=kind, x="Word", y="Count", **kwargs))  # type: ignore[arg-type]
 
     def _refuses_agg(self, kind: str) -> bool:
-        outcome = self._outcome(kind, agg="sum", group="Set" if kind in ("sunburst", "treemap", "heatmap") else None)
+        group = "Set" if kind in ("sunburst", "treemap", "heatmap", "sankey") else None
+        outcome = self._outcome(kind, agg="sum", group=group)
         return not outcome.ok and any("agg" in d.message for d in outcome.diagnostics)
 
     def test_a_kind_that_refuses_agg_can_be_drawn_without_one(self) -> None:
@@ -323,9 +324,10 @@ class TestEveryKindDrawsFromACsv:
     """
 
     # What the desktop dialog sends for each kind, mirrored here so this test
-    # exercises the combination a reader actually produces.
+    # exercises the combination a reader actually produces. Sankey needs a
+    # group (its target column) like sunburst/treemap, so it is in both sets.
     AGG_REJECTED = frozenset({"scatter", "box", "violin", "histogram", "bubble"})
-    GROUP_REQUIRED = frozenset({"heatmap", "sunburst", "treemap"})
+    GROUP_REQUIRED = frozenset({"heatmap", "sunburst", "treemap", "sankey"})
     GROUP_REJECTED = frozenset({"pie", "waffle", "calendar"})
 
     @pytest.fixture

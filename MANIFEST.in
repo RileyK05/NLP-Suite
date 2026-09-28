@@ -18,6 +18,11 @@
 include README.md
 include LICENSE
 
+# The notebook-facing import name (`import nlpsuite as nlp`). The wheel picks
+# it up via [tool.setuptools.packages.find]; an sdist needs it stated, or a
+# source build ships a suite whose documented import does not exist.
+graft nlpsuite
+
 prune tests
 prune scripts
 prune docs

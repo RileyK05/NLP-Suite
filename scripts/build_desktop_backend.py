@@ -72,6 +72,14 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
     # cannot see it; the live bench's parse cache (desktop_backend/live.py)
     # needs it. pyarrow is a core dependency in pyproject.toml.
     args.extend(["--hidden-import", "pyarrow.parquet"])
+    # matplotlib imports the module that writes each non-raster format at the
+    # moment of saving, so PyInstaller cannot see them: nlp.figure keeps PNG +
+    # SVG (core/script/api.py), and publication figures can be PNG, SVG or PDF
+    # (core/viz/static). Only backend_agg is reached by an ordinary import, so
+    # without these a notebook's nlp.figure failed at run time in the installed
+    # app with "No module named 'matplotlib.backends.backend_svg'".
+    for backend in ("matplotlib.backends.backend_svg", "matplotlib.backends.backend_pdf"):
+        args.extend(["--hidden-import", backend])
     # The model runtime (core.models.onnx_backend) imports both when the first
     # model opens; onnxruntime's provider DLLs are not import-visible.
     for module in ("onnxruntime", "tokenizers"):

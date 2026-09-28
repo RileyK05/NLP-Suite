@@ -30,7 +30,7 @@ ALLOWLIST: dict[str, tuple[str, str]] = {
     "publish_snapshot": ("S603-subprocess", "fixed git ls-files argv on a local checkout, no shell"),
     "smoke_desktop": ("S603-subprocess S310-urlopen", "explicit test executable, local engine handshake, no shell"),
     "runner": ("S603-subprocess", "fixed local worker entrypoint and job UUID, no shell"),
-    # Smart scripts (docs/PLAN_0.5.0.md 4.4). The ONLY module allowed exec/eval:
+    # Smart scripts (docs/internal/PLAN_0.5.0.md 4.4). The ONLY module allowed exec/eval:
     # it runs the user's own notebook cells, in a separate kernel process that
     # is never given the server's token, with a scratch working directory;
     # results reach the project only through the nlpsuite library. Python

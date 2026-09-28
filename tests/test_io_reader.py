@@ -27,6 +27,7 @@ from core.io.reader import (
     details_fingerprint,
     hash_file,
     hash_text,
+    ordered_fingerprint,
     read_corpus,
     read_text,
 )
@@ -187,6 +188,24 @@ class TestReadCorpus:
         first = read_corpus(corpus_dir).unwrap()
         rebuilt = Corpus(docs=tuple(reversed(first.docs)), sha256=first.sha256)
         assert corpus_fingerprint(rebuilt.docs) == first.sha256
+
+    def test_ordered_fingerprint_tells_two_orderings_apart(self, corpus_dir: Path) -> None:
+        """A parse table is positions, so its cache key must care about order.
+
+        Keying the parse cache by the order-independent fingerprint let one
+        ordering read back another ordering's table: the same documents
+        numbered the other way, so ids 1..N named the wrong documents and a
+        comparison of "A against B" could silently compare B against A.
+        """
+        first = read_corpus(corpus_dir).unwrap()
+        reversed_docs = tuple(reversed(first.docs))
+        assert corpus_fingerprint(reversed_docs) == first.sha256, "the premise: order-free by design"
+        assert ordered_fingerprint(reversed_docs) != ordered_fingerprint(first.docs)
+        assert ordered_fingerprint(first.docs) == ordered_fingerprint(first.docs)
+        # Every position counts: swapping two documents is a different table.
+        if len(first.docs) >= 2:
+            swapped = (first.docs[1], first.docs[0], *first.docs[2:])
+            assert ordered_fingerprint(swapped) != ordered_fingerprint(first.docs)
 
     def test_fingerprint_changes_when_content_changes(self, corpus_dir: Path) -> None:
         first = read_corpus(corpus_dir).unwrap().sha256

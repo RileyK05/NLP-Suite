@@ -77,6 +77,11 @@ class LdaResult:
     perplexity: float  # log-perplexity (negative)
     seed: int
     n_topics: int
+    #: The full document x topic matrix: Document ID, Document, Year, then one
+    #: ``Topic <i>`` column per topic holding that document's share. The
+    #: dominant table keeps only each document's largest topic; a mixture
+    #: figure (the stream, the mixture bars) needs every share.
+    doc_topics: pd.DataFrame | None = None
     #: Terms per topic at the requested lambda (HW2's "salient or relevant
     #: terms"): Topic, Word, Relevance, Saliency.
     relevance: pd.DataFrame | None = None
@@ -575,6 +580,7 @@ def fit_lda(
     topics = pd.DataFrame(topic_rows, columns=["Topic", "Word", "Weight"])
 
     dominant_rows: list[dict[str, object]] = []
+    matrix_rows: list[dict[str, object]] = []
     for doc_id, (name, bow) in enumerate(zip(names, corpus, strict=True), start=1):
         dist = sorted(model.get_document_topics(bow, minimum_probability=0.0), key=lambda pair: pair[1], reverse=True)
         best_id, best_share = int(dist[0][0]), round(float(dist[0][1]), 4)
@@ -587,9 +593,21 @@ def fit_lda(
                 "Topic keywords": keywords_by_topic[best_id],
             }
         )
+        # The full mixture, not only the argmax: the share of every topic in
+        # this document. The mixture figures (stream, mixture bars) read it.
+        matrix_rows.append(
+            {
+                "Document ID": doc_id,
+                "Document": name,
+                **{f"Topic {topic_id}": round(float(share), 4) for topic_id, share in dist},
+            }
+        )
     dominant = pd.DataFrame(
         dominant_rows, columns=["Document ID", "Document", "Dominant topic", "Contribution", "Topic keywords"]
     )
+    doc_topics = pd.DataFrame(
+        matrix_rows, columns=["Document ID", "Document", *[f"Topic {topic_id}" for topic_id in range(n_topics)]]
+    ).sort_values("Document ID", ignore_index=True)
 
     flow: pd.DataFrame | None = None
     if segments is not None:
@@ -650,6 +668,7 @@ def fit_lda(
             perplexity=float(model.log_perplexity(corpus)),
             seed=seed,
             n_topics=n_topics,
+            doc_topics=doc_topics,
             relevance=relevance,
             intertopic=intertopic,
             flow=flow,

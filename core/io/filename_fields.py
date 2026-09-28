@@ -1,4 +1,4 @@
-"""Document details read from file names (docs/PLAN_0.5.0.md 1.4.1).
+"""Document details read from file names (docs/internal/PLAN_0.5.0.md 1.4.1).
 
 A folder of speeches named ``1934-01-03_franklin d roosevelt_sotu.txt``
 already says when each was given, by whom, and what kind of speech it is.

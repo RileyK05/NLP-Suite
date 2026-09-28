@@ -83,6 +83,7 @@ const ENGINE_KINDS: { kind: string; label: string; hint: string }[] = [
   { kind: "radar", label: "Radar", hint: "several measures on spokes" },
   { kind: "waffle", label: "Waffle", hint: "square-unit share of a whole" },
   { kind: "calendar", label: "Calendar", hint: "daily values on a year grid" },
+  { kind: "sankey", label: "Sankey", hint: "flow between two categories" },
 ];
 
 const EXPORTS: { format: string; label: string; hint: string }[] = [

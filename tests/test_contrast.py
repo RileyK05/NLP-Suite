@@ -1,4 +1,4 @@
-"""Corpus comparison: a planted signal must be found, and nothing else claimed (docs/PLAN_0.5.0.md 3.10).
+"""Corpus comparison: a planted signal must be found, and nothing else claimed (docs/internal/PLAN_0.5.0.md 3.10).
 
 Two small projects -- "Addresses" and "Inaugurals" -- share two speakers; a
 third speaker gives only addresses. "budget" is planted in addresses only,

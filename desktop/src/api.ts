@@ -575,6 +575,25 @@ export async function artifactBlobUrl(path: string): Promise<string> {
   return URL.createObjectURL(await response.blob());
 }
 
+/** A notebook kernel file's frame path, e.g. an interactive chart's HTML. */
+export async function kernelFrameUrl(path: string): Promise<string> {
+  if (
+    !/^\/projects\/[a-f0-9]{32}\/notebooks\/[A-Za-z0-9_-]{1,64}\/kernel\/files\/[^/]{1,200}$/i.test(
+      path,
+    )
+  ) {
+    throw new Error("Invalid kernel preview path");
+  }
+  // convertFileSrc encodes its entire argument (including slashes). Use it
+  // only for the platform-specific origin, then append our validated route.
+  if (isTauri()) return convertFileSrc("", "nlp-viz") + path.slice(1);
+  const ticket = await post<{ path: string }>(`${path}/preview`, {});
+  if (!/^\/api\/previews\/[A-Za-z0-9_-]{43}$/.test(ticket.path)) {
+    throw new Error("Invalid preview response");
+  }
+  return connection.baseUrl + ticket.path;
+}
+
 /** HTML needs its own response policy: blob/srcdoc inherit the app's CSP. */
 export async function artifactFrameUrl(path: string): Promise<string> {
   if (

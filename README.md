@@ -29,7 +29,7 @@ notes or an older release. Mac builds need macOS 15 or later.
 
 **Updates.** On Windows and Mac, NLP Suite tells you when a new version is out
 and installs it with one click. On Linux, install the new `.deb` over the old one.
-Version 0.5.0 and earlier cannot update themselves: if you have one, download
+Version 0.5.1 and earlier cannot update themselves: if you have one, download
 the latest release once and install it over the old version. Your projects are kept.
 
 More detail, including how to tell which Mac you have:
@@ -81,13 +81,11 @@ source.
 | I want to… | Start here |
 | --- | --- |
 | Install, choose the right file, or troubleshoot | [Getting started](docs/GET_STARTED.md) |
-| See desktop features and test evidence | [Desktop status](docs/DESKTOP.md) |
-| Review end-user boundaries and release acceptance | [Desktop hardening](docs/PRODUCTION_HARDENING.md) |
-| Plan question-driven research workflows | [Question-driven NLP plan](docs/QUESTION_DRIVEN_RESEARCH_PLAN.md) |
-| Build a Mac candidate without owning a Mac | [Mac builds](docs/MACOS.md) |
-| Build or publish installers | [Maintainer release guide](docs/DESKTOP_RELEASE.md) |
+| See desktop features, end-user scope and test evidence | [Desktop status](docs/DESKTOP.md) |
+| Plan question-driven research workflows | [Question-driven NLP plan](docs/internal/QUESTION_DRIVEN_RESEARCH_PLAN.md) |
+| Build or publish installers, including Mac builds without owning a Mac | [Maintainer release guide](docs/DESKTOP_RELEASE.md) |
 | Run from source, use the CLI, or develop | [Developer guide](docs/DEVELOPMENT.md) |
-| Check legacy replacement progress | [Replacement ledger](docs/REPLACEMENT_LEDGER.md) |
+| Check legacy replacement progress | [Replacement ledger](docs/internal/REPLACEMENT_LEDGER.md) |
 | Browse all current guides and plans | [Documentation index](docs/README.md) |
 
 This is an independent rebuild. The legacy suite is kept separate and used

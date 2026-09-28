@@ -59,6 +59,7 @@ const CHART_KINDS: {
   },
   { kind: "waffle", label: "Waffle", hint: "square-unit share of a whole" },
   { kind: "calendar", label: "Calendar", hint: "daily values on a year grid" },
+  { kind: "sankey", label: "Sankey", hint: "flow between two categories" },
 ];
 
 /** The chart's name as this dialog prints it, so a refusal names the button
@@ -105,8 +106,9 @@ const AGG_KINDS = new Set([
   "waffle",
   "calendar",
   "heatmap",
+  "sankey",
 ]);
-const GROUP_REQUIRED = new Set(["heatmap", "sunburst", "treemap"]);
+const GROUP_REQUIRED = new Set(["heatmap", "sunburst", "treemap", "sankey"]);
 const GROUP_REJECTED = new Set(["pie", "waffle", "calendar"]);
 const AGG_REJECTED = new Set([
   "scatter",
@@ -172,7 +174,8 @@ export function chartBlockedReasons(
     (kind === "pie" ||
       kind === "sunburst" ||
       kind === "treemap" ||
-      kind === "waffle") &&
+      kind === "waffle" ||
+      kind === "sankey") &&
     hasNegativeColumn(table, y)
   )
     reasons.push(

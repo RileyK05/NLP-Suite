@@ -3,7 +3,7 @@
 The problems a reader found by looking -- "-0" ticks, labels printed over
 labels, a caption naming a measure nobody picked, "sentence 7" as a label,
 eighty rows in five hundred pixels -- came in classes
-(docs/FIGURE_QUALITY_PLAN.md, C1-C8). These tests check the classes, not the
+(docs/internal/FIGURE_RECIPES.md part 2, C1-C8). These tests check the classes, not the
 instances, over every registered panel with every choice of every parameter,
 so a new panel is covered the day it is registered.
 
@@ -62,8 +62,6 @@ NO_EXAMPLE: dict[str, str] = {
             "gender_annotator_mentions_over_time",
             "word2vec_bert_neighbours",
             "word2vec_gensim_neighbours",
-            "mallet_document_topics",
-            "mallet_topic_terms",
         )
     },
     **{

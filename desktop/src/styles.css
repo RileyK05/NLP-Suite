@@ -4086,6 +4086,22 @@ button.compact {
   display: flex;
   gap: 6px;
 }
+/* An interactive chart (nlp.chart): the engine's plotly HTML in a sandboxed
+   frame. The height is fixed because a cross-origin frame cannot be measured
+   from here; it is the height the engine's own charts use. */
+.cell-html-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+.cell-chart-frame {
+  width: 100%;
+  height: 520px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
 
 .outside-banner {
   display: flex;
@@ -4776,4 +4792,64 @@ dialog.guide-dialog {
 .detail-legend {
   padding-left: 7px;
   border-left: 3px solid transparent;
+}
+
+/* The Corpus page's dated events (SHOWCASE_FIGURES_PLAN section 4): stoplines
+   the figures over time draw, so a trend can be checked against the world. */
+.corpus-events {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.corpus-events h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.corpus-events p {
+  margin: 6px 0;
+}
+
+.event-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.event-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.event-when {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  min-width: 72px;
+}
+
+.event-name {
+  flex: 1;
+}
+
+.add-event {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.add-event input {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  min-width: 0;
 }

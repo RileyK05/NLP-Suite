@@ -132,4 +132,29 @@ TEMPLATES: tuple[Template, ...] = (
             ),
         ),
     ),
+    Template(
+        "build-a-figure",
+        "Build a publication figure",
+        "Compose a multi-panel figure with the figure kit (nlp.viz): a stream over time, a close-up, the method's own output.",
+        "Draw a publication-quality figure of two groups' word rates over time, with labels and a provenance footer.",
+        (
+            (
+                "markdown",
+                "# The figure kit\n\n`nlp.viz` draws with the house style and keeps the suite's rules: the title is the finding, direct labels instead of legends, one colour per thing.",
+            ),
+            (
+                "code",
+                'import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nrates = nlp.term_rates(corpus, {"war": ["war", "army", "peace"], "jobs": ["jobs", "wages", "work"]}, per=10000, match="exact-lowercase")\nrates.head()',
+            ),
+            (
+                "code",
+                '# Pivot to the kit\'s shape: one row per year, one column per share.\nshares = (rates.groupby("Year", as_index=True)[["war per 10000", "jobs per 10000"]]\n          .mean()\n          .rename(columns={"war per 10000": "war", "jobs per 10000": "jobs"}))\nshares.head()',
+            ),
+            (
+                "code",
+                'fig = nlp.viz.canvas("War words fall as jobs words rise",\n                    "rate per 10,000 words, one year per column",\n                    footer="nlp.term_rates, exact-lowercase, per 10,000 words")\nfig.rows([1.0])\nax = fig.row(0).cols([1.0]).axis(0)\nnlp.viz.stream(ax, shares.div(shares.sum(axis=1), axis=0), labels={"war": "war", "jobs": "jobs"})\nax.set(xlabel="Year", ylabel="Share of the two groups")\nfinish = fig.done()\nnlp.viz.lint(finish)   # [] when nothing overprints; the reason to fix a label',
+            ),
+            ("code", 'nlp.figure(finish, "war_and_jobs")'),
+        ),
+    ),
 )

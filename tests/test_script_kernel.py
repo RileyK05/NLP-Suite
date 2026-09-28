@@ -113,6 +113,72 @@ def test_cells_run_print_and_show_tables(kernel: Any) -> None:
     assert [e["text"] for e in events if e.get("kind") == "text"] == ["42"]
 
 
+def test_a_figure_without_an_svg_still_reaches_the_page(kernel: Any) -> None:
+    """A missing SVG writer must cost the SVG, not the figure (kernel event)."""
+    from core.script.session import FigureOutput
+    from desktop_backend.kernel import OutputSink
+
+    manager, _key = kernel
+    sent: list[dict[str, Any]] = []
+    directory = manager.root / "figure-test"
+    directory.mkdir(parents=True, exist_ok=True)
+    out = OutputSink(directory, sent.append)
+    out.exec_id = 1
+    out(FigureOutput("trend", b"\x89PNG\r\n\x1a\n", None))
+    [event] = sent
+    assert event["kind"] == "figure" and event["png"] and event["svg"] is None
+    assert (directory / event["png"]).read_bytes().startswith(b"\x89PNG")
+    assert not list(directory.glob("*.svg"))
+
+
+def test_an_interactive_chart_is_written_and_announced(kernel: Any) -> None:
+    """`nlp.chart` writes an HTML file the page can frame."""
+    from core.script.session import HtmlOutput
+    from desktop_backend.kernel import OutputSink
+
+    manager, _key = kernel
+    sent: list[dict[str, Any]] = []
+    directory = manager.root / "chart-test"
+    directory.mkdir(parents=True, exist_ok=True)
+    out = OutputSink(directory, sent.append)
+    out.exec_id = 1
+    out(HtmlOutput("flows", "<div id='x'></div>"))
+    [event] = sent
+    assert event["kind"] == "html" and event["file"].endswith("_flows.html")
+    assert (directory / event["file"]).read_text(encoding="utf-8") == "<div id='x'></div>"
+
+
+def test_tables_archive_gathers_every_shown_table(kernel: Any) -> None:
+    """The "Save all CSVs" download: every table so far, renamed, as one zip."""
+    import io
+    import zipfile
+
+    manager, key = kernel
+    first = manager.execute(*key, "c1", "import nlpsuite as nlp\nnlp.term_rates(nlp.corpus(), ['border'])")
+    _wait(manager, key, first["exec"], first["after"])
+    second = manager.execute(*key, "c2", "nlp.save(nlp.corpus().documents, 'documents')")
+    _wait(manager, key, second["exec"], second["after"])
+
+    data = manager.tables_archive(*key)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        assert archive.testzip() is None
+        names = sorted(archive.namelist())
+        documents = archive.read("documents.csv").decode("utf-8")
+    # Both tables are present; the unnamed one keeps its kernel name, the saved
+    # one comes back as the name its author gave it.
+    assert "documents.csv" in names and len(names) == 2, names
+    assert "Document" in documents
+
+
+def test_tables_archive_refuses_a_notebook_with_no_kernel(tmp_path: Path) -> None:
+    manager = KernelManager(Workspace(tmp_path / "ws"))
+    try:
+        with pytest.raises(KeyError):
+            manager.tables_archive("no-project", "no-notebook")
+    finally:
+        manager.close()
+
+
 def test_errors_and_scratch_files_are_reported(kernel: Any) -> None:
     manager, key = kernel
     started = manager.execute(*key, "c1", "open('out.csv', 'w').write('a')\n1 / 0")

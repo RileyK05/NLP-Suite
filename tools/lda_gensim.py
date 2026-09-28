@@ -90,8 +90,10 @@ def main(argv: list[str] | None = None) -> int:
         (fitted.topics, "topics.csv", "LDA per-topic top words"),
         (fitted.dominant, "topics_dominant.csv", "LDA dominant topic per document"),
     ]
+    if fitted.doc_topics is not None:
+        artifacts.append((fitted.doc_topics, "doc_topics.csv", "LDA document x topic share matrix"))
     if fitted.relevance is not None:
-        artifacts.append((fitted.relevance, "terms_by_relevance.csv", f"terms at lambda {args.lam}"))
+        artifacts.append((fitted.relevance, "terms_by_relevance.csv", f"terms at lambda {getattr(args, 'lambda')}"))
     if fitted.intertopic is not None:
         artifacts.append((fitted.intertopic, "intertopic_distances.csv", "Intertopic Distance Map placement"))
     for artifact, name, description in artifacts:

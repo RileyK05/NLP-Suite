@@ -1,5 +1,5 @@
 /**
- * Document details on the Corpus page (docs/PLAN_0.5.0.md 1.8): each
+ * Document details on the Corpus page (docs/internal/PLAN_0.5.0.md 1.8): each
  * document's Date, Speaker, Kind, Chapter ..., where each value came from, and
  * how the project's documents line up (the axis).
  */
@@ -23,12 +23,24 @@ export type TextCleaning = {
   extra_terms: string[];
 };
 
+/** A dated event drawn as a stopline on every time figure (plan section 4). */
+export type ProjectEvent = {
+  /** What happened ("Pearl Harbor"). */
+  name: string;
+  /** A year (1941), a decimal year (1941.5), or an ISO date (1941-12-07). */
+  date: string;
+  /** An optional note, kept with the event. */
+  note: string;
+};
+
 export type DetailSettings = {
   axis: AxisChoice;
   order_label: string;
   filename_detection: boolean;
   part_names: Record<string, string>;
   text_cleaning?: TextCleaning;
+  /** Dated events for time figures; empty until the reader adds one. */
+  events: ProjectEvent[];
 };
 
 export type ResolvedAxis = {

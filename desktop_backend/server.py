@@ -36,7 +36,7 @@ from desktop_backend.live import Bench, Session, StaleSnapshot, as_parser, as_ta
 from desktop_backend.live_panels import draw_live_panel, live_panel, live_panels_offered, prepare_live_panel
 from desktop_backend.models import ModelDownloads
 from desktop_backend.panels import BundleBody, PanelBody, StaticPanelBody, panel_failure
-from desktop_backend.previews import MAX_PREVIEW_BYTES, PREVIEW_CSP, PreviewTickets
+from desktop_backend.previews import MAX_PREVIEW_BYTES, PREVIEW_CSP, KernelTarget, PreviewTickets
 from desktop_backend.questions import QuestionBody
 from desktop_backend.runner import (
     DESKTOP_TOOLS,
@@ -398,14 +398,14 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     secured = [Depends(authorize)]
     app.state.kernels = kernels
-    register_notebook_routes(app, workspace, runner, kernels, secured, public_job)
+    register_notebook_routes(app, workspace, runner, kernels, secured, public_job, previews)
     register_field_routes(app, workspace, runner, secured)
     register_section_routes(app, workspace, runner, secured)
     register_comparison_routes(app, workspace, runner, secured, public_job)
 
     @app.get("/api/health", dependencies=secured)
     def health() -> dict[str, Any]:
-        return {"ok": True, "version": "0.5.0", "workspace": str(workspace.root)}
+        return {"ok": True, "version": "0.5.1", "workspace": str(workspace.root)}
 
     @app.get("/api/setup", dependencies=secured)
     def setup() -> dict[str, Any]:
@@ -1346,8 +1346,13 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
     @app.get("/api/previews/{ticket}")
     def browser_preview(ticket: str) -> FileResponse:
         # A scoped expiring ticket replaces session auth for iframe navigation.
-        # Re-resolve through Workspace to retain path/symlink confinement.
-        path = workspace.artifact(*previews.resolve(ticket))
+        # Re-resolve through Workspace (or the kernel's folder) to retain
+        # path/symlink confinement.
+        target = previews.resolve(ticket)
+        if isinstance(target, KernelTarget):
+            path = kernels.file(target.project, target.notebook, target.name)
+        else:
+            path = workspace.artifact(target.project, target.job, target.index)
         if path.suffix.lower() not in VIEWABLE_ARTIFACTS or path.stat().st_size > MAX_PREVIEW_BYTES:
             raise ValueError("Preview unavailable. Use Download.")
         return FileResponse(

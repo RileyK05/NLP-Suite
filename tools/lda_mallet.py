@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 from core.analysis.mallet import parse_doc_topics, train_topics
-from core.io.reader import read_corpus
+from core.io.reader import display_names, read_corpus
 from core.result import Diagnostic
 from tools._cli import build_common_parser, make_writer
 
@@ -48,8 +48,11 @@ def main(argv: list[str] | None = None) -> int:
     # the parsed tables (R3).
     with tempfile.TemporaryDirectory(prefix="mallet-in-") as staged:
         stage = Path(staged)
+        document_names = display_names(corpus.docs)
+        position_to_document: dict[int, str] = {}
         for position, doc in enumerate(corpus.docs, 1):
-            (stage / f"{position:04d}_{doc.label or doc.path.name}.txt").write_text(doc.text, encoding="utf-8")
+            position_to_document[position] = document_names[doc.doc_id]
+            (stage / f"{position:04d}_{doc.path.name}").write_text(doc.text, encoding="utf-8")
         with tempfile.TemporaryDirectory(prefix="mallet-out-") as out:
             keys = train_topics(stage, out, n_topics=args.topics, seed=args.seed)
             if not keys.ok:
@@ -61,7 +64,11 @@ def main(argv: list[str] | None = None) -> int:
                     if fix:
                         print(f"fix: {fix}", file=sys.stderr)
                 return 1
-            dominant = parse_doc_topics(Path(out) / "mallet_doc_topics.txt")
+            dominant = parse_doc_topics(
+                Path(out) / "mallet_doc_topics.txt",
+                n_topics=args.topics,
+                document_map=position_to_document,
+            )
             written = writer.write_table(keys.unwrap(), "topics.csv", kind="table", description="MALLET topic keys")
             if not written.ok:
                 for d in written.diagnostics:

@@ -48,17 +48,29 @@ def test_frozen_engine_keeps_every_core_dependency(tmp_path: Path) -> None:
     assert {"nlpsuite", "core.script"} <= collected
 
 
+def test_frozen_engine_bundles_every_matplotlib_writer_it_saves_with(tmp_path: Path) -> None:
+    """matplotlib imports a format's writer only when saving, so PyInstaller
+    cannot see it. Without backend_svg, nlp.figure (which keeps PNG + SVG) and
+    publication figures (PNG/SVG/PDF) failed at run time in the installed app
+    while every test passed -- the developer install has every backend."""
+    args = build_arguments(tmp_path, with_parser=True, system="win32", python="python", version="0.0.0")
+    hidden = {args[i + 1] for i, arg in enumerate(args) if arg == "--hidden-import"}
+    assert "matplotlib.backends.backend_svg" in hidden
+    assert "matplotlib.backends.backend_pdf" in hidden
+
+
 def test_macos_minimum_matches_the_documented_floor() -> None:
     """The DMG must not advertise an OS the build was never tested on.
 
-    docs/MACOS.md: "The initial minimum is macOS 15 ... Do not promise macOS
+    docs/DESKTOP_RELEASE.md: "The initial minimum is macOS 15 ... Do not promise macOS
     13/14 support merely because a Rust build flag can name it". The config
     said 13.0, so the installer claimed two untested OS versions.
     """
     root = Path(__file__).resolve().parents[1]
     tauri = json.loads((root / "desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
-    documented = re.search(r"minimum is \*\*macOS (\d+)\*\*", (root / "docs/MACOS.md").read_text(encoding="utf-8"))
-    assert documented is not None, "docs/MACOS.md no longer states a minimum"
+    release_doc = (root / "docs/DESKTOP_RELEASE.md").read_text(encoding="utf-8")
+    documented = re.search(r"minimum is \*\*macOS (\d+)\*\*", release_doc)
+    assert documented is not None, "docs/DESKTOP_RELEASE.md no longer states a minimum"
     assert tauri["bundle"]["macOS"]["minimumSystemVersion"].split(".")[0] == documented.group(1)
 
 

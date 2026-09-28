@@ -20,7 +20,7 @@ it, the desktop can badge a chart with its origin, and
 module in the old suite is either carried over here or dropped for a stated
 reason. Nothing may be quietly lost.
 
-The canonical legacy inventory lives in ``docs/REPLACEMENT_LEDGER.md`` under
+The canonical legacy inventory lives in ``docs/internal/REPLACEMENT_LEDGER.md`` under
 the CAP-VIZ rows; this module is the runtime view of the same facts.
 """
 

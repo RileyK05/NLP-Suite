@@ -113,7 +113,7 @@ __all__ = [
 #: A requirement that is not a column: "the documents are placed along the
 #: corpus's axis". A panel about change (a trend, an arc) needs *an* order,
 #: not specifically a calendar date, so a book's chapters satisfy it as a
-#: speech's date does (docs/PLAN_0.5.0.md 1.7).
+#: speech's date does (docs/internal/PLAN_0.5.0.md 1.7).
 AXIS = "@axis"
 #: A group named "<group>: rolling median" summarises the declared group
 #: before the colon, and every renderer colours it as that group: two novels

@@ -104,6 +104,7 @@ ChartKind = Literal[
     "waffle",
     "calendar",
     "bubble",
+    "sankey",
 ]
 AggFunc = Literal["sum", "mean", "median", "count"]
 Normalize = Literal["none", "percent", "share"]
@@ -128,6 +129,10 @@ CHART_KINDS: tuple[str, ...] = (
     # EXCEL_KINDS but missing here, so no ChartSpec could carry it and the
     # exporter's bubble branch was unreachable.
     "bubble",
+    # A source -> target flow diagram. It lived only inside the ``shapes``
+    # tool (core/viz/shapes.py), reachable from no chart surface; as a kind it
+    # is drawn by the same ChartSpec pipeline as every other chart.
+    "sankey",
 )
 # Kinds that draw one mark per input row rather than one per x category.
 # They reject ``agg`` outright, and they must also be exempt from the
@@ -140,8 +145,11 @@ _OBSERVATION_KINDS: tuple[str, ...] = ("scatter", "box", "violin", "bubble")
 _DATE_AXIS_KINDS: tuple[str, ...] = ("calendar",)
 # Kinds whose x is a hierarchical categorical path (one or two levels).
 _HIERARCHY_KINDS: tuple[str, ...] = ("sunburst", "treemap")
+# Kinds that draw a flow between two categorical columns: x is the source,
+# group the target, y the weight. Like the hierarchy kinds they need a group.
+_FLOW_KINDS: tuple[str, ...] = ("sankey",)
 # Kinds that aggregate y by x category before drawing (share bar/line rules).
-_AGG_KINDS: tuple[str, ...] = ("bar", "line", "pie", "sunburst", "treemap", "radar", "waffle", "calendar")
+_AGG_KINDS: tuple[str, ...] = ("bar", "line", "pie", "sunburst", "treemap", "radar", "waffle", "calendar", "sankey")
 _NORMALIZE_MODES: tuple[str, ...] = ("none", "percent", "share")
 _SCALE_BY_MODES: tuple[str, ...] = ("none", "total", "group", "category")
 
@@ -216,6 +224,8 @@ class ChartSpec:
             raise ValueError(f"bar_mode is only valid for bar charts, got {self.bar_mode} for {self.kind}")
         if self.kind in _HIERARCHY_KINDS and self.group is None:
             raise ValueError(f"{self.kind} needs --group: the hierarchy is x (outer) by group (inner)")
+        if self.kind in _FLOW_KINDS and self.group is None:
+            raise ValueError(f"{self.kind} needs --group: the flow is x (source) to group (target)")
         if self.width < _MIN_DIMENSION or self.height < _MIN_DIMENSION:
             raise ValueError(f"width/height must be >= {_MIN_DIMENSION}, got {self.width}x{self.height}")
         if self.wrap_labels < 1:
@@ -454,7 +464,7 @@ def _resolve_semantics(spec: ChartSpec) -> list[Diagnostic]:
         pass  # slices may show raw values; percent/share is optional like bar
     if kind in _HIERARCHY_KINDS and spec.normalize in ("percent", "share"):
         pass  # handled in preparation: branch sums are normalized by plotly
-    if kind in ("pie", "sunburst", "treemap") and spec.horizontal:
+    if kind in ("pie", "sunburst", "treemap", "sankey") and spec.horizontal:
         diags.append(
             _unsupported(
                 "horizontal",
@@ -462,7 +472,7 @@ def _resolve_semantics(spec: ChartSpec) -> list[Diagnostic]:
                 f"--horizontal is only valid for bar charts, not {kind}.",
             )
         )
-    if kind in ("pie", "sunburst", "treemap", "waffle", "radar", "calendar", "violin") and (
+    if kind in ("pie", "sunburst", "treemap", "sankey", "waffle", "radar", "calendar", "violin") and (
         spec.rate_per is not None or spec.denominator_column is not None
     ):
         diags.append(
@@ -473,8 +483,17 @@ def _resolve_semantics(spec: ChartSpec) -> list[Diagnostic]:
                 "aggregated bar/line cells.",
             )
         )
-    if kind in ("pie", "sunburst", "treemap", "radar") and spec.bins is not None:
+    if kind in ("pie", "sunburst", "treemap", "radar", "sankey") and spec.bins is not None:
         diags.append(_unsupported("bins", kind, f"--bins is only valid for histograms, not {kind}."))
+    if kind == "sankey" and spec.normalize != "none":
+        diags.append(
+            _unsupported(
+                "normalize",
+                kind,
+                "--normalize is not valid for sankey: each link's width is its own weight; "
+                "there is no category total to normalize against.",
+            )
+        )
     if kind == "waffle" and spec.normalize in ("percent", "share"):
         pass  # waffle encodes shares natively; normalization is the drawing
     if kind == "calendar" and spec.bins is not None:
@@ -763,6 +782,8 @@ def _layout_name(spec: ChartSpec) -> str:
         return "matrix"
     if spec.kind in _HIERARCHY_KINDS:
         return "hierarchy"
+    if spec.kind in _FLOW_KINDS:
+        return "flow"
     if spec.kind == "waffle":
         return "grid"
     if spec.kind == "calendar":
@@ -806,6 +827,8 @@ def _prepare_by_kind(
         return _prepare_calendar(data, spec, prepared_by)
     if spec.kind in ("pie", "sunburst", "treemap"):
         return _prepare_hierarchy(data, spec, single=spec.kind == "pie")
+    if spec.kind == "sankey":
+        return _prepare_flow(data, spec)
     if spec.kind == "radar":
         return _prepare_radar(data, spec)
     if spec.kind == "waffle":
@@ -900,6 +923,31 @@ def _prepare_hierarchy(data: pd.DataFrame, spec: ChartSpec, *, single: bool) -> 
         )
     y_label = spec.y
     return Result.success((prepared, y_label))
+
+
+def _prepare_flow(data: pd.DataFrame, spec: ChartSpec) -> Result[tuple[pd.DataFrame, str]]:
+    """Sankey: one link per (source x, target group), weighted by y.
+
+    The frame the renderer draws is one row per link with columns ``x``
+    (source), ``group`` (target) and ``y`` (weight). Duplicate links aggregate
+    with --agg (refused otherwise, like bar/line); negative weights are
+    refused: a band's width is its magnitude.
+    """
+    result = _aggregate_or_refuse(data, ["x", "group"], spec, "sankey")
+    if result.value is None:
+        return Result[tuple[pd.DataFrame, str]](None, result.diagnostics)
+    prepared = result.unwrap()
+    if bool((prepared["y"] < 0).any()):
+        bad = prepared.loc[prepared["y"] < 0, ["x", "group"]].head(5).itertuples(index=False, name=None)
+        examples = [f"{values!r}" for values in bad]
+        return Result.failure(
+            Diagnostic.error(
+                "CHART_NEGATIVE_SLICE",
+                f"sankey link widths encode magnitude; negative weights have no width. Negative links: {examples}",
+                examples=examples,
+            )
+        )
+    return Result.success((prepared, spec.y))
 
 
 def _prepare_radar(data: pd.DataFrame, spec: ChartSpec) -> Result[tuple[pd.DataFrame, str]]:

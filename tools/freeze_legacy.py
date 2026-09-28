@@ -1,7 +1,7 @@
 """freeze_legacy — print a frozen record of the legacy oracle directory.
 
 The record goes to stdout; the operator redirects it into
-docs/LEGACY_ENVIRONMENT.md and commits. Exit 0 on success, 2 when the
+docs/internal/LEGACY_ENVIRONMENT.md and commits. Exit 0 on success, 2 when the
 oracle directory itself is unreadable.
 """
 

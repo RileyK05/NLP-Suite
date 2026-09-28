@@ -52,6 +52,10 @@ class BatchRequest:
     #: its run (``core/viz/run_figures``). Off by default: a CLI batch writes
     #: exactly the tables it always has; the desktop turns it on.
     figures: bool = False
+    #: The project's dated events (decimal year, label), drawn as stoplines on
+    #: every dated figure (``desktop_backend.fields.project_events``). Empty
+    #: for a corpus that has no project events, which draws exactly as before.
+    events: tuple[tuple[float, str], ...] = ()
 
 
 def _jsonable(value: object) -> object:
@@ -72,6 +76,7 @@ def _write_child_run(  # noqa: PLR0913 - figures is keyword-only
     outcome: ToolOutcome,
     *,
     figures: bool = False,
+    events: tuple[tuple[float, str], ...] = (),
 ) -> Result[tuple[dict[str, Any], Path]]:
     """Publish one successful outcome (callers route failures to the manifest)."""
     try:
@@ -96,7 +101,7 @@ def _write_child_run(  # noqa: PLR0913 - figures is keyword-only
                 writer.abandon()
                 return Result.failure(*written.diagnostics)
             written_paths[filename] = written.unwrap()
-        figure_notes = _write_figures(writer, name, params, outcome, written_paths) if figures else []
+        figure_notes = _write_figures(writer, name, params, outcome, written_paths, events) if figures else []
         writer.add_diagnostics(*outcome.diagnostics, *figure_notes)
         env = writer.finalize()
     except (ValueError, FileExistsError, OSError) as exc:
@@ -126,12 +131,13 @@ def _write_child_run(  # noqa: PLR0913 - figures is keyword-only
     return Result.success((record, writer.run_dir))
 
 
-def _write_figures(
+def _write_figures(  # noqa: PLR0913, PLR0917 - the run's output threaded through, like _write_child_run
     writer: OutputWriter,
     name: str,
     params: Mapping[str, object],
     outcome: ToolOutcome,
     written: Mapping[str, Path],
+    events: tuple[tuple[float, str], ...] = (),
 ) -> list[Diagnostic]:
     """The run's publication figures, through its own writer; never fatal.
 
@@ -142,7 +148,7 @@ def _write_figures(
         from core.viz.run_figures import run_figures  # noqa: PLC0415 - matplotlib loads only when figures are wanted
 
         hashes = {filename: hash_file(path) for filename, path in written.items() if path.suffix == ".csv"}
-        drawn, notes = run_figures(name, outcome.frames, settings=dict(params), hashes=hashes)
+        drawn, notes = run_figures(name, outcome.frames, settings=dict(params), hashes=hashes, events=events)
     except Exception as exc:  # the tables stand without their pictures (R4)
         return [Diagnostic.warning("RUN_FIGURES_FAILED", f"figures were not drawn: {type(exc).__name__}: {exc}")]
     for figure in drawn:
@@ -186,7 +192,13 @@ def write_batch(output_root: str | Path, request: BatchRequest) -> Result[BatchR
                 )
             else:
                 published = _write_child_run(
-                    root, request.corpus, name, request.params.get(name, {}), outcome, figures=request.figures
+                    root,
+                    request.corpus,
+                    name,
+                    request.params.get(name, {}),
+                    outcome,
+                    figures=request.figures,
+                    events=request.events,
                 )
                 if published.value is None:
                     return Result.failure(*published.diagnostics)

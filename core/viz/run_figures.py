@@ -13,7 +13,7 @@ the tables are the result, and they stand without their pictures.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 from typing import Any
@@ -23,6 +23,7 @@ import pandas as pd
 from core.result import Diagnostic
 from core.viz.panels import best_table, fit_to_rows, panels_for_tool, prepare_panel
 from core.viz.panelspec import Source
+from core.viz.showcase import render_showcase, showcases_for
 
 __all__ = ["FIGURE_FORMATS", "RunFigure", "run_figures"]
 
@@ -43,18 +44,20 @@ class RunFigure:
     description: str
 
 
-def run_figures(
+def run_figures(  # noqa: PLR0913 - drawing options (settings, hashes, dpi, events) are keyword-only
     tool: str,
     frames: Mapping[str, pd.DataFrame],
     *,
     settings: Mapping[str, Any] | None = None,
     hashes: Mapping[str, str] | None = None,
     dpi: int = 200,
+    events: Sequence[tuple[float, str]] = (),
 ) -> tuple[list[RunFigure], list[Diagnostic]]:
     """Every default figure the run's tables can feed, plus an index page.
 
     ``hashes`` are the written tables' SHA-256 digests, so each caption can
-    name the exact file it was drawn from.
+    name the exact file it was drawn from. ``events`` are the project's dated
+    events, drawn as stoplines on every dated showcase and panel.
     """
     from core.viz.static import LIBRARY, render_static
 
@@ -66,6 +69,17 @@ def run_figures(
     figures: list[RunFigure] = []
     notices: list[Diagnostic] = []
     index: list[str] = [f"# Figures for this {tool} run", ""]
+    _showcase_figures(
+        tool,
+        frames=frames,
+        settings=settings,
+        hashes=hashes,
+        dpi=dpi,
+        events=events,
+        figures=figures,
+        notices=notices,
+        index=index,
+    )
     for definition in panels_for_tool(tool)[:MAX_FIGURES]:
         table = best_table(definition, tables)
         if table is None:
@@ -119,6 +133,42 @@ def run_figures(
     if figures:
         figures.append(RunFigure("figures/README.md", "\n".join(index).encode("utf-8"), "Index of this run's figures"))
     return figures, notices
+
+
+def _showcase_figures(  # noqa: PLR0913 - the run's accumulators, threaded through
+    tool: str,
+    *,
+    frames: Mapping[str, pd.DataFrame],
+    settings: Mapping[str, Any] | None,
+    hashes: Mapping[str, str] | None,
+    dpi: int,
+    events: Sequence[tuple[float, str]],
+    figures: list[RunFigure],
+    notices: list[Diagnostic],
+    index: list[str],
+) -> None:
+    """The tool's showcase figure, when it can support one (SHOWCASE_FIGURES_PLAN)."""
+    for showcase in showcases_for(tool):
+        present = {name: frames[name] for name in showcase.tables if name in frames and not frames[name].empty}
+        if not present:
+            continue
+        source = next(name for name in showcase.tables if name in present)
+        digest = (hashes or {}).get(source) or hashlib.sha256(present[source].to_csv(index=False).encode()).hexdigest()
+        drawn = []
+        for fmt in FIGURE_FORMATS:
+            image = render_showcase(
+                showcase, present, fmt, source=source, settings=settings, sha256=digest, dpi=dpi, events=events
+            )
+            if image.value is None:
+                notices.extend(image.diagnostics)
+                break
+            filename = f"figures/{showcase.name}.{fmt}"
+            figures.append(RunFigure(filename, image.unwrap(), f"{showcase.title} ({fmt.upper()})"))
+            drawn.append(filename)
+        if drawn:
+            index += [f"## {showcase.title}", "", showcase.question, ""]
+            index += [f"- [{name.split('/')[-1]}]({name.split('/')[-1]})" for name in drawn]
+            index += ["", f"Drawn from `{source}`.", ""]
 
 
 def _bundle_figures(  # noqa: PLR0913 - the run's accumulators, threaded through

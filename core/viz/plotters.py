@@ -253,6 +253,44 @@ def _heatmap_figure(frame: pd.DataFrame, spec: ChartSpec) -> Any:
     return fig
 
 
+def _sankey_figure(frame: pd.DataFrame, spec: ChartSpec) -> Any:
+    """A source -> target flow, weighted by y (go.Sankey).
+
+    Node labels come from both columns, in order of first appearance on each
+    side (source labels first, then target labels); a label appearing on both
+    sides is one node, which is what makes a mid-flow category join up. The
+    link colours are the source node's colour, so a reader can follow a band
+    from its origin.
+    """
+    from plotly.graph_objects import Sankey
+
+    sources = frame["x"].astype(str).tolist()
+    targets = frame["group"].astype(str).tolist()
+    weights = frame["y"].astype(float).tolist()
+    # First-appearance node order, sources then new targets: deterministic and
+    # stable, so the same table draws the same diagram.
+    labels: list[str] = []
+    index: dict[str, int] = {}
+    for label in [*sources, *targets]:
+        if label not in index:
+            index[label] = len(labels)
+            labels.append(label)
+    colours = [OKABE_ITO[i % len(OKABE_ITO)] for i in range(len(labels))]
+    fig = _new_figure()
+    fig.add_trace(
+        Sankey(
+            node={"label": labels, "color": colours, "pad": 14, "thickness": 16},
+            link={
+                "source": [index[label] for label in sources],
+                "target": [index[label] for label in targets],
+                "value": weights,
+                "color": [OKABE_ITO[index[label] % len(OKABE_ITO)] for label in sources],
+            },
+        )
+    )
+    return fig
+
+
 def _waffle_figure(frame: pd.DataFrame, spec: ChartSpec) -> Any:
     """100 squares (10x10) shaded by category share, deterministic order.
 
@@ -419,6 +457,8 @@ def build_figure(prepared: PreparedChart, spec: ChartSpec) -> Result[Figure]:
         fig = px.sunburst(frame, path=["x", "group"], values="y", color_discrete_sequence=list(OKABE_ITO))
     elif spec.kind == "treemap":
         fig = px.treemap(frame, path=["x", "group"], values="y", color_discrete_sequence=list(OKABE_ITO))
+    elif spec.kind == "sankey":
+        fig = _sankey_figure(frame, spec)
     elif spec.kind == "radar":
         fig = px.line_polar(
             frame, r="y", theta="x", color=color_arg, line_close=True, color_discrete_sequence=list(OKABE_ITO)
@@ -446,9 +486,9 @@ def build_figure(prepared: PreparedChart, spec: ChartSpec) -> Result[Figure]:
     if spec.kind == "histogram":
         _histogram_opacity(fig, frame, spec)
 
-    if spec.kind in ("pie", "sunburst", "treemap", "radar", "waffle", "calendar"):
+    if spec.kind in ("pie", "sunburst", "treemap", "radar", "waffle", "calendar", "sankey"):
         # Non-Cartesian kinds: no axis titles/ticks to pin. Polar gets a
-        # radial label; calendar/waffle label their own layouts.
+        # radial label; calendar/waffle/sankey label their own layouts.
         if spec.subtitle:
             fig.update_layout(title_text=f"{spec.title or _default_title(spec)}<br><sup>{spec.subtitle}</sup>")
         if has_groups and spec.kind in ("radar", "violin"):

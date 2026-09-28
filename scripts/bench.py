@@ -4,7 +4,7 @@ Times intake, parsing, and a fixed set of analyses over any corpus
 directory and writes a JSON record. Each analysis is attempted and its
 outcome recorded (seconds or loud error code) — a missing optional
 dependency is a measurement fact, not a crash. This script asserts no
-budget; budgets live in ``docs/PERFORMANCE.md`` next to recorded runs.
+budget; budgets live in ``docs/internal/PERFORMANCE.md`` next to recorded runs.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""A book stored as its chapters (docs/PLAN_0.5.0.md 2.4, 2.9).
+"""A book stored as its chapters (docs/internal/PLAN_0.5.0.md 2.4, 2.9).
 
 The split writes one document per section, each holding exactly its slice of
 the book, with Work / Order / Chapter / Title details and a record of where

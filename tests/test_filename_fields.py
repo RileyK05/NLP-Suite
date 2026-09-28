@@ -1,4 +1,4 @@
-"""File-name detection of document details (docs/PLAN_0.5.0.md 1.4.1).
+"""File-name detection of document details (docs/internal/PLAN_0.5.0.md 1.4.1).
 
 The real workspace's names (names only; tests/fixtures/names/real_projects.txt)
 are the coverage set: the detector must read all of them, and must agree with

@@ -154,6 +154,33 @@ class TestRunAndSave:
         assert [call["function"] for call in provenance["calls"]][:2] == ["corpus", "term_rates"]
         assert any(item["path"] == "tables/Rate_in_each_document.csv" for item in workspace.tables(project_id))
 
+    def test_an_interactive_chart_is_kept_as_html(
+        self, project: tuple[Workspace, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A chart from nlp.chart is a charts/*.html artifact and an embedded output."""
+        pytest.importorskip("plotly")
+        workspace, project_id = project
+        monkeypatch.setenv("NLP_SUITE_RUN_FIGURES", "0")
+        content = new_notebook(
+            [
+                ("code", "import pandas as pd\nimport nlpsuite as nlp"),
+                (
+                    "code",
+                    "df = pd.DataFrame({'Word': ['a', 'b'], 'N': [2, 3]})\n"
+                    "nlp.chart(df, kind='pie', x='Word', y='N', name='shares')",
+                ),
+            ]
+        )
+        job = _run(workspace, project_id, content, monkeypatch)
+        assert job["state"] == "DONE", job["diagnostics"]
+        run = workspace.project_dir(project_id) / job["run_dir"]
+        assert (run / "charts" / "shares.html").is_file()
+        executed = json.loads((run / "notebook.ipynb").read_text(encoding="utf-8"))
+        assert any("text/html" in output.get("data", {}) for output in executed["cells"][1]["outputs"])
+        _, data = export_notebook(workspace, project_id, workspace.notebooks(project_id)[0]["id"])
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            assert "charts/shares.html" in archive.namelist()
+
     def test_a_failing_cell_stops_the_run_and_keeps_what_came_before(
         self, project: tuple[Workspace, str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -203,6 +230,9 @@ class TestExport:
         assert "data/Rate_in_each_document.csv" in names and "data/rates_per_document.csv" in names
         assert "figures/word_group_over_time.png" in names
         assert job["created"][:10] in readme
+        # Running it outside the app needs the install and a folder to read:
+        # neither the import nor nlp.corpus() works without saying so.
+        assert "pip install nlp-suite-ng" in readme and 'nlp.use_folder("path/to/your/texts")' in readme
 
     def test_a_notebook_never_saved_as_a_run_says_its_data_is_empty(self, project: tuple[Workspace, str]) -> None:
         workspace, project_id = project
@@ -345,3 +375,46 @@ class TestGuide:
         text = guide(version="full")
         for template in TEMPLATES:
             assert template.request in text
+
+    def test_says_how_to_run_outside_the_app(self) -> None:
+        """A script written against the guide must not break outside the app.
+
+        The library only imports when the repository is on the path, and
+        ``nlp.corpus()`` needs a project; the guide said neither. It now names
+        the install, ``nlp.use_folder``, and the columns a folder lacks.
+        """
+        text = guide(version="short")
+        assert "pip install nlp-suite-ng" in text
+        assert "nlp.use_folder" in text
+
+    def test_names_columns_that_only_exist_inside_the_app(self) -> None:
+        """``Speaker`` is a project detail, absent from a folder outside the app."""
+        import pandas as pd
+
+        documents = pd.DataFrame(
+            {
+                "Document ID": ["1"],
+                "Document": ["a.txt"],
+                "Date": ["1990-01-01"],
+                "Year": [1990],
+                "Words": [10],
+                "Speaker": ["A"],
+                "Kind": ["sotu"],
+            }
+        )
+        summary = corpus_summary(documents, name="Speeches")
+        assert summary["details"] == ["Speaker", "Kind"]
+        text = guide(version="short", corpus=summary)
+        assert "a project detail the app supplies" in text
+        assert (
+            "Outside the app `corpus.documents` has `Document ID`, `Document`, `Date`, `Year` and `Words` only" in text
+        )
+
+    def test_a_folder_corpus_has_no_app_only_columns(self, tmp_path: Path) -> None:
+        """The premise the guide describes, checked against the real source."""
+        from core.script.api import Corpus
+        from core.script.session import FolderSource, Session
+
+        (tmp_path / "1990-01-01_a.txt").write_text("One two three.", encoding="utf-8")
+        columns = Corpus(Session(FolderSource(tmp_path)), None).documents.columns
+        assert list(columns) == ["Document ID", "Document", "Date", "Year", "Words"]

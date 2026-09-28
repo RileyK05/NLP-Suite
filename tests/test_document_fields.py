@@ -238,3 +238,40 @@ def test_purging_a_document_removes_its_details(project: tuple[Workspace, str, d
     workspace.purge_document(project_id, target)
     with workspace.connect() as db:
         assert db.execute("SELECT COUNT(*) FROM document_fields WHERE document_id=?", (target,)).fetchone()[0] == 0
+
+
+def test_project_events_are_stored_and_positioned(project: tuple[Workspace, str, dict[str, str]]) -> None:
+    """Dated events save with the project and resolve to decimal years (section 4)."""
+    workspace, project_id, _ = project
+    from desktop_backend.fields import ProjectEvent, project_events
+
+    save_settings(
+        workspace,
+        project_id,
+        FieldSettings(
+            events=[
+                ProjectEvent(name="Pearl Harbor", date="1941-12-07"),
+                ProjectEvent(name="Korea", date="1950.5"),
+                ProjectEvent(name="Unreadable", date="not a date"),
+            ]
+        ),
+    )
+    found = project_events(workspace, project_id)
+    # The unreadable date is dropped, never placed at the origin.
+    assert [event["name"] for event in found] == ["Pearl Harbor", "Korea"]
+    assert abs(found[0]["position"] - 1941.93) < 0.01
+    assert found[1]["position"] == 1950.5
+    # The stored settings keep every event, so the Corpus page can still show
+    # and fix the one that could not be positioned.
+    from desktop_backend.fields import settings
+
+    assert len(settings(workspace, project_id)["settings"]["events"]) == 3
+
+
+def test_duplicate_event_names_are_refused(project: tuple[Workspace, str, dict[str, str]]) -> None:
+    from pydantic import ValidationError
+
+    from desktop_backend.fields import ProjectEvent
+
+    with pytest.raises(ValidationError):
+        FieldSettings(events=[ProjectEvent(name="Korea", date="1950"), ProjectEvent(name="korea", date="1951")])

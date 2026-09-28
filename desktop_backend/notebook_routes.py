@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from desktop_backend.kernels import KernelManager
 from desktop_backend.notebook_export import export_notebook, safe_file_name
 from desktop_backend.notebooks import NotebookBody, new_notebook, normalize_notebook, notebook_from_template
+from desktop_backend.previews import MAX_PREVIEW_BYTES, PreviewTickets
 from desktop_backend.runner import Runner
 from desktop_backend.store import Workspace
 
@@ -64,6 +65,7 @@ def register_notebook_routes(
     kernels: KernelManager,
     secured: Sequence[Any],
     public_job: Callable[[dict[str, Any]], dict[str, Any]],
+    previews: PreviewTickets,
 ) -> None:
     dependencies = list(secured)
 
@@ -115,7 +117,7 @@ def register_notebook_routes(
 
     @app.get("/api/projects/{project_id}/script-guide", dependencies=dependencies)
     def script_guide(project_id: str, version: str = "short", corpus: bool = True) -> PlainTextResponse:
-        """The guide a researcher pastes into their own chatbot (docs/PLAN_0.5.0.md 4.8).
+        """The guide a researcher pastes into their own chatbot (docs/internal/PLAN_0.5.0.md 4.8).
 
         With ``corpus``, it ends with the project's document columns and sample
         values -- names, dates, counts, never text.
@@ -215,7 +217,42 @@ def register_notebook_routes(
     @app.get("/api/projects/{project_id}/notebooks/{notebook_id}/kernel/files/{name}", dependencies=dependencies)
     def kernel_file(project_id: str, notebook_id: str, name: str) -> FileResponse:
         path = kernels.file(project_id, notebook_id, name)
-        media = {".png": "image/png", ".svg": "image/svg+xml", ".csv": "text/csv"}.get(
+        media = {".png": "image/png", ".svg": "image/svg+xml", ".csv": "text/csv", ".html": "text/html"}.get(
             path.suffix, "application/octet-stream"
         )
         return FileResponse(path, media_type=media, filename=name)
+
+    @app.post(
+        "/api/projects/{project_id}/notebooks/{notebook_id}/kernel/files/{name}/preview",
+        dependencies=dependencies,
+    )
+    def prepare_kernel_preview(project_id: str, notebook_id: str, name: str) -> dict[str, str]:
+        """A ticket to frame one kernel HTML chart without the workspace token.
+
+        Interactive charts are shown in a sandboxed frame, which cannot carry
+        an Authorization header. This issues the same scoped, expiring ticket a
+        run artifact's preview uses, so the frame fetches by ticket alone.
+        """
+        path = kernels.file(project_id, notebook_id, name)
+        if path.suffix.lower() not in (".html", ".htm") or path.stat().st_size > MAX_PREVIEW_BYTES:
+            raise ValueError("Only an interactive HTML chart can be previewed in a frame.")
+        return {"path": "/api/previews/" + previews.issue_kernel(project_id, notebook_id, name)}
+
+    @app.get("/api/projects/{project_id}/notebooks/{notebook_id}/tables.zip", dependencies=dependencies)
+    def tables_zip(project_id: str, notebook_id: str) -> Response:
+        """Every table the notebook's kernel has shown or saved, as one zip.
+
+        The one-click "Save all CSVs": a reader who wants the numbers behind a
+        session's tables should not have to press a download button per table.
+        """
+        workspace.notebook(project_id, notebook_id)
+        try:
+            data = kernels.tables_archive(project_id, notebook_id)
+        except KeyError as exc:
+            raise ValueError("This notebook has no running kernel; run a cell first.") from exc
+        name = safe_file_name(workspace.notebook(project_id, notebook_id)["name"])
+        return Response(
+            data,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{name} tables.zip"'},
+        )

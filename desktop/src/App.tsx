@@ -142,7 +142,7 @@ type Page =
  *
  * WORKSHOP, below the research pages, holds the places where the researcher
  * builds something of their own rather than running a tool as it comes:
- * Scripts now, Compare next (docs/PLAN_0.5.0.md D2; the heading is a
+ * Scripts now, Compare next (docs/internal/PLAN_0.5.0.md D2; the heading is a
  * placeholder name).
  *
  * The order inside the middle group is the order the work happens in: ask
@@ -1673,7 +1673,7 @@ export default function App() {
               <span />
               Local workspace <ShieldCheck size={14} />
             </div>
-            <small>Desktop beta · 0.5.0</small>
+            <small>Desktop beta · 0.5.1</small>
           </div>
         </aside>
         <div className="main-shell">

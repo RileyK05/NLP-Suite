@@ -1,4 +1,4 @@
-"""Figures over a comparison run (docs/PLAN_0.5.0.md 3.7).
+"""Figures over a comparison run (docs/internal/PLAN_0.5.0.md 3.7).
 
 Each is an ordinary panel over one of the ``contrast`` tool's tables, so it
 gets Explore, saved views and publication like every other figure.

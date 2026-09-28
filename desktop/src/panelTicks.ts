@@ -3,7 +3,7 @@
  *
  * Pure functions, no DOM, so every rule a reader sees on an axis is pinned by
  * `panelTicks.test.ts`. Each one exists because a real figure broke without
- * it (docs/FIGURE_QUALITY_PLAN.md, classes C1, C3 and C4):
+ * it (docs/internal/FIGURE_RECIPES.md part 2, classes C1, C3 and C4):
  *
  * * **No "-0" tick.** `Math.round(-0.4) * step` is negative zero, and
  *   `(-0).toLocaleString()` prints "-0"; floating-point stepping also leaves

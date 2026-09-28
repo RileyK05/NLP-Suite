@@ -215,7 +215,7 @@ class TestC618Completion:
         """Registry-vs-ledger: declared capability IDs must exist in the ledger."""
         from pathlib import Path
 
-        ledger = Path(__file__).resolve().parent.parent / "docs" / "REPLACEMENT_LEDGER.md"
+        ledger = Path(__file__).resolve().parent.parent / "docs" / "internal" / "REPLACEMENT_LEDGER.md"
         text = ledger.read_text(encoding="utf-8")
         for spec in TOOL_REGISTRY:
             for cap in spec.capability_ids:

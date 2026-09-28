@@ -1,4 +1,4 @@
-"""A long text's own sections (docs/PLAN_0.5.0.md 2.3, 2.9).
+"""A long text's own sections (docs/internal/PLAN_0.5.0.md 2.3, 2.9).
 
 The fixtures in ``tests/fixtures/books/`` are the real opening of *Alice's
 Adventures in Wonderland* with its Project Gutenberg header, contents and

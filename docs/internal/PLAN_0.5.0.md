@@ -11,7 +11,7 @@ This plan will be built over several passes (several chat sessions). Each part i
 1. Read **section 0** (the rules and the measured facts). It takes ten minutes and prevents most wrong turns.
 2. Find the next unfinished pass in **section 7** (order of work). Each pass names the part and the sub-sections it covers.
 3. Build that pass. Stop at its "Done when" line and check every item in it **in the real app** (section 0.2), not only in tests.
-4. Write what you built, and anything that differed from this plan, in the **Progress** section at the bottom of this file. Write new ideas into `docs/PANELS_BACKLOG.md` section 4d (a new 4d-9 heading for 0.5.0), not only in chat.
+4. Write what you built, and anything that differed from this plan, in the **Progress** section at the bottom of this file. Write new ideas into `docs/internal/PANELS_BACKLOG.md` section 4d (a new 4d-9 heading for 0.5.0), not only in chat.
 5. Commit and push to dev `main`.
 
 Words used with a fixed meaning in this plan are defined in the **glossary (section 10)**. The ones most likely to confuse:
@@ -152,7 +152,7 @@ Each fact has where it was read, so a later session can re-check it.
 - The mixed 68-document project is the **within-project** version of the same question: `kind = ina` vs `kind = sotu`, detected from the file names.
 - There is **no book** in the workspace; section 2.8 says where to get two. Debates appear in this plan only as an **example** of a second collection (Riley isn't building a debates corpus); the real comparison tests use SOTU vs Inaugural (3.10).
 
-**Backlog items this plan absorbs** (from `docs/PANELS_BACKLOG.md`), so they are not built twice:
+**Backlog items this plan absorbs** (from `docs/internal/PANELS_BACKLOG.md`), so they are not built twice:
 
 - 4d-4 **"Named cohorts instead of regex groups"**: becomes document fields (section 1).
 - 4d-4 and 4d **"Multi-run panels"**: becomes panels over a comparison's joined tables (section 3.7).
@@ -634,10 +634,10 @@ Register it:
 - `ToolSpec(name="contrast", family="corpus_statistics" or a new family "comparison", input_kind="corpus", requires_parse=True, ...)` in `core/profiler/registry.py`;
 - an adapter in `core/profiler/executor.py` (`ADAPTERS`, `ADAPTER_NEEDS = {"table","corpus"}`);
 - `core/profiler/labels.py`;
-- `docs/MIGRATION.md`, `docs/REPLACEMENT_LEDGER.md` (a capability ID that resolves);
+- `docs/MIGRATION.md`, `docs/internal/REPLACEMENT_LEDGER.md` (a capability ID that resolves);
 - the `tests/test_tool_registry.py` scope gate.
 
-This is the "five-plus edits" list from `docs/PANELS_BACKLOG.md` section 6. Do all of them in the same commit. **Not** in `desktop_backend/catalog.py`'s `CORPUS_TOOLS`: it has its own page, like `phrase_distribution` has its own endpoints (see `QUESTION_PUBLISHER_SPECS` in `runner.py` for how a tool is kept out of the general catalog).
+This is the "five-plus edits" list from `docs/internal/PANELS_BACKLOG.md` section 6. Do all of them in the same commit. **Not** in `desktop_backend/catalog.py`'s `CORPUS_TOOLS`: it has its own page, like `phrase_distribution` has its own endpoints (see `QUESTION_PUBLISHER_SPECS` in `runner.py` for how a tool is kept out of the general catalog).
 
 ### 3.5 Methods list (what the user ticks), in the order shown
 
@@ -1125,7 +1125,7 @@ This is not security (4.4.5 explains why Python can't be sandboxed from inside P
   - `desktop/src/toolGuides.json`: guides for `contrast`;
   - the Learn page: short "How to" entries for the four new things (check how `Learn.tsx` sources its content).
 - **Release notes** `docs/releases/0.5.0.md`, in the style of 0.4.0's (plain, user-facing, bold lead-ins). Write it at the end, not the start.
-- **`docs/PANELS_BACKLOG.md`**: add section 4d-9 "0.5.0" with the deferred list (5.6) and anything new found during the passes.
+- **`docs/internal/PANELS_BACKLOG.md`**: add section 4d-9 "0.5.0" with the deferred list (5.6) and anything new found during the passes.
 
 ---
 

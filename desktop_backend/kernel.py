@@ -203,15 +203,22 @@ class OutputSink:
         self.count = 0
 
     def __call__(self, output: Any) -> None:
-        from core.script.session import FigureOutput, NoteOutput, TableOutput
+        from core.script.session import FigureOutput, HtmlOutput, NoteOutput, TableOutput
         from desktop_backend.live import as_table
 
         self.count += 1
         stem = f"{self.exec_id:04d}_{self.count:03d}"
-        if isinstance(output, TableOutput):
+        if isinstance(output, HtmlOutput):
+            # An interactive chart (nlp.chart): the HTML fragment is a file the
+            # page frames, not a preview in an event -- the fragment is large
+            # and the page fetches it like any other kernel output file.
+            name = f"{stem}_{output.name}.html"
+            (self.directory / name).write_text(output.html, encoding="utf-8")
+            event: dict[str, Any] = {"kind": "html", "name": output.name, "file": name}
+        elif isinstance(output, TableOutput):
             name = f"{stem}_{output.name}.csv"
             output.frame.to_csv(self.directory / name, index=False, encoding="utf-8")
-            event: dict[str, Any] = {
+            event = {
                 "kind": "table",
                 "name": output.name,
                 "title": output.title,
@@ -226,13 +233,19 @@ class OutputSink:
                     output.chart_frame if output.chart_frame is not None else output.frame, CHART_ROWS
                 )
         elif isinstance(output, FigureOutput):
-            png, svg = f"{stem}_{output.name}.png", f"{stem}_{output.name}.svg"
+            png = f"{stem}_{output.name}.png"
             (self.directory / png).write_bytes(output.png)
-            (self.directory / svg).write_bytes(output.svg)
-            event = {"kind": "figure", "name": output.name, "png": png, "svg": svg}
+            event = {"kind": "figure", "name": output.name, "png": png, "svg": None}
+            # The SVG is optional (see core.script.session.FigureOutput): a
+            # packaged runtime can lack matplotlib's SVG writer, and the page
+            # shows the PNG with its download button alone.
+            if output.svg is not None:
+                svg = f"{stem}_{output.name}.svg"
+                (self.directory / svg).write_bytes(output.svg)
+                event["svg"] = svg
         elif isinstance(output, NoteOutput):
             event = {"kind": "text", "text": output.text}
-        else:  # pragma: no cover - the library emits only the three kinds
+        else:  # pragma: no cover - the library emits only the four kinds
             return
         self.send({"event": "output", "id": self.exec_id, **event})
 

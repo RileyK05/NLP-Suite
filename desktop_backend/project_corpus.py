@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from core.io.cleaning import strip_stage_directions
 from core.io.document_fields import document_date
-from core.io.reader import Corpus, Document, corpus_fingerprint, hash_file, hash_text, read_text
+from core.io.reader import Corpus, Document, corpus_fingerprint, hash_file, hash_text, ordered_fingerprint, read_text
 from core.result import Diagnostic, Result
 from desktop_backend.fields import TextCleaning, cleaning as project_cleaning
 
@@ -197,7 +197,11 @@ def parse_cached(
             stage(text)
 
     identity = parser_identity(pipeline)
-    key = annotation_key(corpus.sha256, identity)
+    # The parse key is order-SENSITIVE: Document/Sentence/Record IDs are
+    # positions, so two orderings of the same documents are two tables. The
+    # per-document keys below stay order-free (a document's parse does not
+    # depend on its neighbours), which is what keeps 5.1's reuse intact.
+    key = annotation_key(ordered_fingerprint(corpus.docs), identity)
     tokenizer_name = f"{identity['backend']}/{identity['model'] or identity['language']}"
 
     def tokenize(text: str) -> Sequence[str]:

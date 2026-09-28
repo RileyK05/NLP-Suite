@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -16,6 +17,7 @@ import {
   Copy,
   CopyPlus,
   Download,
+  FileSpreadsheet,
   FileUp,
   LoaderCircle,
   Play,
@@ -31,7 +33,14 @@ import {
   X,
 } from "lucide-react";
 
-import { artifactBlobUrl, artifactText, download, when, type Job } from "./api";
+import {
+  artifactBlobUrl,
+  artifactText,
+  download,
+  kernelFrameUrl,
+  when,
+  type Job,
+} from "./api";
 import { ChartCanvas } from "./ChartCanvas";
 import { buildLayout } from "./chartLayout";
 import { CodeEditor } from "./CodeEditor";
@@ -54,6 +63,7 @@ import {
   listNotebooks,
   matplotlibCode,
   newCell,
+  notebookTablesPath,
   parseIpynb,
   runAndSave,
   saveNotebook,
@@ -101,6 +111,106 @@ function KernelImage({ path, alt }: { path: string; alt: string }) {
     return <p className="muted">The figure could not be shown: {failed}</p>;
   if (!url) return <p className="muted">Loading the figure…</p>;
   return <img className="cell-figure" src={url} alt={alt} />;
+}
+
+/**
+ * One kept figure: the PNG, with the SVG download when the kernel made one.
+ *
+ * A packaged runtime without matplotlib's SVG writer keeps the figure as a
+ * PNG alone (the kernel's figure output carries `svg: null`), so the SVG
+ * button is simply absent rather than failing to download nothing.
+ */
+function FigureOutput({
+  output,
+  filePath,
+}: {
+  output: Extract<CellOutput, { kind: "figure" }>;
+  filePath: (name: string) => string;
+}) {
+  const svg = output.svg;
+  return (
+    <div className="cell-figure-wrap">
+      <KernelImage path={filePath(output.png)} alt={output.name} />
+      <span className="cell-figure-actions">
+        <button
+          className="secondary compact"
+          onClick={() =>
+            void download(filePath(output.png), `${output.name}.png`)
+          }
+        >
+          <Download size={14} /> PNG
+        </button>
+        {svg && (
+          <button
+            className="secondary compact"
+            onClick={() => void download(filePath(svg), `${output.name}.svg`)}
+          >
+            <Download size={14} /> SVG
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * One interactive chart (`nlp.chart`): the engine's plotly HTML, framed.
+ *
+ * The frame is sandboxed and carries no workspace token -- it is fetched by a
+ * scoped, expiring ticket (see kernelFrameUrl), so a chart's own scripts can
+ * run without the frame reaching the app's API.
+ */
+function HtmlOutput({
+  output,
+  filePath,
+}: {
+  output: Extract<CellOutput, { kind: "html" }>;
+  filePath: (name: string) => string;
+}) {
+  const [url, setUrl] = useState("");
+  const [failed, setFailed] = useState("");
+  useEffect(() => {
+    let alive = true;
+    setUrl("");
+    setFailed("");
+    kernelFrameUrl(filePath(output.file))
+      .then((value) => alive && setUrl(value))
+      .catch((caught) => alive && setFailed(errorText(caught)));
+    return () => {
+      alive = false;
+    };
+  }, [filePath, output.file]);
+  return (
+    <div className="cell-html-wrap">
+      <div className="cell-table-head">
+        <strong>{output.name.replaceAll("_", " ")}</strong>
+        <span className="cell-table-actions">
+          <button
+            className="secondary compact"
+            onClick={() =>
+              void download(filePath(output.file), `${output.name}.html`)
+            }
+            title="A self-contained page that opens in any browser"
+          >
+            <Download size={14} /> HTML
+          </button>
+        </span>
+      </div>
+      {failed && (
+        <p className="muted">The chart could not be shown: {failed}</p>
+      )}
+      {!failed && !url && <p className="muted">Loading the chart…</p>}
+      {url && (
+        <iframe
+          className="cell-chart-frame"
+          title={output.name}
+          src={url}
+          sandbox="allow-scripts"
+          referrerPolicy="no-referrer"
+        />
+      )}
+    </div>
+  );
 }
 
 /** One shown table: the first rows, and the chart beside it. */
@@ -236,28 +346,10 @@ function Outputs({
           );
         if (output.kind === "figure")
           return (
-            <div key={index} className="cell-figure-wrap">
-              <KernelImage path={filePath(output.png)} alt={output.name} />
-              <span className="cell-figure-actions">
-                <button
-                  className="secondary compact"
-                  onClick={() =>
-                    void download(filePath(output.png), `${output.name}.png`)
-                  }
-                >
-                  <Download size={14} /> PNG
-                </button>
-                <button
-                  className="secondary compact"
-                  onClick={() =>
-                    void download(filePath(output.svg), `${output.name}.svg`)
-                  }
-                >
-                  <Download size={14} /> SVG
-                </button>
-              </span>
-            </div>
+            <FigureOutput key={index} output={output} filePath={filePath} />
           );
+        if (output.kind === "html")
+          return <HtmlOutput key={index} output={output} filePath={filePath} />;
         return <TableOutput key={index} output={output} filePath={filePath} />;
       })}
       {run.error && (
@@ -616,6 +708,15 @@ function ReferencePanel({
             {corpus.columns.map((column) => (
               <li key={column}>
                 <code>{column}</code>
+                {corpus.details.includes(column) ? (
+                  <span
+                    className="muted"
+                    title="A project detail: present in the app, absent when a folder is read with nlp.use_folder outside it"
+                  >
+                    {" "}
+                    (in the app only)
+                  </span>
+                ) : null}
                 {corpus.samples[column]?.length ? (
                   <span className="muted">
                     {" "}
@@ -1000,6 +1101,15 @@ export function Scripts({
   const filePath = useCallback(
     (name: string) => (shownId ? kernelFilePath(projectId, shownId, name) : ""),
     [projectId, shownId],
+  );
+  // Whether any cell has shown or saved a table, so "Save all CSVs" is only
+  // offered when there is something to save.
+  const hasTables = useMemo(
+    () =>
+      Object.values(runs).some((run) =>
+        run.outputs.some((output) => output.kind === "table"),
+      ),
+    [runs],
   );
 
   const start = useCallback(
@@ -1533,6 +1643,19 @@ export function Scripts({
                     title="A zip with the notebook, its data and figures, and how to run it outside the app"
                   >
                     <Download size={14} /> Export
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      void download(
+                        notebookTablesPath(projectId, working.id),
+                        `${working.name} tables.zip`,
+                      ).catch((c) => setError(errorText(c)))
+                    }
+                    disabled={!hasTables}
+                    title="Every table the cells above have shown or saved, as one zip of CSVs"
+                  >
+                    <FileSpreadsheet size={14} /> Save all CSVs
                   </button>
                   <button
                     className="secondary"

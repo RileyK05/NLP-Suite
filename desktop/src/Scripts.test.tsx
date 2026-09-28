@@ -56,8 +56,10 @@ function route(method: "GET" | "POST", path: string, body?: unknown): unknown {
       documents: 4,
       words: 1200,
       years: [1946, 2007],
-      columns: ["Document", "Year"],
-      samples: { Year: ["1946", "1955"] },
+      columns: ["Document", "Year", "Speaker"],
+      // Speaker is a project detail: present in the app, absent outside it.
+      details: ["Speaker"],
+      samples: { Year: ["1946", "1955"], Speaker: ["Truman"] },
     };
   if (parts[2] !== "notebooks") throw new Error(`unrouted ${method} ${path}`);
   const id = parts[3];
@@ -127,6 +129,7 @@ vi.mock("./api", () => ({
   post: async (path: string, body: unknown) => route("POST", path, body),
   artifactBlobUrl: async () => "blob:figure",
   artifactText: async (path: string) => `guide for ${path}`,
+  kernelFrameUrl: async () => "blob:chart-frame",
   download: vi.fn(async () => undefined),
   when: (value: string) => value,
 }));
@@ -203,6 +206,9 @@ beforeEach(() => {
     configurable: true,
   });
   clipboard.mockClear();
+  // jsdom has no object URLs; a figure's <img> loads through one.
+  URL.createObjectURL = vi.fn(() => "blob:figure");
+  URL.revokeObjectURL = vi.fn();
 });
 afterEach(() => {
   for (const { root, container } of mounted.splice(0)) {
@@ -340,6 +346,105 @@ describe("Scripts", () => {
     expect(clipboard.mock.calls[0][0]).toContain('pd.read_csv("rates.csv")');
     await click(button(container, "Table"));
     expect(container.querySelector("table")).not.toBeNull();
+  });
+
+  it("offers 'Save all CSVs' only once a table exists, and downloads the zip", async () => {
+    const { download } = await import("./api");
+    notebooks = [notebook("nb1", "Rates", [cell("code", "nlp.show(rates)")])];
+    kernel = () => [
+      {
+        event: "output",
+        kind: "table",
+        name: "rates",
+        title: "Rate in each document",
+        file: "0001_001_rates.csv",
+        saved: false,
+        preview: {
+          columns: ["Year", "rate"],
+          rows: [{ Year: "1990", rate: "1.5" }],
+          total: 1,
+          truncated: false,
+        },
+        chart: null,
+        chart_note: "",
+      },
+      { event: "done", ok: true, seconds: 0.1, error: null },
+    ];
+    const container = page();
+    await until(() => container.textContent!.includes("Rates"), "the notebook");
+    // Nothing shown yet: the button is present but disabled.
+    expect(button(container, "Save all CSVs").disabled).toBe(true);
+    await click(button(container, "Run cell 1"));
+    await until(
+      () => !button(container, "Save all CSVs").disabled,
+      "Save all CSVs to enable",
+    );
+    await click(button(container, "Save all CSVs"));
+    expect(download).toHaveBeenCalledWith(
+      "/projects/p/notebooks/nb1/tables.zip",
+      "Rates tables.zip",
+    );
+  });
+
+  it("keeps a figure that has no SVG (a runtime without the SVG writer)", async () => {
+    notebooks = [notebook("nb1", "Figure", [cell("code", "nlp.figure(fig)")])];
+    kernel = () => [
+      {
+        event: "output",
+        kind: "figure",
+        name: "test",
+        png: "0001_001_test.png",
+        svg: null,
+      },
+      { event: "done", ok: true, seconds: 0.1, error: null },
+    ];
+    const container = page();
+    await until(
+      () => container.textContent!.includes("Figure"),
+      "the notebook",
+    );
+    await click(button(container, "Run cell 1"));
+    await until(
+      () => !!container.querySelector("img.cell-figure"),
+      "the figure",
+    );
+    // The figure is shown and its PNG offered; the SVG button is simply absent.
+    expect(button(container, "PNG")).not.toBeNull();
+    expect(
+      [...container.querySelectorAll(".cell-figure-actions button")].some((b) =>
+        b.textContent!.includes("SVG"),
+      ),
+    ).toBe(false);
+  });
+
+  it("frames an interactive chart from nlp.chart, with an HTML download", async () => {
+    notebooks = [notebook("nb1", "Charts", [cell("code", "nlp.chart(df)")])];
+    kernel = () => [
+      {
+        event: "output",
+        kind: "html",
+        name: "flows",
+        file: "0001_001_flows.html",
+      },
+      { event: "done", ok: true, seconds: 0.1, error: null },
+    ];
+    const container = page();
+    await until(
+      () => container.textContent!.includes("Charts"),
+      "the notebook",
+    );
+    await click(button(container, "Run cell 1"));
+    await until(
+      () => !!container.querySelector(".cell-chart-frame"),
+      "the chart frame",
+    );
+    const frame = container.querySelector(
+      ".cell-chart-frame",
+    ) as HTMLIFrameElement;
+    // A sandboxed frame with scripts allowed and no same-origin access.
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(container.textContent).toContain("flows");
+    expect(button(container, "HTML")).not.toBeNull();
   });
 
   it("shows an error by its type, with the user's line on request", async () => {
@@ -621,6 +726,9 @@ describe("Scripts", () => {
     expect(container.textContent).toContain(
       "4 documents, 1,200 words, 1946–2007",
     );
+    // A project detail is marked as existing only inside the app.
+    expect(container.textContent).toContain("Speaker");
+    expect(container.textContent).toContain("(in the app only)");
     await click(button(container, /term_rates/));
     expect(container.textContent).toContain(
       "nlp.term_rates(corpus, groups, *, per=1000)",

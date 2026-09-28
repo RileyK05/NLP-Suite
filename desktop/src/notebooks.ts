@@ -103,7 +103,8 @@ export type CellOutput =
       chart_note: string;
       chart_rows?: Table;
     }
-  | { kind: "figure"; name: string; png: string; svg: string };
+  | { kind: "figure"; name: string; png: string; svg: string | null }
+  | { kind: "html"; name: string; file: string };
 
 export type CellError = { type: string; message: string; trace: string[] };
 
@@ -186,6 +187,9 @@ export const stopKernel = (projectId: string, id: string) =>
   post<{ stopped: boolean }>(`${base(projectId)}/${id}/kernel/stop`, {});
 export const kernelFilePath = (projectId: string, id: string, name: string) =>
   `${base(projectId)}/${id}/kernel/files/${encodeURIComponent(name)}`;
+/** Every table this notebook's kernel has produced, as one zip. */
+export const notebookTablesPath = (projectId: string, id: string) =>
+  `${base(projectId)}/${id}/tables.zip`;
 export const scriptReference = () => api<ScriptReference>("/script/reference");
 export const guidePath = (
   projectId: string,
@@ -203,6 +207,8 @@ export type CorpusSummary = {
   words: number;
   years: [number, number] | null;
   columns: string[];
+  /** Columns that are the project's own document details (app-only). */
+  details: string[];
   samples: Record<string, string[]>;
 };
 export const scriptCorpus = (projectId: string) =>

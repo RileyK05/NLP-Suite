@@ -1,4 +1,4 @@
-"""How a corpus's documents line up: by date, by order, or not at all (docs/PLAN_0.5.0.md 1.6).
+"""How a corpus's documents line up: by date, by order, or not at all (docs/internal/PLAN_0.5.0.md 1.6).
 
 A corpus of speeches lines up in time; a novel split into chapters lines up
 by chapter number; a folder of essays does not line up at all. Every figure

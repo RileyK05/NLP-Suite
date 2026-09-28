@@ -23,7 +23,7 @@ from core.research.phrase import Tokenization
 from core.result import Diagnostic, Result
 from desktop_backend.catalog import CORPUS_TOOLS, desktop_spec
 from desktop_backend.comparisons import CONTRAST_TOOL
-from desktop_backend.fields import cleaning as project_cleaning, project_axis
+from desktop_backend.fields import cleaning as project_cleaning, project_axis, project_events
 from desktop_backend.live import as_parser
 from desktop_backend.project_corpus import load_corpus, parse_cached, resolve_parser
 from desktop_backend.selection import CorpusSelection, resolve_selection
@@ -488,6 +488,10 @@ class Runner:
             "resources": resources,
             "selection": selection.model_dump() if selection is not None else None,
             "axis": project_axis(self.workspace, project_id),
+            # The project's dated events, frozen like the documents: a run's
+            # figures draw the stoplines the reader set at submission time
+            # (SHOWCASE_FIGURES_PLAN section 4).
+            "events": project_events(self.workspace, project_id),
             # What each project leaves out of the text the tools read (stage
             # directions), frozen like the documents: a run records what it
             # read (plan 5.2).
@@ -765,6 +769,7 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
         tokenizer: Tokenization | None = None
         if plan.needs_parse:
             workspace.update_job(job_id, state="RUNNING", stage="Parsing English documents")
+            from core.io.reader import ordered_fingerprint
             from desktop_backend.live import annotation_key, parser_identity
 
             # Same policy as the CLI: a backend whose model is missing or
@@ -782,7 +787,8 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
             resolved_pipeline = pipeline.unwrap()
             if job["tool"] in QUESTION_PUBLISHERS:
                 expected = str(request["params"][job["tool"]].get("snapshot-id", ""))
-                current = annotation_key(corpus.sha256, parser_identity(resolved_pipeline))
+                # Order-sensitive, to match the parse key a question cites.
+                current = annotation_key(ordered_fingerprint(corpus.docs), parser_identity(resolved_pipeline))
                 if expected != current:
                     raise ValueError(
                         "This saved question belongs to an older document or parser snapshot. "
@@ -827,9 +833,17 @@ def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker l
         # A finished run carries its publication figures (figures/*.png,
         # *.svg). NLP_SUITE_RUN_FIGURES=0 turns that off.
         figures = os.environ.get("NLP_SUITE_RUN_FIGURES", "1") != "0"
+        # The dated events frozen into the request, as (position, name), for
+        # the run's dated figures to draw as stoplines.
+        events = tuple(
+            (float(event["position"]), str(event["name"]))
+            for event in request.get("events", [])
+            if isinstance(event, dict) and "position" in event
+        )
         selection_names = tuple(tool.name for tool in plan.tools) if glance else (job["tool"],)
         report = write_batch(
-            project_dir / "runs", BatchRequest(selection_names, plan.params, batch, corpus, figures=figures)
+            project_dir / "runs",
+            BatchRequest(selection_names, plan.params, batch, corpus, figures=figures, events=events),
         )
         outcome = batch.outcomes[0]
         if report.value is None:

@@ -15,6 +15,7 @@ import {
   type AxisChoice,
   type CleaningPreview,
   type ProjectDetails,
+  type ProjectEvent,
 } from "./details";
 
 const errorText = (caught: unknown) =>
@@ -154,6 +155,9 @@ export function CorpusDetails({
       ),
     );
 
+  const chooseEvents = (events: ProjectEvent[]) =>
+    void change(() => saveDetailSettings(projectId, { ...details.settings, events }, details.revision));
+
   const shown = showAll ? rows : rows.slice(0, FIRST_ROWS);
   const template = details.template;
 
@@ -279,6 +283,12 @@ export function CorpusDetails({
                 }`}
         </p>
       </div>
+      <EventsEditor
+        events={details.settings.events ?? []}
+        disabled={saving}
+        axisKind={details.axis.kind}
+        onChange={chooseEvents}
+      />
       <div className="corpus-details-tools">
         <label className="search-box">
           <input
@@ -417,5 +427,93 @@ export function CorpusDetails({
         <span>Emptying a typed value brings back the file name&rsquo;s.</span>
       </p>
     </section>
+  );
+}
+
+/**
+ * Dated events for the project's time figures (SHOWCASE_FIGURES_PLAN section 4).
+ *
+ * "The world on the axis": a stopline at Pearl Harbor or 9/11 turns a trend
+ * into a test the reader can check. Events are saved with the project's other
+ * settings and frozen into each run, so a published figure draws the ones the
+ * reader set when it was submitted.
+ */
+function EventsEditor({
+  events,
+  disabled,
+  axisKind,
+  onChange,
+}: {
+  events: ProjectEvent[];
+  disabled: boolean;
+  axisKind: "time" | "order" | "none";
+  onChange: (events: ProjectEvent[]) => void;
+}) {
+  const [name, setName] = useState("");
+  const [date, setDate] = useState("");
+
+  const add = () => {
+    const trimmed = name.trim();
+    const when = date.trim();
+    if (!trimmed || !when) return;
+    if (events.some((event) => event.name.toLowerCase() === trimmed.toLowerCase()))
+      return;
+    onChange([...events, { name: trimmed, date: when, note: "" }]);
+    setName("");
+    setDate("");
+  };
+
+  return (
+    <div className="corpus-events">
+      <h3>Events</h3>
+      <p className="muted">
+        {axisKind === "time"
+          ? "Dated events are drawn as stoplines on every figure over time, so a change can be checked against what happened. Use a year (1941), a decimal year (1941.5) or a date (1941-12-07)."
+          : "This corpus is not lined up by time, so events will not appear on its figures yet. Set the axis to time above to use them."}
+      </p>
+      {events.length > 0 && (
+        <ul className="event-list">
+          {events.map((event, index) => (
+            <li key={`${event.name}-${event.date}`}>
+              <span className="event-when">{event.date}</span>
+              <span className="event-name">{event.name}</span>
+              <button
+                className="icon-button"
+                aria-label={`Remove event ${event.name}`}
+                disabled={disabled}
+                onClick={() => onChange(events.filter((_, i) => i !== index))}
+              >
+                <X size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="add-event"
+        onSubmit={(e) => {
+          e.preventDefault();
+          add();
+        }}
+      >
+        <input
+          aria-label="Event date"
+          placeholder="1941"
+          value={date}
+          disabled={disabled}
+          onChange={(e) => setDate(e.target.value)}
+        />
+        <input
+          aria-label="Event name"
+          placeholder="Pearl Harbor"
+          value={name}
+          disabled={disabled}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button type="submit" className="text-button" disabled={disabled || !name.trim() || !date.trim()}>
+          <Plus size={14} /> Add event
+        </button>
+      </form>
+    </div>
   );
 }

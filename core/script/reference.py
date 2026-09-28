@@ -4,11 +4,12 @@ Both are generated from the code -- the public functions' signatures and
 docstrings, the tool registry, the templates -- never written by hand, so
 neither can promise a call the library does not have. Both are deterministic:
 the same library and the same corpus give the same bytes, so two releases'
-guides can be compared with a diff (tests/test_script_guide.py checks this).
+guides can be compared with a diff (tests/test_notebooks.py::TestGuide checks
+this).
 
 The app itself contains no AI. The guide is how a researcher gets an assistant
 they already use to write notebook code that calls the suite's functions
-instead of reimplementing them (docs/PLAN_0.5.0.md 4.8).
+instead of reimplementing them (docs/internal/PLAN_0.5.0.md 4.8).
 """
 
 from __future__ import annotations
@@ -23,6 +24,10 @@ GUIDE_VERSIONS = ("short", "full")
 LIBRARY_VERSION = "1"
 #: Sample values shown per document column in the guide's corpus section.
 _SAMPLES = 10
+#: Every column a corpus has wherever it comes from. Anything beyond these is
+#: a project's own document detail (Speaker, Party, ...): it exists inside the
+#: app, and a folder read with ``nlp.use_folder`` outside it has none.
+_CORE_COLUMNS = ("Document ID", "Document", "Date", "Year", "Words")
 
 
 def library_functions() -> list[dict[str, str]]:
@@ -117,7 +122,14 @@ def tools_markdown(*, short: bool) -> str:
 
 
 def corpus_summary(documents: Any, *, name: str = "") -> dict[str, Any]:
-    """What the guide may say about a corpus: counts, columns and sample values. Never text."""
+    """What the guide may say about a corpus: counts, columns and sample values. Never text.
+
+    ``details`` names the columns that are a project's own document fields
+    (``Speaker``, ``Party``, ...). They are present inside the app and absent
+    from a folder read with ``nlp.use_folder`` outside it, so the guide says
+    which is which rather than letting a script that relies on ``Speaker``
+    break the moment it runs anywhere but the app.
+    """
     import pandas as pd
 
     frame: pd.DataFrame = documents
@@ -135,6 +147,7 @@ def corpus_summary(documents: Any, *, name: str = "") -> dict[str, Any]:
         "years": [int(years.min()), int(years.max())] if len(years) else None,
         "dated": len(years),
         "columns": [str(c) for c in frame.columns],
+        "details": [str(c) for c in frame.columns if str(c) not in _CORE_COLUMNS],
         "samples": columns,
     }
 
@@ -143,7 +156,7 @@ _INSTRUCTIONS = """You are writing Python for a notebook cell inside the NLP Sui
 
 1. Use only `nlpsuite` (imported as `nlp`), pandas, numpy, matplotlib, seaborn, scipy and scikit-learn. Nothing else is installed and nothing can be installed.
 2. Prefer a library function to writing it yourself. Never count words with `re.findall` or `str.count` when `nlp.term_rates` does it; never split sentences yourself when `nlp.passages` or `corpus.sentences()` does it. For any tool without its own function, use `nlp.run("tool_name", corpus, ...)`.
-3. Show every table with `nlp.show(table)` (it draws a chart beside it; pass `x=` and `y=` to choose one), keep figures with `nlp.figure(fig, "name")`, and keep data with `nlp.save(table, "name")`. Never write files: the notebook's folder is scratch space that is thrown away.
+3. Show every table with `nlp.show(table)` (it draws a chart beside it; pass `x=` and `y=` to choose one), keep figures with `nlp.figure(fig, "name")`, and keep data with `nlp.save(table, "name")`. For an interactive chart -- a sankey flow, a sunburst or treemap, a radar, or any kind the quick chart does not draw -- use `nlp.chart(table, kind=..., x=..., y=...)`. Never write files: the notebook's folder is scratch space that is thrown away.
 4. Documents differ in length, so compare rates (per 1,000 or 10,000 words), never raw counts. To average over a year, average the per-document rates.
 5. Say in a comment which counting rule you used (`match="lemma"`, `"form"` or `"exact-lowercase"`) and why; they give different numbers.
 6. Use the column names listed under "The researcher's corpus". If the request needs a detail the corpus does not have (a speaker, a party), say so in a comment instead of inventing a column.
@@ -152,12 +165,22 @@ _INSTRUCTIONS = """You are writing Python for a notebook cell inside the NLP Sui
 
 _NOTEBOOKS = """Cells run top to bottom in one Python process; variables persist between cells. A cell's last line is displayed if it is a value (a table shows with a chart, a figure is drawn). `print` works. "Stop" ends the process and forgets every variable. The corpus is parsed the first time a function needs it and reused afterwards; `exact-lowercase` counting needs no parsing and is instant."""
 
+_OUTSIDE = """These cells normally run inside the NLP Suite, where the corpus is connected for you. They can also run outside it -- in Jupyter, VS Code, or a plain script -- with the suite installed as a Python package:
+
+    pip install nlp-suite-ng        # the library alone; add [spacy] for parsing, [plotly] for charts, [all] for everything
+
+Two things differ outside the app, and both break a script that ignores them:
+
+1. **Point the library at your texts.** Inside the app `nlp.corpus()` finds the project's documents by itself; outside it there is no project, so call `nlp.use_folder("path/to/texts")` once (a directory of `.txt` files, read recursively) before anything else. `nlp.corpus()` then returns those documents.
+2. **A folder has fewer document columns.** Outside the app `corpus.documents` has `Document ID`, `Document`, `Date`, `Year` and `Words` only. A project inside the app adds its own details (`Speaker`, `Party`, `Kind`, ...) as extra columns; a folder read with `nlp.use_folder` has none of them, because a filename carries no such fields. A script that groups by `Speaker` works in the app and fails outside it -- guard it (check `"Speaker" in corpus.documents.columns`) or derive the value from the filename yourself."""
+
 _MISTAKES = """- **Counting by hand.** Wrong: `text.lower().count("border")`. Right: `nlp.term_rates(corpus, ["border"], match="exact-lowercase")`, which counts whole words and gives rates.
 - **Raw counts across documents of different lengths.** Wrong: plotting `border count`. Right: plotting `border per 1000`.
 - **Summing rates.** Wrong: `rates.groupby("Year").sum()` on a rate column. Right: `.mean()` of the per-document rates, or `by="year"` for pooled words.
 - **Writing files.** Wrong: `table.to_csv("out.csv")`. Right: `nlp.save(table, "out")`.
 - **Assuming dates.** Check `corpus.documents["Year"]` has values before grouping by year; a corpus of chapters or essays may have none.
-- **Lemma lists with inflections.** With `match="lemma"`, list dictionary forms ("immigrant", not "immigrants"). With `match="exact-lowercase"`, list every form you want counted."""
+- **Lemma lists with inflections.** With `match="lemma"`, list dictionary forms ("immigrant", not "immigrants"). With `match="exact-lowercase"`, list every form you want counted.
+- **Merging `Year` back onto a tool's table.** Nearly every per-document table a tool writes already carries the documents' own columns -- `Document`, `Date`, `Year`, and each detail (`Speaker`, `Kind`, ...) -- beside its measure, so `table.merge(corpus.documents)` makes `Year_x`/`Year_y` and then a `KeyError` on `Year`. Read or group by the columns the table already has (print `table.columns`), and merge only the columns it lacks."""
 
 
 def guide(*, version: str = "short", corpus: Mapping[str, Any] | None = None) -> str:
@@ -170,8 +193,9 @@ def guide(*, version: str = "short", corpus: Mapping[str, Any] | None = None) ->
         f"# NLP Suite scripting guide for AI assistants (library version {LIBRARY_VERSION}, {version})",
         "## 1. Instructions for you, the assistant\n\n" + _INSTRUCTIONS,
         "## 2. How notebooks work\n\n" + _NOTEBOOKS,
-        "## 3. The library (`import nlpsuite as nlp`)\n\n" + reference_markdown(),
-        "## 4. Tools for `nlp.run`\n\n"
+        "## 3. Running a script outside the app\n\n" + _OUTSIDE,
+        "## 4. The library (`import nlpsuite as nlp`)\n\n" + reference_markdown(),
+        "## 5. Tools for `nlp.run`\n\n"
         + ('Call `nlp.describe("tool")` in a cell to see a tool\'s parameters.\n\n' if version == "short" else "")
         + tools_markdown(short=version == "short"),
     ]
@@ -180,10 +204,10 @@ def guide(*, version: str = "short", corpus: Mapping[str, Any] | None = None) ->
         for template in TEMPLATES:
             code = "\n\n".join(text for kind, text in template.cells if kind == "code")
             examples.append(f'### Request: "{template.request}"\n\n```python\n{code}\n```')
-        sections.append("## 5. Worked examples\n\n" + "\n\n".join(examples))
-        sections.append("## 6. Common mistakes\n\n" + _MISTAKES)
+        sections.append("## 6. Worked examples\n\n" + "\n\n".join(examples))
+        sections.append("## 7. Common mistakes\n\n" + _MISTAKES)
     else:
-        sections.append("## 5. Common mistakes\n\n" + _MISTAKES)
+        sections.append("## 6. Common mistakes\n\n" + _MISTAKES)
     if corpus is not None:
         lines = [f"- {corpus['documents']} documents, {corpus['words']:,} words."]
         if corpus.get("years"):
@@ -192,6 +216,20 @@ def guide(*, version: str = "short", corpus: Mapping[str, Any] | None = None) ->
         else:
             lines.append("- No document has a date.")
         lines.append("- `corpus.documents` columns: " + ", ".join(f"`{c}`" for c in corpus["columns"]))
+        details = corpus.get("details") or []
+        if details:
+            # Named, and said to be app-only: a script that leans on Speaker
+            # works inside the app and breaks on nlp.use_folder outside it.
+            named = ", ".join(f"`{c}`" for c in details)
+            portable = ", ".join(f"`{c}`" for c in corpus["columns"] if c not in details)
+            lines.append(
+                f"- {named} "
+                + ("are" if len(details) > 1 else "is")
+                + " a project detail the app supplies, not something a filename carries. "
+                "A folder read with `nlp.use_folder(...)` outside the app has only "
+                + portable
+                + "; do not assume a detail exists if the code must run outside the app."
+            )
         for column, values in corpus["samples"].items():
             lines.append(f"- `{column}` values include: " + ", ".join(f"`{v}`" for v in values))
         title = f" ({corpus['name']})" if corpus.get("name") else ""

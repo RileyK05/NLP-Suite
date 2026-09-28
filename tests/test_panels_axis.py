@@ -1,4 +1,4 @@
-"""Every figure about change works along the corpus's axis, not only along time (docs/PLAN_0.5.0.md 1.7).
+"""Every figure about change works along the corpus's axis, not only along time (docs/internal/PLAN_0.5.0.md 1.7).
 
 The class fix for "the suite only works for time series". These are the 61
 panels whose requirements named ``Date`` or ``Year`` at ``ab627c4``, before

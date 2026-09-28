@@ -1,4 +1,4 @@
-"""Document details: Date, Speaker, Kind, Chapter ... (docs/PLAN_0.5.0.md section 1).
+"""Document details: Date, Speaker, Kind, Chapter ... (docs/internal/PLAN_0.5.0.md section 1).
 
 A document's details come from four places, and when two disagree the more
 deliberate one wins: ``user`` (typed on the Corpus page) over ``csv`` (a
@@ -15,6 +15,7 @@ given to the file-name parts -- live in ``project_settings``.
 
 from __future__ import annotations
 
+from datetime import date
 import json
 import re
 from types import SimpleNamespace
@@ -31,22 +32,26 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from desktop_backend.store import Workspace
 
 __all__ = [
+    "MAX_EVENTS",
     "MAX_FIELDS_PER_PROJECT",
     "MAX_FIELD_VALUE",
     "RESERVED_FIELD_NAMES",
     "SOURCES",
     "FieldRow",
     "FieldSettings",
+    "ProjectEvent",
     "TextCleaning",
     "attach_fields",
     "cleaning",
     "delete_field",
     "details",
+    "event_position",
     "field_names",
     "filename_template",
     "import_fields",
     "name_problem",
     "project_axis",
+    "project_events",
     "resolved_axis",
     "save_settings",
     "set_fields",
@@ -57,6 +62,8 @@ __all__ = [
 SOURCES = ("filename", "split", "csv", "user")
 MAX_FIELDS_PER_PROJECT = 40
 MAX_FIELD_VALUE = 500
+#: The most dated events one project may list; enough for a century of milestones.
+MAX_EVENTS = 50
 #: A stage-direction term is a short word or two, not a sentence.
 _MAX_TERM_LENGTH = 40
 _FIELD_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$")
@@ -111,6 +118,59 @@ class TextCleaning(BaseModel):
         return cleaned
 
 
+class ProjectEvent(BaseModel):
+    """One dated event to draw as a stopline: a name and a year (or a date).
+
+    The plan's section 4: "the single largest lever on figure quality for
+    historical corpora -- it turns every time figure into a check against the
+    world." The date is a decimal year when possible (1941.5 for mid-1941) so
+    it can sit between two addresses, or an ISO date parsed to its exact
+    position.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: StrictStr = Field(min_length=1, max_length=60)
+    #: A year (1941), a decimal year (1941.5), or an ISO date (1941-12-07).
+    date: StrictStr = Field(min_length=4, max_length=10)
+    note: StrictStr = Field(default="", max_length=200)
+
+    @property
+    def position(self) -> float | None:
+        """The decimal-year position of the event, or None when unparseable."""
+        return event_position(self.date)
+
+
+def event_position(value: str) -> float | None:
+    """A year, a decimal year, or an ISO date as a decimal year for an x axis.
+
+    "1941" -> 1941.0, "1941.5" -> 1941.5 (mid-year), "1941-12-07" -> 1941.93.
+    Anything else is None: an event with no position is dropped rather than
+    silently placed at the axis origin.
+    """
+    text = value.strip()
+    iso = _ISO_DATE.match(text)
+    if iso:
+        try:
+            day = date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+        except ValueError:
+            return None
+        start = date(day.year, 1, 1)
+        span = (date(day.year + 1, 1, 1) - start).days
+        return day.year + (day - start).days / span
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return number if _MIN_EVENT_YEAR <= number <= _MAX_EVENT_YEAR else None
+
+
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+#: The range a decimal year must fall in to be a plausible event date.
+_MIN_EVENT_YEAR = 1000.0
+_MAX_EVENT_YEAR = 2500.0
+
+
 class FieldSettings(BaseModel):
     """A project's choices about its documents' details and its text."""
 
@@ -127,12 +187,26 @@ class FieldSettings(BaseModel):
     part_names: dict[str, str] = Field(default_factory=dict)
     #: What is left out of the text the tools read.
     text_cleaning: TextCleaning = Field(default_factory=TextCleaning)
+    #: Dated events to draw as stoplines on every time figure (SHOWCASE_FIGURES_PLAN
+    #: section 4): a historical corpus's figures become a check against the world.
+    events: list[ProjectEvent] = Field(default_factory=list, max_length=MAX_EVENTS)
 
     @field_validator("part_names")
     @classmethod
     def _names(cls, value: dict[str, str]) -> dict[str, str]:
         for new in value.values():
             _check_name(new)
+        return value
+
+    @field_validator("events")
+    @classmethod
+    def _events(cls, value: list[ProjectEvent]) -> list[ProjectEvent]:
+        seen: set[str] = set()
+        for event in value:
+            key = event.name.casefold()
+            if key in seen:
+                raise ValueError(f"“{event.name}” is listed twice; event names must be unique.")
+            seen.add(key)
         return value
 
 
@@ -214,6 +288,23 @@ def project_axis(workspace: Workspace, project_id: str) -> dict[str, str]:
     """
     chosen = FieldSettings(**settings(workspace, project_id)["settings"])
     return {"kind": chosen.axis, "noun": chosen.order_label}
+
+
+def project_events(workspace: Workspace, project_id: str) -> list[dict[str, Any]]:
+    """The project's dated events with resolved decimal-year positions.
+
+    ``[{"name", "date", "note", "position"}]``, positioned ones only, so a
+    figure can put a stopline where the event belongs. An event whose date
+    cannot be read is dropped here rather than drawn at the origin; the Corpus
+    page is where it is reported (the settings store keeps it for editing).
+    """
+    chosen = FieldSettings(**settings(workspace, project_id)["settings"])
+    found: list[dict[str, Any]] = []
+    for event in chosen.events:
+        position = event.position
+        if position is not None:
+            found.append({"name": event.name, "date": event.date, "note": event.note, "position": position})
+    return found
 
 
 def resolved_axis(

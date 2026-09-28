@@ -128,7 +128,7 @@ def sidebar_sections() -> dict[str, str]:
 
 
 def test_scripts_has_its_own_group_below_models() -> None:
-    """Asked for directly (docs/PLAN_0.5.0.md D2): Scripts and Compare get their own group below Models.
+    """Asked for directly (docs/internal/PLAN_0.5.0.md D2): Scripts and Compare get their own group below Models.
 
     RESEARCH keeps what it had; the workshop pages are where the researcher
     builds something of their own, and they come after the pages that run

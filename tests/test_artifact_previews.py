@@ -42,13 +42,20 @@ def test_browser_preview_is_scoped_and_has_independent_policy(tmp_path: Path, mo
 
 
 def test_tickets_expire_and_are_bounded() -> None:
+    from desktop_backend.previews import ArtifactTarget, KernelTarget
+
     tickets = PreviewTickets(capacity=1)
     first = tickets.issue("project", "first", 0)
     second = tickets.issue("project", "second", 1)
     with pytest.raises(KeyError):
         tickets.resolve(first)
-    assert tickets.resolve(second) == ("project", "second", 1)
+    assert tickets.resolve(second) == ArtifactTarget("project", "second", 1)
     expired = PreviewTickets(ttl=0)
     ticket = expired.issue("project", "job", 0)
     with pytest.raises(KeyError):
         expired.resolve(ticket)
+    # A notebook kernel file shares the namespace with its own target shape.
+    kernel = PreviewTickets()
+    assert kernel.resolve(kernel.issue_kernel("project", "nb1", "0001_001_parts.html")) == KernelTarget(
+        "project", "nb1", "0001_001_parts.html"
+    )

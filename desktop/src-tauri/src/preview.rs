@@ -10,7 +10,8 @@ const POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 
 pub fn valid_path(path: &str) -> bool {
     let parts: Vec<_> = path.split('/').collect();
     let uuid = |v: &str| v.len() == 32 && v.bytes().all(|c| c.is_ascii_hexdigit());
-    parts.len() == 7
+    // A run artifact: /projects/{uuid}/jobs/{uuid}/artifacts/{index}
+    let artifact = parts.len() == 7
         && parts[0].is_empty()
         && parts[1] == "projects"
         && uuid(parts[2])
@@ -19,7 +20,25 @@ pub fn valid_path(path: &str) -> bool {
         && parts[5] == "artifacts"
         && !parts[6].is_empty()
         && parts[6].len() <= 9
-        && parts[6].bytes().all(|c| c.is_ascii_digit())
+        && parts[6].bytes().all(|c| c.is_ascii_digit());
+    // A notebook kernel file (an interactive chart the kernel wrote):
+    // /projects/{uuid}/notebooks/{id}/kernel/files/{name}. The name is one
+    // path segment with no separator, so it cannot walk out of the folder.
+    let kernel = parts.len() == 8
+        && parts[0].is_empty()
+        && parts[1] == "projects"
+        && uuid(parts[2])
+        && parts[3] == "notebooks"
+        && !parts[4].is_empty()
+        && parts[4].len() <= 64
+        && parts[4]
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        && parts[5] == "kernel"
+        && parts[6] == "files"
+        && !parts[7].is_empty()
+        && parts[7].len() <= 200;
+    artifact || kernel
 }
 
 fn response(status: u16, mime: &str, body: Vec<u8>) -> Response<Vec<u8>> {
@@ -162,10 +181,25 @@ mod tests {
             "b".repeat(32)
         );
         assert!(valid_path(&path));
+        // A notebook kernel file (an interactive chart), and the refusals
+        // that matter: a name with a slash could walk out of the folder.
+        let kernel = format!(
+            "/projects/{}/notebooks/nb1/kernel/files/0001_001_parts.html",
+            "a".repeat(32)
+        );
+        assert!(valid_path(&kernel));
         for bad in [
             "/health",
             "/projects/../jobs/x/artifacts/0",
             "/projects/%2e%2e/jobs/x/artifacts/0",
+            &format!(
+                "/projects/{}/notebooks/nb1/kernel/files/a/b.html",
+                "a".repeat(32)
+            ),
+            &format!(
+                "/projects/{}/notebooks//kernel/files/x.html",
+                "a".repeat(32)
+            ),
         ] {
             assert!(!valid_path(bad));
         }

@@ -63,7 +63,7 @@ export function turnButtonWords(preview: TurnPreview, perTurn: boolean) {
 }
 
 /**
- * "Split a long document into chapters" (docs/PLAN_0.5.0.md 2.7). The engine
+ * "Split a long document into chapters" (docs/internal/PLAN_0.5.0.md 2.7). The engine
  * finds the cuts; this shows them -- every section with its words and
  * opening, and what was left out -- and stores them only on the button that
  * says how many there will be.

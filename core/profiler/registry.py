@@ -83,7 +83,7 @@ TOOL_REGISTRY_EXCLUSIONS: tuple[tuple[str, str], ...] = (
     ("unified", "meta-dispatcher over all CLIs; not an analysis selection"),
 )
 
-# A capability ID is the join key to docs/REPLACEMENT_LEDGER.md, so two specs
+# A capability ID is the join key to docs/internal/REPLACEMENT_LEDGER.md, so two specs
 # claiming one ID normally means a copy-paste that quietly reassigns a ledger
 # row to unrelated code. Where a capability genuinely has two entry points it
 # is named here with its reason, exactly as exclusions are.
@@ -451,6 +451,7 @@ TOOL_REGISTRY: tuple[ToolSpec, ...] = (
         outputs=(
             "topics.csv",
             "topics_dominant.csv",
+            "doc_topics.csv",
             "terms_by_relevance.csv",
             "intertopic_distances.csv",
             "intertopic_map.html",
@@ -1821,7 +1822,7 @@ _VALID_INPUT_KINDS = frozenset({"corpus", "csv", "conll", "database", "asset", "
 def _capability_conflicts(specs: Sequence[ToolSpec]) -> list[Diagnostic]:
     """Two specs claiming one capability ID, minus the documented shares.
 
-    A capability ID is the join key to docs/REPLACEMENT_LEDGER.md, so an
+    A capability ID is the join key to docs/internal/REPLACEMENT_LEDGER.md, so an
     accidental second claimant silently reassigns a ledger row to unrelated
     code. Genuine two-entry-point capabilities live in SHARED_CAPABILITIES.
     """

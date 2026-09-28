@@ -51,6 +51,7 @@ __all__ = [
     "Corpus",
     "RunResult",
     "SuiteError",
+    "chart",
     "corpus",
     "describe",
     "entities",
@@ -667,15 +668,25 @@ def keyness(corpus_a: Corpus, corpus_b: Corpus, *, top_n: int = 200, field: str 
 
     Both must come from this notebook's documents; a document in both is refused.
     """
+    from core.io.reader import display_names
+
     session = current()
     a = [doc.source_id for doc in corpus_a.core.docs]
     b = [doc.source_id for doc in corpus_b.core.docs]
     if set(a) & set(b):
         raise SuiteError("A document is in both corpora; keyness needs two separate groups.")
     joined = Corpus(session, [*a, *b])
-    table = joined.tokens()
-    names = table.drop_duplicates("Document ID").set_index("Document ID")["Document"].astype(str)
-    group_a = [names[str(i)] for i in range(1, len(a) + 1) if str(i) in names.index]
+    # Group A is corpus_a's own documents, matched by the name the tool groups
+    # on -- never "the first len(a) rows of the joined table". The joined
+    # table's Document IDs are positions in *its* order, and an earlier parse
+    # of the same documents can be read back in a different order, which
+    # silently made group A whichever documents came first by date. The names
+    # come from the same rule the parser labels with, so a basename collision
+    # (2020/report.txt against 2021/report.txt) still selects the right rows.
+    names = display_names(joined.core.docs)
+    wanted = {doc.source_id for doc in corpus_a.core.docs}
+    group_a = [names[doc.doc_id] for doc in joined.core.docs if doc.source_id in wanted]
+    joined.tokens()  # parsed (and cached) once; the pattern is by name, not id
     pattern = "^(?:" + "|".join(re.escape(name) for name in group_a) + ")$"
     out = run("keyness", joined, group_pattern=pattern, top_n=top_n, field=field).table
     renamed = out.rename(
@@ -840,11 +851,79 @@ def save(table: Any, name: str) -> None:
     session.emit(TableOutput(session.name_for(name, "data"), _as_frame(table), saved=True))
 
 
+def chart(
+    table: Any,
+    *,
+    kind: str,
+    x: str,
+    y: str,
+    group: str | None = None,
+    agg: str | None = None,
+    top_n: int | None = None,
+    title: str | None = None,
+    name: str | None = None,
+) -> None:
+    """Draw an interactive chart with the engine and show it under the cell.
+
+    Where :func:`show` draws a quick chart in the page itself, this draws the
+    full interactive figure the Analyze page publishes -- plotly's HTML, with
+    hover, zoom and pan, and the richer kinds (``sankey``, ``sunburst``,
+    ``treemap``, ``radar``, ``violin``, ``waffle``, ``calendar``, ``pie``)
+    that the page's own canvas does not draw. The frame is shown under the
+    cell and kept as ``<name>.html`` when the notebook is saved as a run.
+
+    *kind* is any kind the engine draws (``nlp.chart`` is the way to reach
+    them all). *x* is the category axis; for ``sankey`` *x* is the source and
+    *group* the target. *y* is the measure. *agg* (sum/mean/median/count)
+    combines rows that share an x (and group) -- required when they repeat.
+    A chart the engine would refuse raises :class:`SuiteError` with its own
+    sentence, so the cell shows why rather than an empty frame.
+    """
+    from core.script.session import HtmlOutput
+    from core.viz.chartspec import ChartSpec, coerce_date_axis, prepare_chart_data
+    from core.viz.plotters import render_chart
+
+    session = current()
+    started = time.perf_counter()
+    frame = _as_frame(table)
+    try:
+        spec = ChartSpec(
+            kind=kind,  # type: ignore[arg-type]
+            x=x,
+            y=y,
+            group=group,
+            agg=agg,  # type: ignore[arg-type]
+            top_n=top_n,
+            title=title or "",
+        )
+    except ValueError as exc:
+        raise SuiteError(str(exc)) from exc
+    # A CSV-shaped table has no dtypes; a calendar chart needs real dates, and
+    # this is where a file-backed table gets them (the same step the desktop's
+    # chart job runs). Harmless for every other kind.
+    dated = coerce_date_axis(frame, spec)
+    if dated.value is None:
+        raise SuiteError("; ".join(d.message for d in dated.diagnostics), dated.diagnostics)
+    prepared = prepare_chart_data(dated.unwrap(), spec)
+    if prepared.value is None:
+        raise SuiteError("; ".join(d.message for d in prepared.diagnostics), prepared.diagnostics)
+    rendered = render_chart(prepared.unwrap(), spec)
+    if rendered.value is None:
+        raise SuiteError("; ".join(d.message for d in rendered.diagnostics), rendered.diagnostics)
+    count = sum(isinstance(o, HtmlOutput) for o in session.outputs) + 1
+    session.emit(HtmlOutput(session.name_for(name or title, f"chart_{count}"), rendered.unwrap()))
+    session.record("chart", {"kind": kind, "x": x, "y": y, "group": group, "agg": agg}, started, len(frame))
+
+
 def figure(fig: Any = None, name: str | None = None) -> None:
-    """Keep a matplotlib figure (PNG and SVG) and show it under the cell.
+    """Keep a matplotlib figure (PNG, and SVG when it can be made) and show it.
 
     With no figure, the current one (``plt.gcf()``). The figure is closed
     afterwards, so a long notebook does not keep every figure in memory.
+
+    The SVG is optional: matplotlib loads its SVG writer only when saving, so
+    a packaged runtime can lack it. A figure that cannot be made as SVG is
+    kept as its PNG, with a note saying so -- never thrown away.
     """
     import matplotlib.pyplot as plt
 
@@ -852,12 +931,25 @@ def figure(fig: Any = None, name: str | None = None) -> None:
     fig = fig if fig is not None else plt.gcf()
     if not hasattr(fig, "savefig"):
         raise SuiteError("figure() takes a matplotlib figure, such as the fig from plt.subplots().")
-    png, svg = io.BytesIO(), io.BytesIO()
+    png = io.BytesIO()
     fig.savefig(png, format="png", dpi=200, bbox_inches="tight")
-    fig.savefig(svg, format="svg", bbox_inches="tight")
+    svg: bytes | None = None
+    svg_error: Exception | None = None
+    try:
+        vector = io.BytesIO()
+        fig.savefig(vector, format="svg", bbox_inches="tight")
+        svg = vector.getvalue()
+    except Exception as exc:
+        # The SVG is a bonus; the figure is the point. A missing backend is a
+        # real, expected case, and any other save failure is still not worth
+        # losing the PNG over, so this catches broadly on purpose.
+        svg_error = exc
     plt.close(fig)
     count = sum(isinstance(o, FigureOutput) for o in session.outputs) + 1
-    session.emit(FigureOutput(session.name_for(name, f"figure_{count}"), png.getvalue(), svg.getvalue()))
+    session.emit(FigureOutput(session.name_for(name, f"figure_{count}"), png.getvalue(), svg))
+    if svg_error is not None:
+        # After the figure, so the note reads as a remark on what is above it.
+        session.note_once(f"This figure is saved as PNG only: the SVG writer is unavailable ({svg_error}).")
 
 
 def note(text: str) -> None:

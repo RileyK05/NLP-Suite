@@ -26,7 +26,7 @@ export function targetOptions(own: string, existing: string[]): string[] {
 }
 
 /**
- * "Import details from a spreadsheet" (docs/PLAN_0.5.0.md 1.4.2). A sheet
+ * "Import details from a spreadsheet" (docs/internal/PLAN_0.5.0.md 1.4.2). A sheet
  * the researcher already keeps -- one row per speech, or one per president --
  * is previewed first: which documents its rows reach, what each column
  * becomes, which rows matched nothing. Only "Import" stores anything.

@@ -1,6 +1,6 @@
 """Every tool the suite can run declares how its results are shown.
 
-The finish line for ``docs/FIGURE_RECIPES.md``: a tool with no recipe falls
+The finish line for ``docs/internal/FIGURE_RECIPES.md``: a tool with no recipe falls
 through to generic chart guesses, which is how "Count over Date" came to
 average 9,407 unrelated word pairs. This test names every tool still in that
 state.

@@ -15,7 +15,7 @@ pairs ranked by whichever word comes first in the alphabet. A tool with a
 recipe gets its own figures offered by the questions they answer, and no
 generic guesses; the generic workbench stays available as an expert tool.
 
-See ``docs/FIGURE_RECIPES.md`` for the per-tool plan.
+See ``docs/internal/FIGURE_RECIPES.md`` for the per-tool plan.
 """
 
 from __future__ import annotations

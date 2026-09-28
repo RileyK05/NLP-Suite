@@ -1,4 +1,4 @@
-"""The split dialog's API: preview a document's sections, then store them (docs/PLAN_0.5.0.md 2.4).
+"""The split dialog's API: preview a document's sections, then store them (docs/internal/PLAN_0.5.0.md 2.4).
 
 Registered by :func:`desktop_backend.server.create_app`, beside the fields
 routes, so the server's route list does not grow by a page's worth.

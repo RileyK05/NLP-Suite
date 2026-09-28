@@ -45,18 +45,20 @@ Run `nlp-doctor` first — it tells you what is missing and how to install it.
 ## Status
 
 The original **52 of 52 scaffold chunks are done**. This does not mean full
-legacy parity: see `docs/LEGACY_PARITY.md` for the current comparison and
-`docs/FULL_REPLACEMENT_PLAN.md` for the remaining implementation and review
+legacy parity: see `docs/internal/LEGACY_PARITY.md` for the current comparison and
+`docs/internal/FULL_REPLACEMENT_PLAN.md` for the remaining implementation and review
 roadmap.
 
 ## How work is planned
 
-New feature-parity work is defined in `docs/FULL_REPLACEMENT_PLAN.md`.
-The completed scaffold's detailed build order and per-chunk history remain in
-Git history. Each roadmap item is delivered through the
-repeated-prompt chunks in `docs/IMPLEMENTATION_CHUNKING_PROTOCOL.md`, followed
-by independent review before it can be verified. Live status belongs in
-`docs/REPLACEMENT_LEDGER.md`.
+Release work is planned in a per-release plan (currently
+`docs/internal/PLAN_0.5.0.md`); ideas not yet scheduled go into `docs/internal/PANELS_BACKLOG.md`
+section 4d. Legacy feature-parity work is defined in
+`docs/internal/FULL_REPLACEMENT_PLAN.md`. The completed scaffold's detailed build order
+and per-chunk history remain in Git history. Each roadmap item is delivered
+through the repeated-prompt chunks in that plan's Appendix A, followed by
+independent review before it can be verified. Live status belongs in
+`docs/internal/REPLACEMENT_LEDGER.md`.
 
 ## Declarative tool registry
 
@@ -66,7 +68,7 @@ without importing their modules. `TOOL_REGISTRY` contains the retained tools;
 assets, external service, or optional dependency prevents registration. A tool
 enters the registry only after its inputs, prerequisites, and artifacts are
 declared and tested. `validate_specs(TOOL_REGISTRY)` must return no diagnostics,
-every capability ID must occur in `docs/REPLACEMENT_LEDGER.md`, and new
+every capability ID must occur in `docs/internal/REPLACEMENT_LEDGER.md`, and new
 `tools/*.py` entry points require an explicit inclusion or exclusion decision.
 
 ## Layout
@@ -80,9 +82,9 @@ every capability ID must occur in `docs/REPLACEMENT_LEDGER.md`, and new
 | `assets/` | Lexicons and other data files, loaded once |
 | `out/` | Run directories; gitignored |
 | `docs/ARCHITECTURE.md` | The intended design |
-| `docs/FULL_REPLACEMENT_PLAN.md` | Remaining parity, product, packaging, and review roadmap |
-| `docs/REPLACEMENT_LEDGER.md` | Live implementation and independent-review status |
-| `docs/IMPLEMENTATION_CHUNKING_PROTOCOL.md` | Repeated-prompt execution and correction cycle |
+| `docs/internal/FULL_REPLACEMENT_PLAN.md` | Remaining parity, product, packaging, and review roadmap, plus the repeated-prompt execution cycle |
+| `docs/internal/REPLACEMENT_LEDGER.md` | Live implementation and independent-review status |
+| `docs/README.md` | Index of every guide and plan |
 
 ## Third-party logging
 

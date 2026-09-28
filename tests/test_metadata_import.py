@@ -1,4 +1,4 @@
-"""Details from a spreadsheet the user already has (docs/PLAN_0.5.0.md 1.4.2).
+"""Details from a spreadsheet the user already has (docs/internal/PLAN_0.5.0.md 1.4.2).
 
 The engine half reads the table and matches its rows to documents; the route
 previews that match, then stores it. The case the plan's done-when names is a

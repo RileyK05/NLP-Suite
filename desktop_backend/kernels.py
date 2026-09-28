@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass, field
+import io
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +27,7 @@ import threading
 import time
 from typing import Any
 import uuid
+import zipfile
 
 from desktop_backend.runner import _close_pipes
 from desktop_backend.store import Workspace
@@ -252,3 +255,33 @@ class KernelManager:
         if path.parent != kernel.directory.resolve() or not path.is_file():
             raise KeyError("No such output.")
         return path
+
+    def tables_archive(self, project_id: str, notebook_id: str) -> bytes:
+        """Every table this kernel has written, as one zip (``<name>.csv`` each).
+
+        Files are named ``0001_002_rates.csv`` (exec, output, table), which
+        sorts in cells' run order; here they are renamed to the table's own
+        name so the zip reads as the writer's tables rather than as scratch.
+        Duplicates keep a numeric suffix. Nothing else in the folder (figures,
+        the kernel log) is included: this is the "Save all CSVs" download.
+        """
+        with self._lock:
+            kernel = self._kernels.get((project_id, notebook_id))
+        if kernel is None:
+            raise KeyError("This notebook has no running kernel.")
+        directory = kernel.directory
+        buffer = io.BytesIO()
+        used: set[str] = set()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(directory.glob("*.csv")):
+                # Strip the kernel's "0031_002_" prefix; a name the kernel did
+                # not give (a file the notebook wrote itself) is kept as is.
+                stem = re.sub(r"^\d{4}_\d{3}_", "", path.stem) or path.stem
+                target = f"{stem}.csv"
+                counter = 2
+                while target in used:
+                    target = f"{stem}_{counter}.csv"
+                    counter += 1
+                used.add(target)
+                archive.write(path, target)
+        return buffer.getvalue()

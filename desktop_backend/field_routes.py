@@ -1,4 +1,4 @@
-"""The Corpus page's API for document details (docs/PLAN_0.5.0.md 1.8).
+"""The Corpus page's API for document details (docs/internal/PLAN_0.5.0.md 1.8).
 
 Registered by :func:`desktop_backend.server.create_app`, kept apart so the
 server's route list does not grow by a page's worth.

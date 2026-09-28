@@ -67,9 +67,9 @@ def export_notebook(workspace: Workspace, project_id: str, notebook_id: str) -> 
         archive.writestr(f"{stem}.ipynb", json.dumps(notebook["content"], indent=1, ensure_ascii=False))
         if run is not None:
             run_dir: Path = workspace.project_dir(project_id) / run["run_dir"]
-            for folder, target in (("tables", "data"), ("data", "data"), ("figures", "figures")):
+            for folder, target in (("tables", "data"), ("data", "data"), ("figures", "figures"), ("charts", "charts")):
                 for path in sorted((run_dir / folder).glob("*")):
-                    if path.is_file() and path.suffix.lower() in (".csv", ".png", ".svg"):
+                    if path.is_file() and path.suffix.lower() in (".csv", ".png", ".svg", ".html"):
                         archive.write(path, f"{target}/{path.name}")
                         if target == "data":
                             data_names.append(path.stem)
@@ -156,13 +156,16 @@ def save(table, name):
 
 
 def figure(fig=None, name="figure"):
-    """Save a matplotlib figure as figures/<name>.png and .svg."""
+    """Save a matplotlib figure as figures/<name>.png, and .svg when possible."""
     import matplotlib.pyplot as plt
 
     fig = fig if fig is not None else plt.gcf()
     FIGURES.mkdir(exist_ok=True)
     fig.savefig(FIGURES / f"{name}.png", dpi=200, bbox_inches="tight")
-    fig.savefig(FIGURES / f"{name}.svg", bbox_inches="tight")
+    try:
+        fig.savefig(FIGURES / f"{name}.svg", bbox_inches="tight")
+    except Exception as exc:
+        print(f"Saved {name}.png only: the SVG writer is unavailable ({exc}).")
 
 
 def note(text):
@@ -181,7 +184,8 @@ def _needs_the_suite(name):
 
 
 for _name in ("corpus", "run", "term_rates", "passages", "measures", "sentiment",
-              "entities", "topics", "keyness", "similar", "tools", "describe", "use_folder"):
+              "entities", "topics", "keyness", "similar", "tools", "describe",
+              "use_folder", "chart"):
     globals()[_name] = _needs_the_suite(_name)
 '''
 
@@ -198,7 +202,16 @@ Exported from the NLP Suite on {exported}.
 ## Running it
 
 **With the NLP Suite:** import the notebook on the Scripts page ("Import .ipynb"),
-or open it in Jupyter with the suite installed. It runs as it is.
+or open it in Jupyter with the suite installed. To run it outside the app, install
+the library and point it at a folder of texts:
+
+    pip install nlp-suite-ng[spacy]     # add [plotly] for charts, [all] for everything
+    # then, in the notebook, replace nlp.corpus() with:
+    corpus = nlp.use_folder("path/to/your/texts")
+
+The folder read this way has only the `Document ID`, `Document`, `Date`, `Year`
+and `Words` columns; project-only details such as `Speaker` are not in a filename
+and are absent.
 
 **Without it:** the cells that *draw* run anywhere with pandas and matplotlib;
 the cells that *analyse* text need the suite. Replace the first line,

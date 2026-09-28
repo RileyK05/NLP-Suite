@@ -426,7 +426,7 @@ function Findings({
 
 /**
  * The Compare page: two to six sets of documents, from one project or
- * several, compared on the same measures (docs/PLAN_0.5.0.md section 3).
+ * several, compared on the same measures (docs/internal/PLAN_0.5.0.md section 3).
  *
  * A comparison lives in the project that is open; its sides may name any
  * project. Running it queues an ordinary run of the `contrast` tool here, so

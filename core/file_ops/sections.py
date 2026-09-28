@@ -1,4 +1,4 @@
-"""A long text's own sections: chapters, and the parts and volumes above them (docs/PLAN_0.5.0.md 2.3).
+"""A long text's own sections: chapters, and the parts and volumes above them (docs/internal/PLAN_0.5.0.md 2.3).
 
 A novel imported whole is one document, and every per-document figure then
 has one point. Cut at its chapters, each chapter is a document on an order

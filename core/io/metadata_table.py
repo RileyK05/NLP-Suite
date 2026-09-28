@@ -1,4 +1,4 @@
-"""Document details from a spreadsheet the user already has (docs/PLAN_0.5.0.md 1.4.2).
+"""Document details from a spreadsheet the user already has (docs/internal/PLAN_0.5.0.md 1.4.2).
 
 A researcher often keeps a table beside the texts -- one row per speech, with
 its party, its occasion, its chapter number. This module reads that table and

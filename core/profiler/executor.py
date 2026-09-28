@@ -592,6 +592,9 @@ def _adapt_lda_gensim(ctx: BatchContext, params: dict[str, object]) -> Result[di
         "topics.csv": model.topics,
         "topics_dominant.csv": model.dominant,
     }
+    doc_topics = getattr(model, "doc_topics", None)
+    if doc_topics is not None:
+        frames["doc_topics.csv"] = doc_topics
     if model.relevance is not None:
         frames["terms_by_relevance.csv"] = model.relevance
     if model.intertopic is not None:
@@ -983,7 +986,7 @@ def _adapt_ngrams(ctx: BatchContext, params: dict[str, object]) -> Result[dict[s
 
 
 def _adapt_contrast(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
-    """Compare the sides the corpus's documents carry in their ``Side`` detail (docs/PLAN_0.5.0.md 3.4).
+    """Compare the sides the corpus's documents carry in their ``Side`` detail (docs/internal/PLAN_0.5.0.md 3.4).
 
     The methods run the suite's own tools through this module's adapters, on
     the same context, so a comparison's readability is the readability tool's.

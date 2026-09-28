@@ -4,7 +4,7 @@ Parity oracle: the legacy pure functions in
 ``statistics_corpus_readability_util.py``, loaded with stubbed GUI/IO imports
 (the module only needs them for its installer guard and driver). The oracle
 is legacy code, not a copy of this implementation. Skipped where the pinned
-oracle checkout is absent (see docs/LEGACY_ENVIRONMENT.md).
+oracle checkout is absent (see docs/internal/LEGACY_ENVIRONMENT.md).
 """
 
 from __future__ import annotations

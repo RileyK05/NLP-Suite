@@ -81,6 +81,7 @@ function fresh(): ProjectDetails {
       order_label: "Document",
       filename_detection: true,
       part_names: {},
+      events: [],
     },
     revision: 4,
     axis: {

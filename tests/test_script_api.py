@@ -230,6 +230,35 @@ class TestRun:
         assert "Word" in table.columns
         assert any("A" in str(column) for column in table.columns)
 
+    def test_keyness_group_a_is_corpus_a_even_when_it_is_not_the_earliest(self, tmp_path: Path) -> None:
+        """Group A is corpus_a, not whichever documents happen to be numbered 1..N.
+
+        The joined corpus's fingerprint is order-independent, so an earlier
+        parse of the whole corpus can be read back with its own numbering --
+        and a corpus whose documents come *after* the other's in that order
+        silently became group B. The word counts pin which side is which.
+        """
+        pytest.importorskip("spacy")
+        for name, text in {
+            "1990-01-01_early.txt": "apples apples apples filler filler",
+            "1990-02-01_early2.txt": "apples apples filler filler filler",
+            "2000-01-01_late.txt": "oranges oranges oranges filler filler",
+            "2000-02-01_late2.txt": "oranges oranges filler filler filler",
+        }.items():
+            (tmp_path / name).write_text(text, encoding="utf-8")
+        session = Session(FolderSource(tmp_path))
+        try:
+            with open_session(session):
+                whole = nlp.corpus()
+                whole.tokens()  # warm the whole corpus, whose order is by date
+                late = whole.filter(Year=range(2000, 2001))  # A: the oranges
+                early = whole.filter(Year=range(1990, 1991))  # B: the apples
+                table = nlp.keyness(late, early, top_n=0).set_index("Word")
+        except nlp.SuiteError:
+            pytest.skip("no English parser installed")
+        assert table.loc["orange", "Freq A"] == 5 and table.loc["orange", "Freq B"] == 0
+        assert table.loc["apple", "Freq A"] == 0 and table.loc["apple", "Freq B"] == 5
+
 
 class TestOutputs:
     def test_show_recommends_a_chart(self, session: Session) -> None:
@@ -336,6 +365,51 @@ class TestOutputs:
         assert isinstance(drawn, FigureOutput) and drawn.png.startswith(b"\x89PNG") and b"<svg" in drawn.svg
         assert isinstance(written, NoteOutput)
         assert not plt.fignum_exists(fig.number)
+
+    def test_a_figure_survives_a_missing_svg_writer(self, session: Session) -> None:
+        """A packaged runtime can lack matplotlib's SVG backend (it loads only
+        when saving). The figure must be kept as its PNG, with a note -- not
+        thrown away with the SVG that could not be made."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        ax.plot([1, 2], [3, 4])
+        real_savefig = fig.savefig
+
+        def only_png(*args: object, **kwargs: object) -> object:
+            if kwargs.get("format") == "svg":
+                raise ModuleNotFoundError("No module named 'matplotlib.backends.backend_svg'")
+            return real_savefig(*args, **kwargs)
+
+        fig.savefig = only_png  # type: ignore[method-assign]
+        with open_session(session):
+            nlp.figure(fig, "trend")
+        drawn, said = session.outputs
+        assert isinstance(drawn, FigureOutput) and drawn.png.startswith(b"\x89PNG") and drawn.svg is None
+        assert isinstance(said, NoteOutput) and "PNG only" in said.text and "backend_svg" in said.text
+        assert not plt.fignum_exists(fig.number)
+
+    def test_chart_draws_an_interactive_html_output(self, session: Session) -> None:
+        """nlp.chart reaches the engine's plotly kinds (sankey and the rest)."""
+        from core.script.session import HtmlOutput
+
+        pytest.importorskip("plotly")
+        frame = pd.DataFrame({"From": ["A", "A", "B"], "To": ["X", "Y", "X"], "N": [1, 2, 3]})
+        with open_session(session):
+            nlp.chart(frame, kind="sankey", x="From", y="N", group="To", agg="sum", name="flows")
+        [output] = session.outputs
+        assert isinstance(output, HtmlOutput) and output.name == "flows"
+        assert "sankey" in output.html.lower()
+        assert [call.function for call in session.calls] == ["chart"]
+
+    def test_chart_refuses_what_the_engine_refuses(self, session: Session) -> None:
+        with open_session(session), pytest.raises(nlp.SuiteError, match="needs --group"):
+            nlp.chart(pd.DataFrame({"a": [1]}), kind="sankey", x="a", y="a")
+        with open_session(session), pytest.raises(nlp.SuiteError, match="kind must be one of"):
+            nlp.chart(pd.DataFrame({"a": [1]}), kind="spiral", x="a", y="a")
 
     def test_a_cell_run_again_keeps_its_names(self, session: Session) -> None:
         """In a kernel, running a cell a third time used to show "rates 3"."""

@@ -293,6 +293,16 @@ def date_from_filename(path: Path) -> date | None:
     return None
 
 
+def _located(doc: Document, root: Path | None) -> str:
+    """A document's location for a fingerprint: relative to *root* when it sits under it."""
+    if root is not None:
+        try:
+            return doc.path.relative_to(root).as_posix()
+        except ValueError:
+            return doc.path.name
+    return doc.path.name
+
+
 def corpus_fingerprint(docs: tuple[Document, ...]) -> str:
     """A portable hash over the whole corpus, independent of traversal order.
 
@@ -303,18 +313,28 @@ def corpus_fingerprint(docs: tuple[Document, ...]) -> str:
     if not docs:
         return hashlib.sha256(b"").hexdigest()
     root = _common_root([doc.path.parent for doc in docs])
+    payload = "\n".join(sorted(f"{_located(doc, root)}:{doc.sha256}" for doc in docs))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def identity(doc: Document) -> str:
-        if root is not None:
-            try:
-                location = doc.path.relative_to(root).as_posix()
-            except ValueError:
-                location = doc.path.name
-        else:
-            location = doc.path.name
-        return f"{location}:{doc.sha256}"
 
-    payload = "\n".join(sorted(identity(doc) for doc in docs))
+def ordered_fingerprint(docs: tuple[Document, ...]) -> str:
+    """A hash over the documents *in the order given*, for caches of ordered tables.
+
+    :func:`corpus_fingerprint` is order-independent on purpose: a restored
+    project is the same snapshot whatever order its files are walked in. A
+    **parse is not**: ``Document ID``, ``Sentence ID`` and ``Record ID`` are
+    all positions, so the same documents in a different order produce a
+    different table. Keying a parse cache by the order-independent hash let a
+    corpus read back another order's table -- the same documents numbered the
+    other way -- so a selection whose documents came later in that order was
+    silently described by ids 1..N of the wrong documents. This is what the
+    parse cache keys on instead; the per-document entries stay order-free, so
+    the 5.1 reuse across selections is unaffected.
+    """
+    if not docs:
+        return corpus_fingerprint(docs)
+    root = _common_root([doc.path.parent for doc in docs])
+    payload = "\n".join(f"{index}:{_located(doc, root)}:{doc.sha256}" for index, doc in enumerate(docs, 1))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

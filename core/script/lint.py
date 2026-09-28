@@ -1,4 +1,4 @@
-"""Lines worth reading in code that came from outside the app (docs/PLAN_0.5.0.md 4.8.3).
+"""Lines worth reading in code that came from outside the app (docs/internal/PLAN_0.5.0.md 4.8.3).
 
 A reading aid, not security. Python cannot be sandboxed from inside Python
 (desktop_backend/kernel.py explains why), so nothing here stops code from

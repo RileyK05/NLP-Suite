@@ -1,175 +1,34 @@
-# Panels: state of play and the queue
+# Backlog: panels, figures and product ideas
 
 **Written for:** whoever picks this up next, another model or a person, and
 Riley, who hands the work out and has Claude review it afterwards.
 
-Read [`docs/viz-panels.md`](viz-panels.md) first. It is the contract, and it
-now covers the three mistakes most likely to be repeated: naming the wrong
-tool, assuming one table per run, and inventing test fixtures.
+This is the one place for work that has been noticed but not scheduled.
+Release plans (currently `docs/internal/PLAN_0.5.0.md`) pull items from here. **Add new
+ideas under section 4d** as a dated `4d-N` heading, not only in chat.
+
+Before building a panel, read [`docs/viz-panels.md`](../viz-panels.md). It is the
+contract, and it covers the three mistakes most likely to be repeated: naming
+the wrong tool, assuming one table per run, and inventing test fixtures.
+Per-tool figure coverage and the figure-quality rules are in
+[`docs/internal/FIGURE_RECIPES.md`](FIGURE_RECIPES.md).
 
 Status notes below were written during individual implementation passes.
-Check the code and the dated progress entries before treating a queue item as open.
+Check the code and the dated entries before treating an item as open. The
+first panels session's log (sections 1–3: verification status, bugs fixed,
+panel inventory) and its finished queue items 4a–4c (topic flow, the
+`lda_stability` tool and the SVO agency panel, all built and registered) were
+removed in the 2026-09-28 docs cleanup; Git history has them.
 
 ---
 
-## 1. Verification status — read this before trusting anything below
-
-| Gate | Result this session |
-|---|---|
-| `ruff check` / `ruff format` | clean on every file touched |
-| `mypy core tools app desktop_backend` | clean (last full run: 270 files) |
-| panel + LDA test files | all pass (see section 2) |
-| `vitest run` | **505 passed**, 1 skipped |
-| `tsc --noEmit`, `vite build` | clean / builds |
-| `prettier --check src` | only the 8 **pre-existing** offenders (App.tsx, contract.ts, ExplicitRun.test, Learn.test, LiveBench, ToolCard.test, ToolCard, toolGuides.json). `contract.ts` is generated: regenerate it, do not hand-format it. |
-| **Full Python suite** | **NOT COMPLETED this session.** Two runs were cut off. Both appeared to stall in `tests/test_desktop.py`. The second got 43 tests into that file, so it was making progress (slow tests, most likely `test_cancel_running_worker_promptly` and the runner tests), not hung. It was then killed by the session ending. **First task: run it to completion.** Use `--basetemp=C:/nlptmp`, delete that directory afterwards, and write the output straight to a file rather than through `tail`, so a slow test is visible. |
-| Real-server end to end | **passed**, see section 3 |
-
----
-
-## 2. What was done this session
-
-### Bugs found and fixed (each A/B-verified: the new test fails on the old code)
-
-1. **LDA panels were unreachable on the desktop.** They declared
-   `tool="topic_model"` (the live bench's name); the tool that writes runs is
-   `lda_gensim`, so no run was ever offered them. Fixed. New guard:
-   `test_panels.py::TestRegistry::test_every_panel_belongs_to_a_tool_that_exists`.
-2. **The desktop took the first CSV of a run.** `lda_gensim` writes
-   `topics.csv` first, which no panel reads, so every LDA panel would have
-   failed. `desktop_backend/panels.py` now picks the first table carrying
-   every column in `requires`, and offers a panel only when that table
-   exists. Tests: `test_desktop_panels.py::TestMultiTableRuns`.
-3. **The relevance panel was misleading on real data.** Relevance is always
-   negative (a sum of logs of probabilities), so the top-ranked word drew the
-   *shortest* bar; the saliency "ghost series" was about 100× smaller, on the
-   same axis. Redesigned the pyLDAvis way: scores **order** the rows, bars
-   are **counts**. The engine (`relevance_terms`) gained two additive columns:
-   `Corpus frequency` and `Topic frequency` (φ × token-weighted topic mass).
-   Relevance and Saliency themselves are unchanged. Tests are rebuilt on an
-   **engine-derived** fixture; the old one used impossible positive values.
-4. **Ordering by saliency put the least salient word first.** The engine's
-   Saliency is negative, with the most salient words most negative. The panel
-   now orders by magnitude, which is correct under both the current and a
-   corrected definition (see question 1 in section 5).
-5. **A race in `PanelSection`:** a figure drawn for one run could land under
-   another run's heading after switching runs. Fixed with a "which run is on
-   screen" ref. A stale answer can no longer clear the new run's busy flag
-   either (the same shape as the old LiveBench bug).
-6. **Reference lines were clipped off the plot** whenever every mark lay
-   beyond them, e.g. the p < 0.05 line on a pre-truncated keyness table, or
-   PMI's zero line. The scatter domain now includes annotation values. The old
-   test only checked the `<line>` existed.
-7. **Colour mismatch:** ungrouped panels (the intertopic map) were drawn
-   orange in the app and blue in the export. `groupColors` now mirrors
-   `panel_plotters._group_color_map` exactly.
-8. **Ranked bars had no value axis and no axis title** in the app. The
-   title is where the relevance panel says its bars are occurrences. Added.
-9. **`tokens_from_frame(nouns_only=True)` returned nothing on this corpus**
-   (it checked Universal tags; spaCy's parse here is Penn). It now applies the
-   same `NN*` or `NOUN`/`PROPN` rule the rest of the codebase uses.
-   Vectorised as well: **10–16 s → 0.25 s**, proved identical (keys, order,
-   every token) to the old version on the real corpus before it was swapped in.
-   There had been no `nouns_only` tests at all; there are now.
-10. Pre-existing mypy errors in `tools/gis_map.py` (earlier session) and the
-    collocation agent's false "Log Dice ceiling is never reached" comment
-    (real pairs such as *viet nam* sit on it; it is now drawn as a line).
-
-### Features added
-
-- **Read in context** (`desktop/src/PanelPassages.tsx`). Clicking a mark whose
-  evidence names a term runs the Interactive page's phrase search and shows
-  the passages. `Evidence` gained `phrase` and `lemma`, set by each builder
-  from the run's own settings; a windowed collocation gets no phrase rather
-  than an undercount. It never parses without being asked, and says the
-  loaded documents may differ from the ones the run read.
-- **New panels:** `collocation_strength` (agent; PMI/Log Dice/T-score/G2
-  against log frequency, with `PANEL_RARE_PAIRS_DOMINATE`, which the agent
-  found was silent on real data as specified and fixed with a median-relative
-  threshold). Registered.
-- **Topic stability** (agent): `core/analysis/topic_stability.py` (refit at
-  several seeds, Hungarian-match topics by top-word Jaccard, a topic is
-  "stable" if its *worst* seed matches) plus `core/viz/panels_lda_stability.py`.
-  50 tests. Real data: only **2 of 6** topics stable at k=6, 5 of 15 at k=15.
-  **Not registered yet** (see 4b).
-- **Topic flow, half built** (see 4a): segmentation module and ribbon panel
-  builder, both tested.
-
-### Real-server end to end (`scratchpad/e2e_panels.py` pattern)
-
-Real `lda_gensim`, `keyness` and `collocations` jobs through the real runner,
-on a copy of the workspace. All five registered panels were offered by the
-right runs and drawn from the right tables. **Read in context matched the
-tables exactly:** "shall" gave 496 occurrences against 496 counted by keyness,
-and "united states" gave 636 against 636 counted by collocations.
-
----
-
-## 3. Panel inventory
-
-| Panel | Tool | Shape | Registered | Notes |
-|---|---|---|---|---|
-| `keyness_volcano` | keyness | scatter_labelled | yes | reference implementation |
-| `lda_relevance` | lda_gensim | ranked_bars | yes | redesigned: counts, ordered by score |
-| `lda_intertopic` | lda_gensim | scatter_labelled | yes | |
-| `lda_prevalence` | lda_gensim | stream | yes | |
-| `collocation_strength` | collocations | scatter_labelled | yes | |
-| `lda_stability` | lda_stability | ranked_bars | **no** | tool doesn't exist yet (4b) |
-| `lda_flow` | lda_gensim | **ribbon** | **no** | engine + renderer not done (4a) |
-| `svo_agency` | clause_svo | ranked_bars | **no** | agent never reported back (4c) |
-
----
-
-## 4. The queue, in order
-
-### 4a. Finish topic flow (Riley's stated #1). Most of the design is done.
-
-Built and tested: `core/analysis/topic_flow.py` (`plan_segments`: blank-line
-→ line → sentence-window segmentation, strict token alignment via
-`core.research.phrase._align_tokens`, rule reported per document), and
-`core/viz/panels_lda_flow.py` (19 tests; the table contract is in its
-docstring).
-
-Left:
-1. **`lda.py`**: pull the token filter out of `tokens_from_frame` into a
-   shared helper (kept-token Series indexed like the frame) so segments use
-   *exactly* the training filter. Add `fit_lda(..., segments=...)`: score each
-   segment's bag of words with `model.get_document_topics` while the model is
-   in hand, and return `LdaResult.flow`. **Columns must match the panel's
-   docstring exactly:** `Document ID, Document, Segment, Segments, Rule,
-   Aligned, Tokens, Dominant topic, Contribution, Topic keywords, Start, End`.
-   A segment with no tokens gets a blank `Dominant topic`, not the prior.
-2. **Executor** (`_adapt_lda_gensim`): call `plan_segments(ctx.table,
-   ctx.corpus)`, write `topic_flow.csv`, add it to the registry `outputs`.
-3. **`ribbon` renderer, twice:** `panel_plotters.py` (horizontal `go.Bar` with
-   `base` = segment start, `x` = width) **and** `panelLayout.ts` +
-   `PanelCanvas.tsx` (SVG rects). Add `"ribbon"` to `IMPLEMENTED_SHAPES` in
-   the same change as the TS case, or `test_panel_parity.py` fails.
-4. Register `LDA_FLOW` in `core/viz/panels.py`, and add an engine-derived test.
-5. Later: evidence → paragraph text, using the segment's `Start`/`End` with
-   `/live/source`.
-
-### 4b. Register the stability tool (five-file checklist, section 6)
-
-A new `lda_stability` corpus tool: `ToolSpec` (params: topics, seeds, top-n,
-stable-at), executor adapter calling `topic_stability(tokens_from_frame(...))`
-and writing `summary.csv` + `matches.csv`, `ADAPTER_NEEDS` = `{"table"}`,
-`desktop_backend/catalog.py` `CORPUS_TOOLS`, labels, migration guide, ledger
-row, scope test. **Add a `Stable at` column to the summary** so the panel can
-draw the threshold; it currently, and correctly, refuses to guess it. Then
-register `LDA_STABILITY`.
-
-### 4c. SVO agency panel
-
-An agent was briefed to write `core/viz/panels_svo_agency.py` + tests (subject
-vs object counts per entity, with a normalised-column evidence design). It
-never reported back. **Check whether the files exist**; if they do, review
-them against the brief (evidence resolves against `PreparedPanel.data`;
-pronoun warning; real-data check) before registering. `clause_svo` writes two
-CSVs (`clauses.csv`, `svo.csv`); column-based table selection now handles that.
+## 4. The queue
 
 ### 4d. Other wishlist items, not started
 
+- **Topic flow: evidence → paragraph text**, using the segment's
+  `Start`/`End` with `/live/source` (the one item left from the finished
+  topic-flow work).
 - Sentiment model-agreement panel. **Needs a seam extension:** a panel
   currently draws one run's table, and agreement needs four runs joined.
 - Figure bundles: chart + data + methods note + `Provenance.to_dict()` JSON.
@@ -225,7 +84,7 @@ refuse-or-warn set. The refusal says *why*, so it teaches as it goes.
 
 ### 4d-5. Found while fitting a figure to every tool (2026-09-23)
 
-The recipe work is in `docs/FIGURE_RECIPES.md` (every tool covered; what is
+The recipe work is in `docs/internal/FIGURE_RECIPES.md` (every tool covered; what is
 still owed is listed there). Drawing every figure from the real 87-speech
 outputs turned up problems in the *tables*, which no figure can fix:
 
@@ -262,7 +121,7 @@ outputs turned up problems in the *tables*, which no figure can fix:
 
 ### 4d-6. Figure quality and publication figures (2026-09-23)
 
-The plan and its progress are in `docs/FIGURE_QUALITY_PLAN.md`. Still owed,
+The plan and its progress are in `docs/internal/FIGURE_RECIPES.md` (Part 2). Still owed,
 and new ideas that came out of the work:
 
 - **The word list now draws its function words, no longer refusing them**,
@@ -438,7 +297,7 @@ Next:
 - **A reload racing a project switch** asked once for the previous project's
   run panels (a 404, nothing shown). Not reproduced with a plain switch.
 
-### 4d-11. Books walk findings (2026-09-26, release 0.5.0)
+### 4d-11b. Books walk findings (2026-09-26, release 0.5.0)
 
 Found splitting real novels (Pride and Prejudice 61 chapters, Alice 12) and
 walking every formerly figure-less tool over them:
@@ -460,6 +319,102 @@ walking every formerly figure-less tool over them:
   machine (setup, not figures); until then it fails on every project. A
   Setup-page check for it would say so in words.
 
+### 4d-12. The reference topic-model figures, natively (2026-09-28)
+
+Riley wants the reference figures made in the app, and figures of that
+quality for as many tools as can support one: the general plan (a figure kit
+for scripts, showcase figures per tool, project events) is
+[`SHOWCASE_FIGURES_PLAN.md`](SHOWCASE_FIGURES_PLAN.md). Reference implementations
+(standalone matplotlib over suite output + MALLET CLI) are in
+`C:\Users\moomi\Downloads\LDA`: `lda_lambda_figure.py`, `mallet_what_it_does.py`,
+`gensim_vs_mallet.py`, `mallet_events.py`, `lda_tiles.py`,
+`lda_misses_the_break.py`. What each needs, cheapest first:
+
+- **Prerequisites (0.5.1 bugs):** the frozen engine's missing
+  `matplotlib.backends.backend_svg` (run figures and `nlp.figure` both write
+  SVG); MALLET's skipped `import-dir`, the 2.0.8 doc-topics parse and the
+  `file:/` names; the relevance formula (`lda.py:293` uses `log p(w)` where
+  the lift `log p(w|t) - log p(w)` belongs).
+- **Tables the engines do not write yet.** `lda_gensim`: the full
+  document x topic matrix (`doc_topics.csv`, one share column per topic; today
+  only the dominant topic survives), and each word's `p(w|t)` beside
+  `Corpus frequency`. `lda_mallet`: the same `doc_topics.csv`, the learned
+  alpha per topic from the keys file, and `--diagnostics-file` parsed into
+  `topic_diagnostics.csv` (tokens, exclusivity, coherence, rank-1 docs). A
+  shared NPMI coherence in `core/analysis` scored on the corpus both engines
+  saw (Roder et al. 2015; window 10, singular/plural merged).
+- **Single-run bundles (fit the existing seam):** the lambda sweep (bars at
+  two lambdas, top words at every lambda shaded by corpus frequency, overlap
+  and median word count against lambda) over `lda_gensim`; "what MALLET does"
+  (stream of topic shares, six addresses as mixtures, alpha / share of words /
+  exclusivity) over `lda_mallet`; the same stream over `lda_gensim` once it
+  writes `doc_topics.csv` (the stream shape already exists).
+- **A lambda slider on the bench.** Re-ranking by relevance needs no refit,
+  so it is live generation in the proper sense: the ranking recomputes, the
+  model does not.
+- **Comparisons as tools, not multi-run figures.** The scorecard (mixture,
+  distinctness, coherence, seed stability, two-topic agreement) and the event
+  test (windows x topic counts x seeds scored against a date, with each
+  engine's ARI side by side) both need many fits. A `topic_model_compare`
+  tool (engines x seeds) and a `topic_break_test` tool (window, event date or
+  document-detail cohort, topic counts, seeds, engines) would run the fits
+  themselves and write one run's tables, so their figures are ordinary
+  single-run bundles and the multi-run seam (4d-4) is not needed.
+  `lda_stability` is the precedent. The tile grid is a new shape
+  ("tiles": rows = fits, columns = documents, relabeled by first appearance).
+- **House style.** Riley likes these figures' look: left-aligned bold title,
+  gray subtitle, muted provenance footer, off-white surface, no top/right
+  spines, the 8-colour categorical palette with gray for the background
+  topic. Most of that is `core/viz/static/style.py` and `add_chrome`; the
+  palette is a decision (it is Okabe-Ito today).
+
+### 4d-13. Carried over from retired docs (2026-09-28 docs cleanup)
+
+Open items from the old `FUTURE_IDEAS.md` parking lot and the finished
+`TOOL_VISUALIZATIONS_AND_DELETION_PLAN.md` (its culturomics, topic, embedding
+and sentiment panels, panel-first views, and Trash/restore/purge for
+documents, runs and projects were built on 2026-09-22):
+
+- **Streamed progress for long fits.** A 30 s topic model shows a ticking
+  elapsed counter and nothing else. Server-sent events or chunked polling of
+  an `analyse/{id}` status endpoint could report stages (vectorize / fit /
+  summarize) the way `/live/warm` already does.
+- **True interruption of long model fits** needs a cancellation token in the
+  adapters. Today cancellation discards a mid-flight answer (R-C8 in
+  `ARCHITECTURE.md` section 13).
+- **Batch jobs and the loader lock.** Batch jobs run in worker processes
+  (`desktop_backend/runner.py`), where a cold import cannot deadlock the UI
+  server but can still die silently per job. A worker-side "first import
+  failed" diagnostic channel would make that loud.
+- **Contract codegen direction.** Pydantic is the source and TS is generated.
+  If the desktop ever grows request shapes first, consider a checked-in
+  language-neutral schema (JSON Schema) consumed both ways.
+- **pyLDAvis as an optional extra.** The Intertopic Distance Map and
+  λ-relevance terms are native. If a class ever wants the real pyLDAvis HTML,
+  add it behind an optional extra, not as a dependency of `lda_gensim`.
+- **Wordcloud options parity.** Users ask about "various wordcloud options"
+  (masks, shapes, group colours). Check the legacy GUI's option list against
+  what the desktop reaches (the list is not in this repo).
+- **Paired comparison tables.** The run-comparison diff shows where two runs
+  differ; a paired table could show both full results together.
+- **Panels: saved choices and export.** Save a panel's choice and parameters
+  with provenance in saved views, reopen and export it; label a change that
+  needs recomputation (e.g. retraining an embedding) as a new analysis.
+- **Embeddings: source context and coverage.** Selecting a word should reach
+  its source passages; report vocabulary coverage, model/seed and projection
+  limits beside the neighbours.
+- **Richer sentence-level sentiment** views (tone over position and passages,
+  not only document scores).
+- **Deletion: failure injection.** Inject a filesystem failure during
+  Trash/purge and confirm metadata and files recover coherently.
+- **A CI check for stray root-level files.**
+- **Decided against (keep the reason): a per-tool "keep live" opt-in.**
+  Explicit Run is the default and the fix for the wedged-bench class of bug
+  (R-C1). A toggle to re-enable debounced follow would reintroduce the shape
+  that caused the wedge (an effect that fires work) behind a setting. If it is
+  ever wanted, it needs a contract amendment and the same
+  single-flight/lost-request handling the explicit path has.
+
 ### 4e. Observed, not investigated
 
 Each desktop job showed "Parsing English documents" for minutes even with the
@@ -480,26 +435,21 @@ runs, the bench and notebook kernels one parse cache: two identical
    `φ·(log φ − Σφ log φ)`. That is not Chuang et al.'s saliency
    (`p(w)·Σ_t p(t|w) log(p(t|w)/p(t))`, which is ≥ 0 with larger meaning more
    salient). Here it is always negative and inverted. Recommended: yes. The
-   panel is already correct under both definitions. It's a graded HW2
-   statistic, though, so it's Riley's call.
+   panel is already correct under both definitions. It's a statistic people
+   report, though, so it's Riley's call.
 2. **Consolidate the noun-tag rule?** `startswith("NN") or in ("NOUN",
    "PROPN")` now exists in seven modules. A small cleanup into one helper,
    left alone because it touches five unrelated files.
-3. **Commits.** Suggested separable commits: (a) panel reachability fixes,
-   (b) relevance redesign + engine columns, (c) Read in context, (d)
-   tokenizer fix, (e) new panels, (f) topic-flow groundwork, (g) figure
-   recipes: shapes, families, live tabs, generic guards (2026-09-23).
-4. **tf-idf's default `max-df-ratio`.** 1.0 makes the tool's own output a
-   list of function words on this corpus (4d-5). 0.5 is informative. It
-   changes a graded statistic's default, so it is Riley's call; the panels
-   warn either way.
+4. **tf-idf's default `max-df-ratio`.** Answered in 0.5.0: new tf-idf runs
+   omit terms appearing in more than half of documents by default (see
+   `docs/releases/0.5.0.md`).
 5. **The annual-mean sentiment lines are out of the registry** (code and
    tests kept, `ANNUAL_SENTIMENT_PANELS`). They were an average with no spread
    drawn through single speeches; the per-document trends with a rolling
    median replace them. Say if they should come back.
 6. **`tests/test_security.py` fails on `scripts/generate_hw1_inaugural_outputs.py`**
    (gitignored, uses `subprocess`). Not part of this work; either add it to
-   the security allowlist with its reason or keep homework scripts outside
+   the security allowlist with its reason or keep personal scripts outside
    `scripts/`.
 
 ---
@@ -508,7 +458,7 @@ runs, the bench and notebook kernels one parse cache: two identical
 
 - **A new tool is five-plus edits:** `core/profiler/registry.py`,
   `core/profiler/labels.py`, `docs/MIGRATION.md`,
-  `docs/REPLACEMENT_LEDGER.md` (capability IDs must resolve),
+  `docs/internal/REPLACEMENT_LEDGER.md` (capability IDs must resolve),
   `tests/test_tool_registry.py` scope gate, and for a corpus tool the
   executor `ADAPTERS`/`ADAPTER_NEEDS` and `desktop_backend/catalog.py`.
 - **A new panel is two edits:** the builder file and one `PANELS` line.
@@ -524,6 +474,9 @@ runs, the bench and notebook kernels one parse cache: two identical
   `out/desktop-workspace/.server.lock` and blocks Riley's preview.
 - **Don't edit a module while a test run imports it.** Runner tests spawn
   workers that import from disk.
+- **Never create `tests/conftest.py`.** It shadows the ROOT `conftest.py` for
+  `from conftest import …` inside tests, and the root one holds shared
+  fixtures (`HashEmbeddingBackend`). Put shared test config in the root one.
 
 ---
 

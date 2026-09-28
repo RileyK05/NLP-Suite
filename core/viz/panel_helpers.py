@@ -5,7 +5,7 @@ disagree, and the reader would see two figures of one run that contradict
 each other: a document labelled "1934 Roosevelt" in one and
 "1934-01-03_franklin d roosevelt_sotu.txt" in the next, a decade that starts
 in 1930 in one and 1934 in another, a network laid out differently every time
-it is drawn. See ``docs/FIGURE_RECIPES.md`` for the house rules these
+it is drawn. See ``docs/internal/FIGURE_RECIPES.md`` for the house rules these
 implement.
 
 Pure functions of their inputs: no I/O, no rendering imports, no randomness

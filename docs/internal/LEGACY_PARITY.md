@@ -3,7 +3,7 @@
 > Historical baseline, not the current implementation inventory. The rebuild
 > has changed substantially since this comparison (including the desktop UI).
 > Use [REPLACEMENT_LEDGER.md](REPLACEMENT_LEDGER.md) for acceptance tracking and
-> [DESKTOP.md](DESKTOP.md) for the current desktop scope and release limits.
+> [DESKTOP.md](../DESKTOP.md) for the current desktop scope and release limits.
 >
 > The snapshot is kept as written rather than rewritten. Where a later packet
 > has overtaken a claim, the claim carries an inline
@@ -209,7 +209,7 @@ coverage — 48 GUI entry points across 9 domains (files, parsing, statistics,
 semantics, GIS, DB/PC-ACE, narrative, sentiment, topics) — held together by
 GUI-owned sequencing, filename coupling, and 761 self-documented defects. The
 rebuild has expanded analysis and infrastructure coverage. Current desktop
-verification is recorded in [DESKTOP.md](DESKTOP.md); the default test gate
+verification is recorded in [DESKTOP.md](../DESKTOP.md); the default test gate
 excludes model-integration tests, which must be run and reported separately.
 **No audited overall parity percentage is established.** It is strongest where the legacy was weakest
 (correctness, provenance, headless operation), weakest where the legacy was

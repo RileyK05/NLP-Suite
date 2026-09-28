@@ -165,13 +165,16 @@ def _html_preview(frame: Any) -> str:
 
 def _executed_cell_outputs(outputs: list[Output], stdout: str) -> list[dict[str, Any]]:
     """A cell's outputs in nbformat's shapes, so the saved notebook reads in Jupyter too."""
-    from core.script.session import FigureOutput, NoteOutput, TableOutput
+    from core.script.session import FigureOutput, HtmlOutput, NoteOutput, TableOutput
 
     shaped: list[dict[str, Any]] = []
     if stdout:
         shaped.append({"output_type": "stream", "name": "stdout", "text": stdout})
     for output in outputs:
-        if isinstance(output, TableOutput) and not output.saved:
+        if isinstance(output, HtmlOutput):
+            # An interactive chart: Jupyter can show a raw HTML fragment as-is.
+            shaped.append({"output_type": "display_data", "metadata": {}, "data": {"text/html": output.html}})
+        elif isinstance(output, TableOutput) and not output.saved:
             shaped.append(
                 {
                     "output_type": "display_data",
@@ -205,7 +208,7 @@ def run_notebook(workspace: Workspace, job: dict[str, Any], request: dict[str, A
     matplotlib.use("Agg")
     from core.io.writer import OutputWriter
     from core.result import Diagnostic
-    from core.script.session import FigureOutput, NoteOutput, Session, TableOutput, open_session
+    from core.script.session import FigureOutput, HtmlOutput, NoteOutput, Session, TableOutput, open_session
     from desktop_backend.kernel import display_value, keep_open_figures, run_cell
     from desktop_backend.project_source import ProjectSource
 
@@ -273,8 +276,17 @@ def run_notebook(workspace: Workspace, job: dict[str, Any], request: dict[str, A
                     raise ValueError("; ".join(d.message for d in written.diagnostics))
                 if output.chart is not None:
                     charts[path] = output.chart
+            elif isinstance(output, HtmlOutput):
+                written = writer.write_html(
+                    output.html, f"charts/{output.name}.html", kind="chart", description=output.name
+                )
+                if not written.ok:
+                    raise ValueError("; ".join(d.message for d in written.diagnostics))
             elif isinstance(output, FigureOutput):
-                for suffix, data in (("png", output.png), ("svg", output.svg)):
+                formats: list[tuple[str, bytes]] = [("png", output.png)]
+                if output.svg is not None:
+                    formats.append(("svg", output.svg))
+                for suffix, data in formats:
                     written = writer.write_bytes(data, f"figures/{output.name}.{suffix}", description=output.name)
                     if not written.ok:
                         raise ValueError("; ".join(d.message for d in written.diagnostics))

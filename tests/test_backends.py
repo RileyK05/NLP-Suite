@@ -101,6 +101,7 @@ class TestSRL:
 class TestMallet:
     def test_missing_binary_fails_loudly(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PATH", str(tmp_path))  # empty PATH: no mallet anywhere
+        monkeypatch.delenv("MALLET_HOME", raising=False)
         assert mallet_binary() is None
         res = train_topics(tmp_path, tmp_path / "out")
         assert not res.ok
