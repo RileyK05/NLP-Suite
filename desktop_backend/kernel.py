@@ -217,7 +217,11 @@ class OutputSink:
             event: dict[str, Any] = {"kind": "html", "name": output.name, "file": name}
         elif isinstance(output, TableOutput):
             name = f"{stem}_{output.name}.csv"
-            output.frame.to_csv(self.directory / name, index=False, encoding="utf-8")
+            # Written aside and moved into place: "Save all CSVs" zips every
+            # *.csv here, and must never pick up a table half-written.
+            partial = self.directory / f"{name}.partial"
+            output.frame.to_csv(partial, index=False, encoding="utf-8")
+            os.replace(partial, self.directory / name)
             event = {
                 "kind": "table",
                 "name": output.name,

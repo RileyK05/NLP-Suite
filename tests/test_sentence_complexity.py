@@ -14,7 +14,6 @@ import sys
 import pandas as pd
 import pytest
 
-from conftest import has_spacy_model
 from core.analysis import sentence_complexity as C
 
 LEGACY_SRC = Path(__file__).resolve().parent.parent.parent / "NLP-Suite-1.6.38" / "src"
@@ -203,7 +202,7 @@ class TestC67Validation:
 
 class TestCli:
     @pytest.mark.model_integration
-    @pytest.mark.skipif(not has_spacy_model(), reason="needs spaCy model")
+    @pytest.mark.usefixtures("require_spacy_model")
     def test_cli_parses_and_writes(self, tmp_path: Path) -> None:
         from tools.sentence_complexity import main
 

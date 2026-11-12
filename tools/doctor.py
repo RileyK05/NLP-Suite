@@ -8,6 +8,11 @@ Checks, in order of how badly they break runs:
    exactly the state that used to silently degrade to a blank pipeline.
 3. Optional extras (plotly, streamlit) — charting and the viewer.
 
+A package is only "OK" once it is imported, not merely located on disk, so a
+version gate that fires at import time (the classic "this version of pandas is
+not supported by gensim") is reported as broken here instead of surfacing as a
+traceback mid-analysis.
+
 Exit codes: 0 = everything needed for the default path works;
 1 = something required is missing (the report says exactly what to run).
 
@@ -39,6 +44,8 @@ class Check:
     ``required`` is an explicit field (C6-14): the required set is never
     recovered from display strings like "python 3" (which never equals
     "python 3.12.10" — the exact bug this replaces).
+
+    ``damaged`` is True only when the thing is present but will not load.
     """
 
     name: str
@@ -46,10 +53,36 @@ class Check:
     detail: str
     fix: str = ""
     required: bool = False
+    damaged: bool = False
 
 
 def _has_module(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
+
+
+def _import_state(module: str) -> tuple[bool, str, bool]:
+    """Locate *module* and import it; report why it is broken if it will not.
+
+    ``find_spec`` only reads the module's location: a package that is present
+    but refuses to import still reports a spec, so a presence-only check calls
+    it "OK" and the failure surfaces later as a traceback in the middle of a
+    run. The classic case is a version gate at import time ("this version of
+    pandas is not supported by gensim"); an ABI mismatch with numpy fails the
+    same way. :func:`core.deps.import_optional` performs the real import and
+    separates "missing" from "broken", which is the whole point of the doctor.
+    """
+    from core.deps import OptionalDependencyError, import_optional
+
+    try:
+        # suppress_warnings: a deprecation a package emits on import must not
+        # become the doctor's own failure under -W error, and is not this
+        # check's job.
+        import_optional(module, suppress_warnings=True)
+    except OptionalDependencyError as exc:
+        if exc.missing:
+            return False, "missing", False
+        return False, f"present but will not import ({exc.reason})", True
+    return True, "ok", False
 
 
 def _check_core() -> list[Check]:
@@ -65,37 +98,49 @@ def _check_core() -> list[Check]:
         )
     )
     # Every declared core dependency (pyproject [project.dependencies]).
+    # Imported, not just located: an import-time failure (a numpy ABI
+    # mismatch, say) is broken even though the module is present.
     for module in ("pandas", "pyarrow", "scipy", "scikit-learn"):
         import_name = "sklearn" if module == "scikit-learn" else module
-        ok = _has_module(import_name)
+        ok, detail, damaged = _import_state(import_name)
         checks.append(
             Check(
                 name=module,
                 ok=ok,
-                detail="core dependency" if ok else "missing",
+                detail="core dependency" if ok else detail,
                 fix=f"pip install {module}",
                 required=True,
+                damaged=damaged,
             )
         )
     return checks
 
 
-def _spacy_model_ok(language: str) -> tuple[bool, str]:
+def _model_package_present(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _spacy_model_ok(language: str) -> tuple[bool, str, bool]:
+    model_name = spacy_model_name(language)
     try:
         import spacy
 
-        spacy.load(spacy_model_name(language))
-        return True, spacy_model_name(language)
+        spacy.load(model_name)
+        return True, model_name, False
     except ImportError:
-        return False, "spacy package not installed"
+        return False, "spacy package not installed", False
     except Exception as exc:  # OSError for missing models, anything else is a broken install
         first_line = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
-        return False, f"{spacy_model_name(language)} not loadable ({first_line})"
+        damaged = _model_package_present(model_name)
+        return False, f"{model_name} not loadable ({first_line})", damaged
 
 
-def _stanza_model_ok(language: str) -> tuple[bool, str]:
+def _stanza_model_ok(language: str) -> tuple[bool, str, bool]:
     if not _has_module("stanza"):
-        return False, "stanza package not installed"
+        return False, "stanza package not installed", False
     try:
         # Use the production builder so the probe exercises every canonical
         # processor (POS/lemma/dependency/NER), not just tokenizer resources.
@@ -107,11 +152,11 @@ def _stanza_model_ok(language: str) -> tuple[bool, str]:
         if result.value is None:
             first = result.diagnostics[0] if result.diagnostics else None
             if first is not None:
-                return False, first.message
-            return False, f"model for {language!r} is not loadable"
-        return True, f"full model for {language!r} loadable"
+                return False, first.message, first.code != "PIPELINE_MODEL_MISSING"
+            return False, f"model for {language!r} is not loadable", True
+        return True, f"full model for {language!r} loadable", False
     except Exception as exc:
-        return False, f"stanza probe failed: {exc}"
+        return False, f"stanza probe failed: {exc}", True
 
 
 def _check_parsers(languages: list[str]) -> list[Check]:
@@ -138,7 +183,7 @@ def _check_parsers(languages: list[str]) -> list[Check]:
         )
     )
     for language in languages:
-        stanza_ok, detail = _stanza_model_ok(language)
+        stanza_ok, detail, stanza_damaged = _stanza_model_ok(language)
         checks.append(
             Check(
                 name=f"stanza model ({language})",
@@ -146,9 +191,10 @@ def _check_parsers(languages: list[str]) -> list[Check]:
                 detail=detail,
                 fix=f'python -c "import stanza; stanza.download({language!r})"',
                 required=False,
+                damaged=stanza_damaged,
             )
         )
-        spacy_ok, detail = _spacy_model_ok(language)
+        spacy_ok, detail, spacy_damaged = _spacy_model_ok(language)
         checks.append(
             Check(
                 name=f"spacy model ({language})",
@@ -156,6 +202,7 @@ def _check_parsers(languages: list[str]) -> list[Check]:
                 detail=detail,
                 fix=f"python -m spacy download {spacy_model_name(language)}",
                 required=False,
+                damaged=spacy_damaged,
             )
         )
         # What is required is a parser that works, not one specific parser: a
@@ -197,8 +244,8 @@ def _check_extras() -> list[Check]:
         ("onnxruntime", 'pip install "nlp-suite-ng[models]"  (or: pip install onnxruntime tokenizers)'),
         ("wordcloud", 'pip install "nlp-suite-ng[wordcloud]"  (or: pip install wordcloud)'),
     ):
-        ok = _has_module(module)
-        checks.append(Check(name=module, ok=ok, detail="optional extra" if ok else "missing", fix=fix))
+        ok, detail, damaged = _import_state(module)
+        checks.append(Check(name=module, ok=ok, detail="optional extra" if ok else detail, fix=fix, damaged=damaged))
     for exe in ("java",):
         ok = shutil.which(exe) is not None
         checks.append(Check(name=exe, ok=ok, detail="optional (CoreNLP backend)" if ok else "not on PATH", fix=""))
@@ -232,7 +279,7 @@ def run_doctor(languages: list[str] | None = None) -> tuple[int, list[Check]]:
     width = max(len(c.name) for c in checks) + 2
     print("NLP Suite doctor\n")
     for check in checks:
-        marker = "OK     " if check.ok else ("MISSING" if not check.fix else "BROKEN")
+        marker = "OK     " if check.ok else ("BROKEN " if check.damaged else "MISSING")
         print(f"  [{marker}] {check.name:<{width}} {check.detail}")
         if not check.ok and check.fix:
             print(f"           fix: {check.fix}")
@@ -246,14 +293,25 @@ def run_doctor(languages: list[str] | None = None) -> tuple[int, list[Check]]:
     # Everything runs, but say so precisely: a damaged default backend is a
     # real degradation even though it is no longer a blocker, and the person
     # reading this is the one who can repair it.
-    degraded = [c for c in checks if not c.ok and c.name.startswith(("stanza model", "spacy model"))]
+    damaged_models = [
+        c for c in checks if not c.ok and c.damaged and c.name.startswith(("stanza model", "spacy model"))
+    ]
+    missing_models = [
+        c for c in checks if not c.ok and not c.damaged and c.name.startswith(("stanza model", "spacy model"))
+    ]
     print("\nDefault path is ready: parse -> analysis -> envelope all functional.")
-    if degraded:
-        names = ", ".join(c.name for c in degraded)
+    if damaged_models:
+        names = ", ".join(c.name for c in damaged_models)
         print(
             f"\nDamaged or incomplete: {names}. Runs continue on another installed backend and say so, "
             "in their diagnostics and in the run record. Backends tokenize and tag differently, so repair "
             "with the fix above if you need a specific one."
+        )
+    if missing_models:
+        names = ", ".join(c.name for c in missing_models)
+        print(
+            f"\nNot installed: {names}. Runs continue on another installed backend and say so, "
+            "in their diagnostics and in the run record. Install with the fix above if you need a specific one."
         )
     print("Optional items above are recommendations, not blockers.")
     return 0, checks

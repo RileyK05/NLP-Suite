@@ -101,7 +101,7 @@ def _private_plan(spec: ToolSpec, params: dict[str, Any]) -> Result[Plan]:
 # their own desktop page so the Analysis studio stays a question-driven list.
 # Corpus viz (charts/wordcloud_gephi/shapes/narrative) + CSV-input viz siblings.
 VISUALIZATION_TOOLS = frozenset(
-    {"charts", "wordcloud_gephi", "shapes", "narrative", "table_charts", "table_wordcloud_gephi"}
+    {"charts", "wordcloud_gephi", "shapes", "narrative_arc", "table_charts", "table_wordcloud_gephi"}
 )
 
 # Every state a job row can hold. Declared rather than left implicit in the
@@ -190,16 +190,16 @@ def worker_loop(root: Path) -> int:
         with contextlib.suppress(OSError, ValueError):
             log_path = Workspace(root).root / "logs" / f"{job_id}.log"
             if log_path.is_file():
-                handle = log_path.open("ab")
-                os.dup2(handle.fileno(), 2)
+                with log_path.open("ab") as handle:
+                    os.dup2(handle.fileno(), 2)
         code = run_job(root, job_id)
         print(json.dumps({"event": "done", "job": job_id, "returncode": code}), flush=True)
     return 0
 
 
 def validate_desktop_mode(tool: str, params: dict[str, Any]) -> None:
-    if tool == "sentiment_vader_anew" and params.get("analysis") == "both" and not params.get("anew-lexicon"):
-        raise ValueError("Choose an ANEW lexicon file, or select VADER to use the included sentiment analysis.")
+    if tool == "valence_anew" and not params.get("anew-lexicon"):
+        raise ValueError("Choose an ANEW ratings CSV file to rate your words with ANEW.")
     if tool == "search" and params.get("mode") == "csv":
         raise ValueError("CSV search is a CLI workflow. Choose text or conll search for a desktop corpus.")
     if tool == "spellcheck" and params.get("correct"):
@@ -384,6 +384,26 @@ class Runner:
                 worker.wait(timeout=10)
         _close_pipes(worker)
 
+    def _refuse_inactive(self, project_id: str, doing: str) -> None:
+        """Refuse new work in an archived or trashed project.
+
+        A trashed project's folder has moved to Trash; a run queued there would
+        recreate ``projects/<id>/runs``, and restoring the project would then
+        fail because its destination already exists.
+        """
+        project = self.workspace.project(project_id)
+        if project["trashed"]:
+            raise ValueError(f"Restore this project from Trash before {doing}.")
+        if project["archived"]:
+            raise ValueError(f"Restore this project from the archive before {doing}.")
+
+    def _frozen_cleaning(self, project_id: str, documents: list[dict[str, Any]]) -> dict[str, Any]:
+        """Each document's project's text cleaning at submission, frozen into the request."""
+        return {
+            home: project_cleaning(self.workspace, home).model_dump()
+            for home in sorted({str(document.get("project_id") or project_id) for document in documents})
+        }
+
     def submit(  # noqa: PLR0912 -- validation plus immutable submission
         self,
         project_id: str,
@@ -402,13 +422,10 @@ class Runner:
             raise ValueError("This analysis is not available in the desktop app.")
         if self._stopping:
             raise ValueError("The app is closing. Reopen it before starting an analysis.")
-        if self.workspace.project(project_id)["archived"]:
-            raise ValueError("Restore this project from the archive before starting an analysis.")
+        self._refuse_inactive(project_id, "starting an analysis")
         # The same list live analysis turns into the engine's Literal, so a
         # third parser cannot become submittable without becoming warmable.
         as_parser(parser)
-        if tool == "sentiment_vader_anew":
-            params = {"analysis": "vader", **params}
         validate_desktop_mode(tool, params)
         if tool in TABLE_TOOLS:
             if selection is not None:
@@ -467,6 +484,11 @@ class Runner:
                 value = frozen_params[tool].get(parameter.name)
                 if parameter.type != "path" or value is None:
                     continue
+                if not str(value).strip():
+                    # A cleared resource field sends "": no file, not the
+                    # current directory (Path("") is ".").
+                    frozen_params[tool][parameter.name] = None
+                    continue
                 from core.io.reader import hash_file
                 from desktop_backend.store import MAX_FILE_BYTES
 
@@ -490,15 +512,12 @@ class Runner:
             "axis": project_axis(self.workspace, project_id),
             # The project's dated events, frozen like the documents: a run's
             # figures draw the stoplines the reader set at submission time
-            # (SHOWCASE_FIGURES_PLAN section 4).
+            # (docs/viz-panels.md, showcase figures).
             "events": project_events(self.workspace, project_id),
             # What each project leaves out of the text the tools read (stage
             # directions), frozen like the documents: a run records what it
             # read (plan 5.2).
-            "text_cleaning": {
-                home: project_cleaning(self.workspace, home).model_dump()
-                for home in sorted({str(document.get("project_id") or project_id) for document in documents})
-            },
+            "text_cleaning": self._frozen_cleaning(project_id, documents),
         }
         if glance:
             # The cache key: the documents' contents and the recipe version.
@@ -528,8 +547,7 @@ class Runner:
 
         if self._stopping:
             raise ValueError("The app is closing. Reopen it before starting a comparison.")
-        if self.workspace.project(project_id)["archived"]:
-            raise ValueError("Restore this project from the archive before starting a comparison.")
+        self._refuse_inactive(project_id, "starting a comparison")
         as_parser(parser)
         if importlib.util.find_spec(parser) is None:
             raise ValueError(f"The {parser} package is not installed. Open Setup for installation instructions.")
@@ -546,6 +564,9 @@ class Runner:
             "selection": None,
             "comparison": definition.model_dump(),
             "axis": project_axis(self.workspace, project_id),
+            # Each side's project's cleaning as it is now, like an ordinary run:
+            # a comparison queued behind a long job reads what was submitted.
+            "text_cleaning": self._frozen_cleaning(project_id, documents),
         }
         job_id = uuid.uuid4().hex
         with self.workspace.connect() as db:
@@ -568,8 +589,7 @@ class Runner:
 
         if self._stopping:
             raise ValueError("The app is closing. Reopen it before running a notebook.")
-        if self.workspace.project(project_id)["archived"]:
-            raise ValueError("Restore this project from the archive before running a notebook.")
+        self._refuse_inactive(project_id, "running a notebook")
         as_parser(parser)
         notebook = self.workspace.notebook(project_id, notebook_id)
         # Pasted code runs when its reader chooses to run it. A saved run is a
@@ -668,16 +688,22 @@ def run_mallet(
     import tempfile
 
     from core.analysis.mallet import parse_doc_topics, train_topics
+    from core.io.reader import display_names
     from core.io.writer import OutputWriter
 
     tool = "lda_mallet"
+    n_topics = int(params.get("topics", 10))
+    names = display_names(documents)
+    # MALLET reports each document by its staged file; the position prefix
+    # maps it back to the corpus's own name, as the CLI does.
+    position_to_document: dict[int, str] = {}
     with tempfile.TemporaryDirectory(prefix="mallet-in-") as staged:
         stage = Path(staged)
         for position, doc in enumerate(documents, 1):
-            name = getattr(doc, "label", "") or Path(doc.path).name
-            (stage / f"{position:04d}_{name}.txt").write_text(doc.text, encoding="utf-8")
+            position_to_document[position] = names[doc.doc_id]
+            (stage / f"{position:04d}_{Path(doc.path).stem}.txt").write_text(doc.text, encoding="utf-8")
         with tempfile.TemporaryDirectory(prefix="mallet-out-") as out:
-            keys = train_topics(stage, out, n_topics=int(params.get("topics", 10)), seed=int(params.get("seed", 42)))
+            keys = train_topics(stage, out, n_topics=n_topics, seed=int(params.get("seed", 42)))
             if not keys.ok:
                 workspace.update_job(
                     job["id"],
@@ -686,7 +712,9 @@ def run_mallet(
                     diagnostics=[d.to_dict() for d in keys.diagnostics],
                 )
                 return 1
-            dominant = parse_doc_topics(Path(out) / "mallet_doc_topics.txt")
+            dominant = parse_doc_topics(
+                Path(out) / "mallet_doc_topics.txt", n_topics=n_topics, document_map=position_to_document
+            )
             inputs = tuple(doc.path for doc in documents)
             writer = OutputWriter(project_dir / "runs", tool=tool, params=params, inputs=inputs)
             try:
@@ -709,14 +737,16 @@ def run_mallet(
             except Exception:
                 writer.abandon()
                 raise
+            # The topics without the document composition is part of the run,
+            # not all of it: say so rather than "Results ready".
             workspace.update_job(
                 job["id"],
-                state="DONE",
-                stage="Results ready",
+                state="DONE" if dominant.ok else "PARTIAL",
+                stage="Results ready" if dominant.ok else "Topics ready; document topics could not be read",
                 run_dir=writer.run_dir.relative_to(project_dir).as_posix(),
                 diagnostics=[d.to_dict() for d in (*keys.diagnostics, *dominant.diagnostics)],
             )
-            return 0
+            return 0 if dominant.ok else 1
 
 
 def run_job(root: Path, job_id: str) -> int:  # noqa: PLR0912 -- staged worker lifecycle

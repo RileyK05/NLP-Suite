@@ -13,10 +13,7 @@ will act on it.
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
-import subprocess
-import sys
 from typing import Any
 
 import pytest
@@ -31,130 +28,7 @@ from desktop_backend.live import (
     parser_identity,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
-
-# Run in a bare interpreter on purpose. By the time the suite reaches this test
-# something else has usually imported scikit-learn already, and then the check
-# passes without checking anything.
-PRELOAD_PROBE = """
-import ast, importlib.util, inspect, sys
-from pathlib import Path
-from desktop_backend.server import preload_engine
-from desktop_backend.live import Bench
-import core.profiler.executor as executor
-
-wanted = set()
-for line in inspect.getsource(Bench.analyse).splitlines():
-    text = line.strip()
-    if text.startswith("from core.") and " import " in text:
-        wanted.add(text.split(" import ")[0][5:])
-# The tool adapters also import lazily -- gensim inside the topic-model
-# adapter, vaderSentiment inside the sentiment adapter -- and they run inside
-# the same request worker, under the same Windows loader lock that wedged the
-# server the first time. Their `from core.analysis...` imports are walked here
-# so a new one cannot quietly go unwarmed.
-for node in ast.walk(ast.parse(inspect.getsource(executor))):
-    if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("core.analysis"):
-        wanted.add(node.module)
-for node in ast.walk(ast.parse(Path("core/profiler/executor.py").read_text(encoding="utf-8"))):
-    if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("core.analysis"):
-        wanted.add(node.module)
-
-# One level further in, and the level that actually mattered. A wrapper module
-# being warm says nothing about its backend: core.analysis.lda imports gensim
-# inside fit_lda, so warming the wrapper left the DLL load in the request
-# worker while every check above passed. Collect the third-party modules the
-# analysis modules import inside their own function bodies -- those are the
-# imports that would otherwise happen under the loader lock.
-from desktop_backend.server import LAZY_BACKENDS  # noqa: E402
-
-EXCLUDED = {"torch", "transformers"}  # see LAZY_BACKENDS for why
-backends = set()
-for module in sorted(wanted):
-    path = Path(module.replace(".", "/") + ".py")
-    if not path.is_file():
-        continue
-    for fn in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for node in ast.walk(fn):
-            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                name = node.module
-            elif isinstance(node, ast.Import):
-                name = node.names[0].name
-            else:
-                continue
-            top = name.split(".")[0]
-            if top in sys.stdlib_module_names or top in {"core", "tools", "desktop_backend"}:
-                continue
-            if top not in EXCLUDED:
-                backends.add(name)
-
-preload_engine()
-print(
-    {
-        "wanted": sorted(wanted),
-        "missing": sorted(m for m in wanted if m not in sys.modules),
-        "backends": sorted(backends),
-        # A backend that is not installed cannot be warmed, and its ImportError
-        # loads no native extension, so it cannot wedge a request thread.
-        "cold": sorted(
-            b for b in backends if b.split(".")[0] not in sys.modules and importlib.util.find_spec(b.split(".")[0])
-        ),
-        "unlisted": sorted(b for b in backends if b not in LAZY_BACKENDS),
-    }
-)
-"""
-
-
-def test_the_server_preloads_everything_a_live_analysis_imports() -> None:
-    """Nothing a request runs may be importing scikit-learn for the first time.
-
-    The first live analysis used to import ``core.profiler.executor``, and
-    through it scikit-learn and SciPy, inside a request worker thread. Loading
-    their native extensions holds the Windows loader lock; the main thread,
-    answering the next request, needs that same lock to start another worker.
-    The server stopped answering anything, with no error and no timeout -- and
-    the interface polls while an analysis runs, so the next request always came.
-
-    The topic-model adapter imports gensim the same way, and it produced the
-    same wedge: over the real corpus, the server sat at 0% CPU with every
-    thread waiting for as long as anyone watched. The modules are read out of
-    ``Bench.analyse`` *and* out of the executor's tool adapters rather than
-    listed here, so adding a lazy import anywhere in that chain cannot
-    quietly go unwarmed.
-    """
-    done = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", PRELOAD_PROBE],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=300,
-    )
-    assert done.returncode == 0, done.stderr
-    report = ast.literal_eval(done.stdout.strip().splitlines()[-1])
-    assert report["wanted"], "Bench.analyse imports nothing lazily now; this test needs rewriting"
-    assert report["missing"] == [], (
-        f"preload_engine() leaves {report['missing']} for a request thread to import. "
-        "Import it at startup, or the server will freeze on the first analysis."
-    )
-    assert report["backends"], "no lazily imported backends found; this test needs rewriting"
-    # The one that actually wedged the server. A warm `core.analysis.lda` with
-    # a cold `gensim` is the bug this whole function exists to prevent, and it
-    # passed every check for as long as the checks only asked about wrappers.
-    assert report["cold"] == [], (
-        f"preload_engine() leaves the backends {report['cold']} to be imported by a request "
-        "thread. Loading their native extensions there holds the Windows loader lock while the "
-        "main thread needs it to start the next worker, and the server stops answering with no "
-        "error and no timeout. Add them to LAZY_BACKENDS."
-    )
-    assert report["unlisted"] == [], (
-        f"{report['unlisted']} is imported inside an analysis function but is not named in "
-        "LAZY_BACKENDS. Add it there, or add its top-level package to the probe's EXCLUDED set "
-        "with the reason, so leaving it cold stays a decision rather than an oversight."
-    )
-
+# Cold-start preload coverage lives in test_no_lazy_backend_imports.py.
 
 TEXTS = {
     "1901-01-01_first.txt": (
@@ -352,6 +226,24 @@ def test_the_second_warm_costs_nothing(corpus_dir: Path, tmp_path: Path) -> None
     assert again.key == first.key
     assert again.table is not None
     assert len(again.table) == len(first.table)
+
+
+def test_a_memory_hit_carries_the_details_just_read(corpus_dir: Path, tmp_path: Path) -> None:
+    """Details are outside the parse key, so an edit to one must not be lost to the held parse."""
+    from dataclasses import replace
+
+    corpus = a_corpus(corpus_dir)
+    bench = Bench(tmp_path / "workspace")
+    first = bench.warm(corpus, "spacy")
+    edited = replace(corpus, docs=(replace(corpus.docs[0], fields=(("Party", "Federalist"),)), *corpus.docs[1:]))
+
+    again = bench.warm(edited, "spacy")
+    assert again.source == "memory"
+    assert again.key == first.key
+    assert again.corpus.docs[0].details == {"Party": "Federalist"}
+    held = bench.held(again.key)
+    assert held is not None
+    assert held.corpus.docs[0].details == {"Party": "Federalist"}
 
 
 @pytest.mark.model_integration
@@ -663,3 +555,38 @@ def test_caches_report_their_size_and_clear_on_request(client: Any) -> None:
     cleared = client.post("/api/caches/clear").json()
     assert cleared == {"parses_removed": 1, "vectors_removed": 0}
     assert client.get("/api/caches").json() == {"parse_bytes": 0, "vector_bytes": 0}
+
+
+def test_a_live_table_shows_missing_values_as_empty_cells() -> None:
+    import pandas as pd
+
+    from desktop_backend.live import as_table
+
+    frame = pd.DataFrame({"nan": [float("nan")], "na": [pd.NA], "nat": [pd.NaT], "word": ["freedom"], "n": [0]})
+    assert as_table(frame)["rows"] == [{"nan": "", "na": "", "nat": "", "word": "freedom", "n": "0"}]
+
+
+def test_a_question_is_answered_from_the_snapshot_it_was_checked_against(
+    corpus_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route resolves the snapshot, then analyses in a thread; a load in between must not swap the documents."""
+    from desktop_backend.live import LiveResult, Session, Snapshot, Warm
+
+    bench = Bench(tmp_path / "workspace")
+    session = Session(bench)
+    seen: list[Warm] = []
+
+    def record(warm: Warm, tool: str, params: dict[str, Any], axis: dict[str, str] | None = None) -> LiveResult:
+        seen.append(warm)
+        return LiveResult(tool=tool, ok=True)
+
+    monkeypatch.setattr(bench, "analyse", record)
+    checked = Snapshot(
+        warm=Warm(corpus=a_corpus(corpus_dir), key="checked", identity=IDENTITY, table=None),
+        parser="spacy",
+        selection=None,
+        generation=1,
+    )
+    # Nothing is committed to the session, so re-resolving would raise.
+    assert session.analyse("readability", {}, snapshot=checked).ok
+    assert seen == [checked.warm]

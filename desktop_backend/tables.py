@@ -345,7 +345,7 @@ def run_table_visualization(
                 written = writer.write_html(built.unwrap(), "wordcloud.html", kind="chart", description="wordcloud")
                 if not written.ok:
                     writer.abandon()
-                    return fail(built.diagnostics, "Wordcloud writing failed")
+                    return fail(written.diagnostics, "Wordcloud writing failed")
                 written = writer.write_table(
                     frame[[word_col, weight_col]],
                     "wordcloud_words.csv",
@@ -357,16 +357,21 @@ def run_table_visualization(
                     return fail(written.diagnostics, "Wordcloud words writing failed")
                 if params.get("image"):
                     image_path = workspace.project_dir(job["project_id"]) / "runs" / ".staging_wc.png"
-                    rendered_png = wordcloud_image(
-                        frame,
-                        word_col=word_col,
-                        weight_col=weight_col,
-                        output_path=image_path,
-                        max_words=int(params.get("max-words", 200)),
-                        shape=params.get("shape") or None,
-                    )
-                    if rendered_png.value is not None:
-                        png_bytes = rendered_png.unwrap().read_bytes()
+                    try:
+                        rendered_png = wordcloud_image(
+                            frame,
+                            word_col=word_col,
+                            weight_col=weight_col,
+                            output_path=image_path,
+                            max_words=int(params.get("max-words", 200)),
+                            shape=params.get("shape") or None,
+                        )
+                        png_bytes = rendered_png.unwrap().read_bytes() if rendered_png.value is not None else None
+                    finally:
+                        # A scratch render: its bytes are copied into the run below,
+                        # and the file must not stay behind in runs/ (or in backups).
+                        image_path.unlink(missing_ok=True)
+                    if png_bytes is not None:
                         written = writer.write_bytes(
                             png_bytes, "wordcloud.png", kind="image", description="raster wordcloud"
                         )

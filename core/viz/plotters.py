@@ -245,12 +245,27 @@ def _heatmap_figure(frame: pd.DataFrame, spec: ChartSpec) -> Any:
             x=x_coords,
             y=groups,
             z=z,
+            **_heatmap_colors(frame["y"]),
             colorbar={"title": {"text": spec.y}},
             hovertemplate="x: %{x}<br>group: %{y}<br>value: %{z}<extra></extra>",
         )
     )
     fig.update_layout(yaxis_title=str(spec.group or "(all)"))
     return fig
+
+
+def _heatmap_colors(values: pd.Series) -> dict[str, Any]:
+    """Use a common zero-centered scale when both signs are present."""
+    low, high = float(values.min()), float(values.max())
+    light, blue = "#edf2f7", "#124e7b"
+    if low < 0 < high:
+        extent = max(-low, high)
+        return {
+            "colorscale": [[0, "#9a3b18"], [0.5, light], [1, blue]],
+            "zmin": -extent,
+            "zmax": extent,
+        }
+    return {"colorscale": [[0, light], [1, blue]]}
 
 
 def _sankey_figure(frame: pd.DataFrame, spec: ChartSpec) -> Any:
@@ -347,33 +362,73 @@ def _waffle_figure(frame: pd.DataFrame, spec: ChartSpec) -> Any:
 
 
 def _calendar_figure(frame: pd.DataFrame, spec: ChartSpec) -> Any:
-    """One row per month, seven weekday columns; cells sum the daily values."""
+    """One row per month and one column per day, with gaps for missing dates."""
     from plotly.graph_objects import Heatmap
 
-    dates = pd.Series(pd.to_datetime(frame["x"]), name="date")
-    y_values = frame["y"].astype(float).to_numpy()
-    z: list[list[float | None]] = []
-    y_labels: list[str] = []
-    months = sorted({(d.year, d.month) for d in dates})
-    for year, month in months:
-        mask = (dates.dt.year == year) & (dates.dt.month == month)
-        row: list[float | None] = [None] * 7
-        for day_value, value in zip(dates[mask], y_values[mask.to_numpy()], strict=True):
-            weekday = int(day_value.weekday())
-            row[weekday] = (row[weekday] or 0.0) + float(value)
-        z.append(row)
-        y_labels.append(f"{year}-{month:02d}")
+    by_month: dict[str, list[float | None]] = {}
+    for date, value in zip(pd.to_datetime(frame["x"]), frame["y"], strict=True):
+        cells = by_month.setdefault(date.strftime("%Y-%m"), [None] * 31)
+        cells[date.day - 1] = float(value)
+    months = sorted(by_month)
     fig = _new_figure()
     fig.add_trace(
         Heatmap(
-            x=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-            y=y_labels,
-            z=z,
-            hovertemplate="week: %{y}<br>day: %{x}<br>value: %{z}<extra></extra>",
+            x=list(range(1, 32)),
+            y=months,
+            z=[by_month[month] for month in months],
+            **_heatmap_colors(frame["y"]),
+            hoverongaps=False,
+            xgap=2,
+            ygap=2,
+            hovertemplate="%{y} · day %{x}<br>value: %{z}<extra></extra>",
             colorbar={"title": {"text": str(spec.y)}},
         )
     )
-    fig.update_layout(yaxis_title="Month")
+    fig.update_layout(
+        xaxis={"title": "Day of month", "tickvals": [1, 5, 10, 15, 20, 25, 31]},
+        yaxis={"title": "Month", "autorange": "reversed", "automargin": True},
+    )
+    return fig
+
+
+def _ecdf_figure(frame: pd.DataFrame, *, has_groups: bool) -> Any:
+    """Draw a right-continuous step and keep hover targets at observed values."""
+    from plotly.graph_objects import Scatter
+
+    fig = _new_figure()
+    groups = frame["group"].unique().tolist()
+    colors = _group_color_map(groups)
+    low, high = frame["x"].min(), frame["x"].max()
+    for group, points in frame.groupby("group", sort=False):
+        values = points["x"].tolist()
+        percent = points["y"].tolist()
+        name = str(group)
+        fig.add_trace(
+            Scatter(
+                x=[low, *values, high],
+                y=[0, *percent, 100],
+                mode="lines",
+                name=name,
+                legendgroup=name,
+                showlegend=has_groups,
+                line={"shape": "hv", "color": colors[name], "width": 2.4},
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            Scatter(
+                x=values,
+                y=percent,
+                customdata=points["n"],
+                mode="markers",
+                name=name,
+                legendgroup=name,
+                showlegend=False,
+                marker={"color": colors[name], "size": 6},
+                hovertemplate="%{y:.1f}% at or below %{x} (%{customdata} rows)<extra>%{fullData.name}</extra>",
+            )
+        )
+    fig.update_yaxes(range=[0, 103], ticksuffix="%", tickvals=[0, 20, 40, 60, 80, 100])
     return fig
 
 
@@ -467,6 +522,8 @@ def build_figure(prepared: PreparedChart, spec: ChartSpec) -> Result[Figure]:
         fig = _waffle_figure(frame, spec)
     elif spec.kind == "calendar":
         fig = _calendar_figure(frame, spec)
+    elif spec.kind == "ecdf":
+        fig = _ecdf_figure(frame, has_groups=has_groups)
     elif spec.kind == "histogram":
         fig = px.bar(
             frame,
@@ -486,15 +543,7 @@ def build_figure(prepared: PreparedChart, spec: ChartSpec) -> Result[Figure]:
     if spec.kind == "histogram":
         _histogram_opacity(fig, frame, spec)
 
-    if spec.kind in ("pie", "sunburst", "treemap", "radar", "waffle", "calendar", "sankey"):
-        # Non-Cartesian kinds: no axis titles/ticks to pin. Polar gets a
-        # radial label; calendar/waffle/sankey label their own layouts.
-        if spec.subtitle:
-            fig.update_layout(title_text=f"{spec.title or _default_title(spec)}<br><sup>{spec.subtitle}</sup>")
-        if has_groups and spec.kind in ("radar", "violin"):
-            fig.update_layout(legend_title_text=spec.group or "group")
-        return Result.success(fig)
-
+    labels_own_axes = spec.kind in ("pie", "sunburst", "treemap", "radar", "waffle", "calendar", "sankey")
     if spec.horizontal and spec.kind == "bar":
         # Swapped axes: categorical ticks ONLY on the y axis; the numeric
         # measure axis (x) keeps numeric ticks and the measure label.
@@ -510,7 +559,7 @@ def build_figure(prepared: PreparedChart, spec: ChartSpec) -> Result[Figure]:
         # overrides still win over the prepared names.
         fig.update_layout(xaxis_title=spec.x_label or x_title)
         fig.update_layout(yaxis_title=spec.y_label or y_title)
-    else:
+    elif not labels_own_axes:
         cat_ticks = None if spec.kind == "histogram" else _categorical_tick_mapping(frame, "x", spec)
         _apply_ticks(
             fig, "x", cat_ticks, spec.x_tick_angle if spec.x_tick_angle is not None else _DEFAULT_TICK_ANGLE, x_title
@@ -531,12 +580,14 @@ def build_figure(prepared: PreparedChart, spec: ChartSpec) -> Result[Figure]:
     )
     if spec.subtitle:
         fig.update_layout(title_text=f"{spec.title or _default_title(spec)}<br><sup>{spec.subtitle}</sup>")
-    if has_groups:
+    if has_groups and (not labels_own_axes or spec.kind == "radar"):
         fig.update_layout(legend_title_text=spec.group or "group")
     return Result.success(fig)
 
 
 def _default_title(spec: ChartSpec) -> str:
+    if spec.kind == "ecdf":
+        return f"Cumulative distribution of {spec.y}"
     if spec.kind in ("pie", "sunburst", "treemap", "waffle"):
         return f"{spec.y} by {spec.x}" if spec.kind == "pie" else f"{spec.y} across {spec.x} / {spec.group}"
     if spec.kind == "calendar":
@@ -609,7 +660,7 @@ def _kaleido_bytes(fig: Any, spec: ChartSpec, fmt: str, browser_path: str | None
     ``calc_fig_sync``, which raises ``ChromeNotFoundError`` for a nonexistent
     executable. No global configuration is touched.
     """
-    import kaleido  # type: ignore[import-not-found]  # optional [plotly-image] extra
+    import kaleido  # type: ignore[import-not-found,import-untyped,unused-ignore]  # optional [plotly-image] extra
 
     kopts: dict[str, Any] = {}
     if browser_path:

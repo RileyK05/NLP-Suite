@@ -1,5 +1,5 @@
 {
- "bert_topics_eras {}": "eefa3d5992ca72e7689a90f77aa8f5bed0d1014b146fc6d28b329f079b5b4e4e",
+ "topic_clusters_bert_eras {}": "eefa3d5992ca72e7689a90f77aa8f5bed0d1014b146fc6d28b329f079b5b4e4e",
  "corpus_statistics_all_measures {}": "4f174ab4b3f2f0f41aa11cced8278e0ad81d61cdfae8683c8d406eacc0de7621",
  "corpus_statistics_by_group {\"group-by\": \"speaker\"}": "d62dd8b9c4e5fe2361f5bbc04c461e4cd4cb7d37591a407a1838bb13f91ce7b0",
  "corpus_statistics_by_group {\"group-by\": \"year\"}": "1dc357bbc88b5ee5f0f6ecc26f84eb429699f6fcfcee03da2496548f0ecd9f44",
@@ -99,7 +99,7 @@
  "sentiment_vader_tone_over_time {\"measure\": \"Neu\"}": "f657358c0f644ac3fb138140c38498bbeff484933f9122d3c21545785515cc8b",
  "sentiment_vader_tone_over_time {\"measure\": \"Pos\"}": "0a707f4cc47dd434e4b1d6d4c0e1d811f167a346e50ff23bcd0d5327d81c6058",
  "sentiment_vader_tone_over_time {}": "c50caf9c6a5c4947656eab72130b951cec296fa0cb9547c72562788df287e333",
- "shape_hc_eras {}": "38f6c976759b1c924fc665845fd86aa24f912153fc177b25a02ddcca2ff6a0bd",
+ "story_shape_hc_eras {}": "38f6c976759b1c924fc665845fd86aa24f912153fc177b25a02ddcca2ff6a0bd",
  "shapes_story_arc {\"measure\": \"verb\"}": "c39b0a0554721002c6ea5d98b11994188f2c2c27089f00ad374ea5dc0e090db8",
  "shapes_story_arc {}": "6e0773d73da38c2b6ee7bf012b0393c5117e7405df73cb85d381bda12ec46e27",
  "text_statistics_all_measures {}": "85e7a321bb3cf0233fde8cb588cb55a87ac584ae2f838705e496da28b03af0fb",

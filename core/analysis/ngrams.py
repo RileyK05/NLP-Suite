@@ -169,8 +169,11 @@ def collocation_network(
         canon.append({"Word 1": a, "Word 2": b, "Count": int(row["Count"]), "PMI": float(row["PMI"])})
     edges = pd.DataFrame(canon, columns=["Word 1", "Word 2", "Count", "PMI"])
     edges = edges.groupby(["Word 1", "Word 2"], as_index=False).agg(Count=("Count", "sum"), PMI=("PMI", "max"))
-    edges = edges.sort_values("PMI", ascending=False).head(top_edges)
-    edges = edges.sort_values(["PMI", "Count"], ascending=[False, False]).reset_index(drop=True)
+    # Counted after "cat dog" and "dog cat" became one edge: that is the
+    # number of edges there were to keep.
+    total_edges = len(edges)
+    # Ties on PMI go to the more frequent pair before cutting, not after.
+    edges = edges.sort_values(["PMI", "Count"], ascending=[False, False]).head(top_edges).reset_index(drop=True)
     out = pd.DataFrame(
         {
             "Word 1": edges["Word 1"],
@@ -180,11 +183,11 @@ def collocation_network(
         }
     )
     diags = list(result.diagnostics)
-    if len(strong) > top_edges:
+    if total_edges > top_edges:
         diags.append(
             Diagnostic.warning(
                 "NET_EDGES_TRUNCATED",
-                f"kept the top {top_edges} of {len(strong)} edges by PMI; raise --top-edges for a denser graph",
+                f"kept the top {top_edges} of {total_edges} edges by PMI; raise --top-edges for a denser graph",
             )
         )
     return Result.success(out, *diags)

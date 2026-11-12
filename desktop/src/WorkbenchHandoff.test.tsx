@@ -16,7 +16,7 @@
  * cannot work -- a live table has no artifact on disk for the engine to read.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, type ReactElement } from "react";
+import { act, useState, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Workbench } from "./Workbench";
 import type { Settings } from "./chartLayout";
@@ -98,36 +98,83 @@ function press(container: HTMLElement, label: string, text: string) {
   });
 }
 
-describe("the kinds the browser cannot draw", () => {
-  it("offers the engine-only chart kinds beside the live ones", () => {
+describe("every engine kind is a live button", () => {
+  it("offers all sixteen kinds in the workbench itself", () => {
     const container = bench(vi.fn());
-    const offered = groupButtons(container, "Other chart types");
-    // Pie was the specific gap: the original suite drew it, the engine draws
-    // it, the catalog advertised it, and the workbench had no button for it.
-    expect(offered).toContain("Pie");
-    expect(offered).toContain("Treemap");
-    expect(offered).toContain("Radar");
-    expect(offered.length).toBeGreaterThanOrEqual(7);
-  });
-
-  it("does not repeat a kind the workbench already draws itself", () => {
-    // A second "Bar" that queues a job and waits, next to the one that redraws
-    // instantly, is two buttons with one name and different costs.
-    const offered = groupButtons(bench(vi.fn()), "Other chart types");
-    for (const live of ["Bar", "Line", "Scatter", "Histogram", "Heatmap"]) {
-      expect(offered).not.toContain(live);
+    const offered = groupButtons(container, "Chart type");
+    // These used to sit under "Other chart types" and queue a job. They are
+    // now drawn from the page on screen, like every other kind.
+    for (const label of [
+      "Pie",
+      "Sunburst",
+      "Treemap",
+      "Violin",
+      "Radar",
+      "Waffle",
+      "Calendar",
+      "Sankey",
+      "Cumulative distribution",
+    ]) {
+      expect(offered).toContain(label);
     }
+    expect(offered).toHaveLength(16);
   });
 
-  it("hands off the arrangement on screen, not a fresh one", () => {
-    const handOff = vi.fn();
-    press(bench(handOff), "Other chart types", "Pie");
-    expect(handOff).toHaveBeenCalledWith({
-      kind: "pie",
-      x: "Word",
-      y: "Count",
-      format: "html",
-    });
+  it("no longer keeps a second row of kinds that cannot be previewed", () => {
+    const container = bench(vi.fn());
+    expect(
+      container.querySelector(".workbench-handoff")?.textContent,
+    ).not.toContain("Drawn by the engine");
+    expect(groupButtons(container, "Other chart types")).toEqual([]);
+  });
+
+  it("changes kind in one update, so a parallel selection clear cannot overwrite it", () => {
+    // Explore applies settings and the cleared drill-down through two props.
+    // Calling onSelect(null) and then onSettings() built both edits from the
+    // same old render, and the second quietly restored the previous kind.
+    const onSettings = vi.fn();
+    const onSelect = vi.fn();
+    const container = render(
+      <Workbench
+        table={table}
+        artifactPath="counts.csv"
+        settings={settings}
+        onSettings={onSettings}
+        selected={null}
+        onSelect={onSelect}
+        canPublish
+        onPublish={() => {}}
+      />,
+    );
+    press(container, "Chart type", "Pie");
+    expect(onSettings).toHaveBeenCalledTimes(1);
+    expect(onSettings.mock.calls[0][0]).toMatchObject({ kind: "pie" });
+    expect(onSettings.mock.calls[0][1]).toBe(true);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("redraws when a newly live kind is pressed", () => {
+    function Harness() {
+      const [current, setCurrent] = useState(settings);
+      return (
+        <Workbench
+          table={table}
+          artifactPath="counts.csv"
+          settings={current}
+          onSettings={setCurrent}
+          selected={null}
+          onSelect={() => {}}
+          canPublish
+          onPublish={() => {}}
+          onHandOff={vi.fn()}
+        />
+      );
+    }
+    const container = render(<Harness />);
+    press(container, "Chart type", "Pie");
+    expect(container.querySelector(".chart-kicker")?.textContent).toBe(
+      "Share of a whole",
+    );
   });
 });
 

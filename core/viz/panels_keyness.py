@@ -54,7 +54,13 @@ from core.viz.panelspec import (
     counted_on_lemmas,
 )
 
-__all__ = ["KEYNESS_VOLCANO", "SIGNIFICANCE_LEVELS", "keyness_volcano"]
+__all__ = [
+    "KEYNESS_TOP_DISTINCTIVE",
+    "KEYNESS_VOLCANO",
+    "SIGNIFICANCE_LEVELS",
+    "keyness_top_distinctive",
+    "keyness_volcano",
+]
 
 WORD = "Word"
 G2 = "G2 (log-likelihood)"
@@ -341,4 +347,105 @@ KEYNESS_VOLCANO = PanelDefinition(
     ),
     build=keyness_volcano,
     notes=_NOTES,
+)
+
+
+def keyness_top_distinctive(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Ranked bars of top distinctive keywords by Log Ratio for statistically significant words."""
+    top_n = int(params.get("top-n", 25))
+    level = str(params.get("significance", "0.05"))
+    threshold = SIGNIFICANCE_LEVELS.get(level, 3.84)
+
+    working = frame.copy()
+    working[G2] = pd.to_numeric(working[G2], errors="coerce").fillna(0.0)
+    working[LOG_RATIO] = pd.to_numeric(working[LOG_RATIO], errors="coerce").fillna(0.0)
+    working[WORD] = working[WORD].astype(str).str.strip()
+
+    # Filter to statistically significant words
+    significant = working[working[G2] >= threshold].copy()
+    if significant.empty:
+        return Result.failure(
+            Diagnostic.error("PANEL_NO_DATA", f"no words reach significance threshold G2 >= {threshold}")
+        )
+
+    # Rank by absolute Log Ratio to find most distinctive terms in either direction
+    significant["_abs_effect"] = significant[LOG_RATIO].abs()
+    top_items = significant.sort_values(["_abs_effect", G2], ascending=[False, False], kind="stable").head(top_n)
+
+    marks: list[PanelMark] = []
+    for rank, (_, row) in enumerate(top_items.iterrows()):
+        word = str(row[WORD])
+        lr = float(row[LOG_RATIO])
+        g2_val = float(row[G2])
+        group_rep = str(row.get(OVERREPRESENTED, "Overrepresented"))
+        marks.append(
+            PanelMark(
+                key=word,
+                label=word,
+                x=lr,
+                y=float(rank),
+                group=group_rep,
+                evidence=Evidence(
+                    scope="terms",
+                    filters=((WORD, word),),
+                    count=int(row.get(FREQ_A, 0) + row.get(FREQ_B, 0)) if FREQ_A in row and FREQ_B in row else 1,
+                    phrase=word,
+                    describe=f"'{word}': Log Ratio {lr:+.2f} ({group_rep}), G2 = {g2_val:.1f}",
+                ),
+            )
+        )
+
+    groups = tuple(dict.fromkeys(m.group for m in marks if m.group))
+    prepared = PreparedPanel(
+        panel=KEYNESS_TOP_DISTINCTIVE.name,
+        shape="ranked_bars",
+        title=KEYNESS_TOP_DISTINCTIVE.title,
+        subtitle=f"Top {len(marks)} distinctive words by effect size (Log Ratio) at p < {level}",
+        marks=tuple(marks),
+        x_label="Effect Size: Log Ratio (base-2)",
+        y_label="",
+        provenance=provenance,
+        data=top_items,
+        groups=groups,
+        notes=KEYNESS_TOP_DISTINCTIVE.notes,
+    )
+    return Result.success(prepared)
+
+
+KEYNESS_TOP_DISTINCTIVE = PanelDefinition(
+    name="keyness_top_distinctive",
+    title="Top distinctive keywords by effect size",
+    question="Which words are most overrepresented in each group among statistically significant differences?",
+    tool="keyness",
+    shape="ranked_bars",
+    summary="Statistically significant words ranked by effect size (Log Ratio).",
+    requires=(WORD, G2, LOG_RATIO, OVERREPRESENTED),
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=25,
+            minimum=5,
+            maximum=100,
+            label="Keywords to show",
+            help="Number of top distinctive keywords to display.",
+        ),
+        PanelParam(
+            name="significance",
+            type="choice",
+            default="0.05",
+            choices=("0.05", "0.01", "0.001"),
+            label="Significance threshold",
+            help="Required significance level: p < 0.05 (G2 >= 3.84), 0.01 (6.63), or 0.001 (10.83).",
+        ),
+    ),
+    build=keyness_top_distinctive,
+    notes=(
+        "Log Ratio measures effect size on a binary logarithmic scale (a difference of +1 means twice as frequent).",
+        "Filtering by G2 significance avoids highlighting low-frequency words whose large ratio rests on very few occurrences.",
+    ),
 )

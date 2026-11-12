@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from core.analysis.corpus_statistics import run as corpus_stats
-from core.analysis.sentiment_vader_anew import vader
+from core.analysis.polarity_vader import vader
 from core.analysis.text_statistics import run as text_stats
 from core.conll.schema import Col
 from core.result import Diagnostic, Result

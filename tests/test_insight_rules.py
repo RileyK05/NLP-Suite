@@ -133,23 +133,23 @@ class TestSentiment:
 
     def test_counts_the_three_bands(self) -> None:
         frame = self._sentences([0.8, -0.6, 0.0, 0.4], [3, 2, 1, 2])
-        text = _text(frame, "sentiment_vader_anew")
+        text = _text(frame, "polarity_vader")
         assert "2 positive, 1 negative, 1 neutral" in text
         assert "sentence(s) scored" in text
 
     def test_a_result_that_is_mostly_neutral_is_flagged(self) -> None:
         frame = self._sentences([0.0, 0.01, -0.02, 0.9], [1, 1, 1, 4])
-        assert "inside the neutral band" in _cautions(frame, "sentiment_vader_anew")
+        assert "inside the neutral band" in _cautions(frame, "polarity_vader")
 
     def test_sentences_with_no_matched_word_are_flagged(self) -> None:
         frame = self._sentences([0.5, 0.0, -0.4, 0.0], [2, 0, 3, 0])
-        cautions = _cautions(frame, "sentiment_vader_anew")
+        cautions = _cautions(frame, "polarity_vader")
         assert "contained no lexicon word at all" in cautions
         assert "2 of 4 rows" in cautions
 
     def test_full_coverage_is_not_flagged(self) -> None:
         frame = self._sentences([0.5, 0.6, -0.4, 0.7], [2, 1, 3, 1])
-        assert "no lexicon word" not in _cautions(frame, "sentiment_vader_anew")
+        assert "no lexicon word" not in _cautions(frame, "polarity_vader")
 
     def test_documents_rather_than_sentences_are_named_as_such(self) -> None:
         frame = pd.DataFrame(
@@ -163,7 +163,7 @@ class TestSentiment:
                 "Compound": [0.4, -0.3],
             }
         )
-        assert "document(s) scored" in _text(frame, "sentiment_vader_anew")
+        assert "document(s) scored" in _text(frame, "polarity_vader")
 
     def test_anew_reports_valence_and_its_coverage(self) -> None:
         frame = pd.DataFrame(
@@ -177,8 +177,8 @@ class TestSentiment:
                 "Dominance": [5.0, 5.2],
             }
         )
-        assert "ANEW valence runs" in _text(frame, "sentiment_vader_anew")
-        assert "appear in the ANEW lexicon" in _cautions(frame, "sentiment_vader_anew")
+        assert "ANEW valence runs" in _text(frame, "valence_anew")
+        assert "appear in the ANEW lexicon" in _cautions(frame, "valence_anew")
 
 
 class TestDocSimilarity:
@@ -465,7 +465,7 @@ class TestRecommendationsForTheNewTools:
 
     def test_sentiment_is_recommended_against_its_own_coverage(self) -> None:
         frame = TestSentiment._sentences([0.5, 0.0, -0.4, 0.8, 0.2], [2, 0, 3, 5, 1])
-        pairs = {(c.spec.x, c.spec.y) for c in recommend_charts(frame, tool="sentiment_vader_anew")}
+        pairs = {(c.spec.x, c.spec.y) for c in recommend_charts(frame, tool="polarity_vader")}
         assert ("Hits", "Compound") in pairs
 
     def test_corpus_statistics_leads_with_the_length_check(self) -> None:
@@ -631,7 +631,7 @@ class TestTheReadingAlwaysSaysSomething:
 
     def test_an_unlabelled_measure_table_reports_its_range(self) -> None:
         frame = pd.DataFrame({"Document ID": [1, 1, 2], "Compound": [-0.61, 0.0, 0.2]})
-        assert "Compound runs from -0.61 to 0.2 across 3 row(s)" in _text(frame, "narrative")
+        assert "Compound runs from -0.61 to 0.2 across 3 row(s)" in _text(frame, "narrative_arc")
 
     def test_ties_are_broken_the_same_way_every_run(self) -> None:
         """R6: two rows with the same count must not swap between runs."""

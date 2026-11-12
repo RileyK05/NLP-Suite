@@ -3,16 +3,16 @@ topics, and topic stability across seeds.
 
 What each figure is for, on the real 87-speech corpus:
 
-* ``shape_hc`` -- a **dendrogram** (which speeches the clustering joined
+* ``story_shape_hc`` -- a **dendrogram** (which speeches the clustering joined
   first, and at what distance), and **when each cluster's speeches are
   from**, because a cluster that is one era is a finding about time and a
   cluster that spans ninety years is a finding about form.
-* ``shape_svd`` / ``shape_nmf`` -- how much each component explains, the
+* ``story_shape_svd`` / ``story_shape_nmf`` -- how much each component explains, the
   **loadings drawn along the speech** (one small multiple per measure, x =
   position through the speech), so a component reads as "long openings" or
   "noun-heavy endings" rather than as a list of feature codes, and the
   documents placed on the components.
-* ``bert_topics`` -- each topic's words, and when its documents are from.
+* ``topic_clusters_bert`` -- each topic's words, and when its documents are from.
 * ``lda_stability`` -- which reference topic came back under each seed.
 
 The story-shape tables carry the shape matrix's features as
@@ -57,7 +57,7 @@ def _label_map(names: pd.Series) -> dict[str, str]:
     return document_labels(names.astype(str))
 
 
-# ------------------------------------------------------------ shape_hc --
+# ------------------------------------------------------------ story_shape_hc --
 
 
 def _dendrogram(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Provenance) -> Result[PreparedPanel]:
@@ -197,10 +197,10 @@ SHAPE_HC_NOTES = (
 )
 
 SHAPE_HC_DENDROGRAM = PanelDefinition(
-    name="shape_hc_dendrogram",
+    name="story_shape_hc_dendrogram",
     title="Story-shape dendrogram",
     question="Which speeches are built the same way, and how early do they join?",
-    tool="shape_hc",
+    tool="story_shape_hc",
     shape="network",
     summary="The clustering's merge tree, documents named, merges at their distance.",
     requires=("Merge", "Left", "Right", "Height", "Left id", "Right id"),
@@ -293,10 +293,10 @@ def _hc_membership(frame: pd.DataFrame, params: Mapping[str, Any], provenance: P
 
 
 SHAPE_HC_ERAS = PanelDefinition(
-    name="shape_hc_eras",
+    name="story_shape_hc_eras",
     title="Clusters through time",
     question="Is each cluster an era, or a form that recurs across the decades?",
-    tool="shape_hc",
+    tool="story_shape_hc",
     shape="distribution",
     summary="Every speech placed at its date, one row per cluster.",
     requires=(DOC_ID, DOC, AXIS, "Cluster"),
@@ -530,7 +530,7 @@ _LOADING_NOTE = (
 
 
 def _factory(method: str, *, explained_column: str, meaning: str, sign_note: str) -> tuple[PanelDefinition, ...]:
-    tool = f"shape_{method}"
+    tool = f"story_shape_{method}"
     upper = method.upper()
     explained = PanelDefinition(
         name=f"{tool}_explained",
@@ -587,10 +587,10 @@ SHAPE_NMF_PANELS = _factory(
     sign_note="NMF parts are never negative, so a speech is a sum of them.",
 )
 SHAPE_NMF_COMPOSITION = PanelDefinition(
-    name="shape_nmf_composition",
+    name="story_shape_nmf_composition",
     title="NMF: each speech as a mix of parts",
     question="Which part dominates each speech, and does that change over time?",
-    tool="shape_nmf",
+    tool="story_shape_nmf",
     shape="ribbon",
     summary="Each speech's NMF scores as shares, one band per speech in date order.",
     requires=(DOC_ID, DOC, "Component 1", "Component 2"),
@@ -603,7 +603,7 @@ SHAPE_NMF_COMPOSITION = PanelDefinition(
 )
 
 
-# ---------------------------------------------------------- bert_topics --
+# ---------------------------------------------------------- topic_clusters_bert --
 
 
 def _topic_words(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Provenance) -> Result[PreparedPanel]:
@@ -648,10 +648,10 @@ def _topic_words(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Pro
 
 
 BERT_TOPIC_WORDS = PanelDefinition(
-    name="bert_topics_words",
+    name="topic_clusters_bert_words",
     title="Topic words",
     question="Which words define each topic?",
-    tool="bert_topics",
+    tool="topic_clusters_bert",
     shape="ranked_bars",
     summary="One topic's words, ranked by their weight in it.",
     requires=("Topic", "Word", "Weight"),
@@ -686,10 +686,10 @@ def _topic_eras(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Prov
 
 
 BERT_TOPIC_ERAS = PanelDefinition(
-    name="bert_topics_eras",
+    name="topic_clusters_bert_eras",
     title="Topics through time",
     question="Is each topic tied to an era?",
-    tool="bert_topics",
+    tool="topic_clusters_bert",
     shape="distribution",
     summary="Every document at its date, one row per assigned topic.",
     requires=(DOC_ID, DOC, AXIS, "Topic", "Distance"),

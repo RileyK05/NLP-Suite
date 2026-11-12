@@ -10,8 +10,11 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pandas as pd
+import pytest
 
-from core.narrative import characters as char_mod
+from core.analysis import polarity_vader as vader_mod
+from core.narrative import arcs as arcs_mod, characters as char_mod
+from core.result import Result
 
 
 def _frame() -> pd.DataFrame:
@@ -98,3 +101,30 @@ class TestArcs:
         )
         res = char_mod.character_arcs(empty, analyzer=FakeAnalyzer())
         assert res.ok and res.unwrap().empty
+
+
+class TestEmotionArc:
+    def test_one_analyzer_scores_every_sentence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """VADER's analyzer parses its lexicon on construction; a sentence must not pay for that."""
+        built: list[int] = []
+
+        def build(_lexicon: object = None) -> Result[object]:
+            built.append(1)
+            return Result.success(FakeAnalyzer())
+
+        monkeypatch.setattr(vader_mod, "load_vader_analyzer", build)
+        res = arcs_mod.emotion_arc(_frame())
+        assert res.ok, res.diagnostics
+        arc = res.unwrap()
+        assert arc["Compound"].tolist() == [-0.25, 0.5]  # the frame's two sentences, in order
+        assert arc["Sentence"].tolist() == ["Harry met Hermione Granger .", "harry waved . London"]
+        assert len(built) == 1
+
+    def test_a_neutral_sentence_reads_zero_not_negative_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Neutral(FakeAnalyzer):
+            def polarity_scores(self, text: str) -> dict[str, float]:
+                return {"neg": 0.0, "neu": 1.0, "pos": 0.0, "compound": -0.0}
+
+        monkeypatch.setattr(vader_mod, "load_vader_analyzer", lambda _lexicon=None: Result.success(Neutral()))
+        compounds = arcs_mod.emotion_arc(_frame()).unwrap()["Compound"].tolist()
+        assert [str(value) for value in compounds] == ["0.0", "0.0"]

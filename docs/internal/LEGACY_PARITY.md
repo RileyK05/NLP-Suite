@@ -80,11 +80,11 @@ interface, model/network out of scope by design.
 | N-gram co-occurrence | full | `ngram_cooccurrence.py` (window/pair counting); PMI collocation network export added since this snapshot (`ngrams --network` -> GEXF) |
 | KWIC concordance | full | `kwic.py` (CAP-INTAKE-19), added since this snapshot: form/lemma, regex and case-sensitive modes, document + sentence provenance per row |
 | NER entity timeline / location tracking | full | `ner.py`; movement tracks ported since this snapshot (`movement.py`, `ner --movement`, CAP-NER-03) |
-| Sentiment: VADER | full | `sentiment_vader_anew.py::vader` (compact baked lexicon) |
-| Sentiment: ANEW | full | same module (`anew`) |
-| Sentiment: SentiWordNet | full | `sentiment_swn_hedono.py::sentiwordnet` |
-| Sentiment: hedonometer | full | same module (`hedonometer`) |
-| Sentiment: NRC emotion lexicon | full (optional) | `nrc.py` (FR-4.3): 10-column Plutchik output over the nrclex-bundled lexicon |
+| Sentiment: VADER | full | `polarity_vader.py::vader` |
+| Sentiment: ANEW | full | `valence_anew.py::anew` |
+| Sentiment: SentiWordNet | full | `polarity_sentiwordnet.py::sentiwordnet` |
+| Sentiment: hedonometer | full | `happiness_hedonometer.py::hedonometer` |
+| Sentiment: NRC emotion lexicon | full (optional) | `emotion_nrc.py` (FR-4.3): 10-column Plutchik output over the nrclex-bundled lexicon |
 | Character emotion arcs (per-character NER arcs) | partial | `core/narrative/arcs.py` does per-sentence VADER arcs; the legacy's per-character arcs (`character_emotion_arcs_util.py`, 1158 lines, binning + HTML) are richer |
 | Statistics: text (sentences/tokens/syllables per doc) | full | `text_statistics.py` |
 | Statistics: lexical diversity (TTR, RootTTR, LogTTR/Herdan, Yule K) | full | `corpus_statistics.py`; Guiraud/MTLD/vocd-D in `lexical_diversity.py` (C6-8 short-text policy pending) |
@@ -93,7 +93,7 @@ interface, model/network out of scope by design.
 | Statistics: word frequency distribution | full | `conll_wordlist.py` |
 | Statistical tests (chi-square, crosstab, keyness, MWU, KW+Dunn, Mann-Kendall, rank correlation) | implementing (C6-5/C6-6) | `stats_categorical.py`, `stats_groups.py`, `stats_trends.py`; kappa/change-point/permutation/ARI/Bayes/silhouette families not yet ported. Corpus-level keyness between two document groups ported since this snapshot (`keyness.py`, CAP-STATS-11) |
 | CSV stats (describe, correlation) | full | `csv_stats.py` |
-| Topic modeling (gensim LDA / MALLET / BERT) | partial | `lda.py` (seeded Gensim LdaModel, FR-5.7) behind `topic_model.py`; TF-IDF partition remains as the no-gensim default; MALLET adapter written (`mallet.py`) but needs the binary; transformer-embedding topics ported since this snapshot (`bert_topics.py`, CAP-TOPIC-04) — KMeans over document embeddings, not the BERTopic package |
+| Topic modeling (gensim LDA / MALLET / BERT) | partial | `lda.py` (seeded Gensim LdaModel, FR-5.7) behind `topic_model.py`; TF-IDF partition remains as the no-gensim default; MALLET adapter written (`mallet.py`) but needs the binary; transformer-embedding topics ported since this snapshot (`topic_clusters_bert.py`, CAP-TOPIC-04) — KMeans over document embeddings, not the BERTopic package |
 | Word embeddings (word2vec + distances + t-SNE) | full (optional) | `word_embeddings.py` (FR-5.5): seeded Gensim train, neighbours, sklearn t-SNE; legacy ran Gensim word2vec + tsne |
 | t-SNE interactive scatter (`word2vec_tsne_plot_util`) | full | `core/viz/embeddings.py::tsne_html` — Plotly scatter with word labels (2D; the legacy 3D variant deliberately not carried); plain HTML coordinate table + `TSNE_PLOTLY_UNAVAILABLE` without plotly; `word_embeddings` CLI writes tsne.html next to tsne.csv |
 | Story-shape clustering (`shape_of_stories_vectorizer_util`) | full (deterministic core) | `core/viz/shape_clusters.py::cluster_shapes` (CAP-VIZ-08): KMeans over resampled story-shape trajectories (tokens/noun/verb), k from the legacy PCA explained-variance heuristic, seeded + reproducible; `tools/shapes.py --clusters N`; legacy bucketed *sentiment* per window — the deterministic shape metrics replace the sentiment dependency (documented, not silent) |
@@ -185,7 +185,7 @@ Ordered by how much a corpus analysis would miss them:
    the BERTopic *package* is not used; SRL frame mapping over the worker
    protocol is owed (FR-5.3); neural coreference (FR-5.4) is a documented
    follow-up. **Superseded since this snapshot:** transformer-embedding topic modeling now
-   ships as `bert_topics` (CAP-TOPIC-04).
+   ships as `topic_clusters_bert` (CAP-TOPIC-04).
 4. **Fixture pairs for valid PDF/DOCX/RTF conversion, and full asset-backed spell checking** — adapters exist behind optional extras; in-house fixtures (sample file + expected extracted text) and asset provenance remain.
 5. **Remaining domain analyses** — sentence complexity's constituency
    workflow (blocked on FR-5.2); character-arc binning + HTML (FR-6.2);

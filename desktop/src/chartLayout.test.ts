@@ -124,6 +124,20 @@ describe("axis ticks", () => {
   it("survives a flat range", () => {
     expect(niceTicks(7, 7)).toHaveLength(1);
   });
+  it("uses one precision across an axis, never mixing 2.50 with 2", () => {
+    expect(niceTicks(0, 1.5).map((tick) => tick.label)).toEqual([
+      "0",
+      "0.5",
+      "1.0",
+      "1.5",
+    ]);
+  });
+  it("never prints a negative zero", () => {
+    for (const tick of [...niceTicks(-0.4, 0.4), ...niceTicks(-1, 1)]) {
+      expect(tick.label).not.toMatch(/^-0(?:\.0+)?$/);
+    }
+    expect(formatNumber(-0)).toBe("0");
+  });
   it("shortens long numbers rather than overflowing the axis", () => {
     expect(formatNumber(1_500_000)).toBe("1.5M");
     expect(formatNumber(12_345)).toBe("12k");
@@ -227,6 +241,27 @@ describe("bars", () => {
   });
 });
 
+describe("cumulative distribution", () => {
+  it("keeps ties together and computes the denominator within each group", () => {
+    const rows = [
+      { Count: "1", Set: "A" },
+      { Count: "1", Set: "A" },
+      { Count: "4", Set: "A" },
+      { Count: "1", Set: "B" },
+      { Count: "5", Set: "B" },
+    ];
+    const options = settings({ kind: "ecdf", group: "Set" });
+    const result = buildLayout(rows, options);
+    if (!result.ok) throw new Error(result.reason);
+    const [a, b] = result.layout.series;
+    expect(a.marks.map((mark) => mark.x)).toEqual([1, 4]);
+    expect(a.marks[0].y).toBeCloseTo(200 / 3);
+    expect(a.marks[1].y).toBe(100);
+    expect(b.marks[0].y).toBe(50);
+    expect(rowsBehind(rows, options, a.marks[0])).toEqual(rows.slice(0, 2));
+  });
+});
+
 describe("points", () => {
   const numeric = [
     { A: "1", B: "10", Set: "x" },
@@ -251,6 +286,16 @@ describe("points", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toContain("Word");
+  });
+
+  it("uses the exact observation when multiple points share an x value", () => {
+    const points = [...numeric, { A: "1", B: "42", Set: "x" }];
+    const options = settings({ kind: "scatter", x: "A", y: "B", group: "Set" });
+    const result = buildLayout(points, options);
+    if (!result.ok) throw new Error(result.reason);
+    expect(
+      rowsBehind(points, options, result.layout.series[0].marks[1]),
+    ).toEqual([points[2]]);
   });
 
   it("sizes bubbles by magnitude, relative to the largest", () => {
@@ -359,6 +404,9 @@ describe("box plot", () => {
     expect(box.q1).toBe(2);
     expect(box.q3).toBe(4);
     expect(box.n).toBe(5);
+    // The box is not the whole story: every observation is kept for the
+    // renderer to draw over it.
+    expect(box.points).toEqual([1, 2, 3, 4, 100]);
   });
 
   it("keeps an outlier in range rather than clipping it out of sight", () => {
@@ -397,6 +445,129 @@ describe("heatmap", () => {
     );
     if (!result.ok) throw new Error(result.reason);
     expect(result.layout.cells).toHaveLength(2);
+  });
+});
+
+describe("the non-Cartesian kinds", () => {
+  const suite = [
+    { Date: "2020-01-01", Word: "a", Count: "4", Set: "x" },
+    { Date: "2020-01-02", Word: "a", Count: "2", Set: "y" },
+    { Date: "2020-02-01", Word: "b", Count: "3", Set: "x" },
+    { Date: "2020-02-02", Word: "b", Count: "1", Set: "y" },
+    { Date: "2020-03-01", Word: "c", Count: "5", Set: "x" },
+  ];
+  const build = (over: Partial<Settings>) =>
+    buildLayout(suite, settings({ x: "Word", y: "Count", ...over }));
+
+  it("draws a pie whose shares sum to one", () => {
+    const result = build({ kind: "pie" });
+    if (!result.ok) throw new Error(result.reason);
+    const shares = result.layout.slices?.map((slice) => slice.share) ?? [];
+    expect(shares).toHaveLength(3);
+    expect(shares.reduce((sum, share) => sum + share, 0)).toBeCloseTo(1);
+    expect(result.layout.slices?.[0].startAngle).toBeCloseTo(-Math.PI / 2);
+  });
+
+  it("draws a sunburst as an inner ring and its group wedges", () => {
+    const result = build({ kind: "sunburst", group: "Set" });
+    if (!result.ok) throw new Error(result.reason);
+    const arcs = result.layout.arcs ?? [];
+    expect(arcs.filter((arc) => arc.parent === null)).toHaveLength(3);
+    expect(arcs.filter((arc) => arc.parent !== null).length).toBeGreaterThan(0);
+    expect(arcs.every((arc) => arc.outer > arc.inner)).toBe(true);
+  });
+
+  it("fills a treemap without leaving its unit square", () => {
+    const result = build({ kind: "treemap", group: "Set" });
+    if (!result.ok) throw new Error(result.reason);
+    for (const tile of result.layout.tiles ?? []) {
+      expect(tile.x).toBeGreaterThanOrEqual(0);
+      expect(tile.y).toBeGreaterThanOrEqual(0);
+      expect(tile.x + tile.width).toBeLessThanOrEqual(1.000001);
+      expect(tile.y + tile.height).toBeLessThanOrEqual(1.000001);
+    }
+    const area = (result.layout.tiles ?? []).reduce(
+      (sum, tile) => sum + tile.width * tile.height,
+      0,
+    );
+    expect(area).toBeCloseTo(1, 3);
+  });
+
+  it("keeps every violin observation and a density curve", () => {
+    const result = build({ kind: "violin" });
+    if (!result.ok) throw new Error(result.reason);
+    const values =
+      result.layout.violins?.flatMap((violin) => violin.values) ?? [];
+    expect(values).toHaveLength(suite.length);
+    expect(result.layout.violins?.[0].density.length).toBeGreaterThan(10);
+  });
+
+  it("puts one radar value on every spoke for every group", () => {
+    const result = build({ kind: "radar", group: "Set" });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.layout.radar?.spokes).toHaveLength(3);
+    expect(result.layout.radar?.series).toHaveLength(2);
+    expect(
+      result.layout.radar?.series.every((series) => series.values.length === 3),
+    ).toBe(true);
+  });
+
+  it("turns shares into exactly one hundred waffle squares", () => {
+    const result = build({ kind: "waffle" });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.layout.waffle?.squares).toHaveLength(100);
+  });
+
+  it("places a calendar cell on the right day and month", () => {
+    const result = build({ kind: "calendar", x: "Date" });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.layout.calendar?.months).toHaveLength(3);
+    const cell = result.layout.calendar?.cells.find(
+      (entry) => entry.label === "2020-01-01",
+    );
+    expect(cell?.day).toBe(1);
+    expect(cell?.month).toBe(0);
+    expect(cell?.value).toBe(4);
+  });
+
+  it("draws one ribbon per source-to-target link", () => {
+    const result = build({ kind: "sankey", group: "Set" });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.layout.flows?.links).toHaveLength(5);
+    expect(result.layout.flows?.nodes).toHaveLength(5);
+    for (const link of result.layout.flows?.links ?? []) {
+      expect(link.ty0).toBeGreaterThanOrEqual(0);
+      expect(link.sy0).toBeGreaterThanOrEqual(0);
+      expect(link.sy1 - link.sy0).toBeCloseTo(link.ty1 - link.ty0);
+    }
+  });
+
+  it("says why a hierarchy cannot be drawn without a second level", () => {
+    for (const kind of ["sunburst", "treemap", "sankey"] as const) {
+      const result = build({ kind, group: "" });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain("Group");
+    }
+  });
+
+  it("turns a long ranking on its side rather than printing a wall of rotated labels", () => {
+    const many = Array.from({ length: 14 }, (_, index) => ({
+      Word: `a-long-category-${index}`,
+      Count: String(14 - index),
+    }));
+    const result = buildLayout(many, settings());
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.layout.horizontal).toBe(true);
+  });
+
+  it("filters the rows behind a child arc, not the whole compound label", () => {
+    const found = rowsBehind(
+      suite,
+      settings({ kind: "treemap", group: "Set" }),
+      { label: "a · x", group: "x", parent: "a" },
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].Count).toBe("4");
   });
 });
 
@@ -447,9 +618,27 @@ describe("clicking a mark", () => {
  */
 describe("publishing to the engine", () => {
   it("sends an aggregation only where the engine takes one", () => {
-    expect(publishParams(settings({ kind: "bar" })).agg).toBe("sum");
-    expect(publishParams(settings({ kind: "heatmap" })).agg).toBe("sum");
-    for (const kind of ["scatter", "bubble", "histogram", "box"] as const) {
+    for (const kind of [
+      "bar",
+      "line",
+      "heatmap",
+      "pie",
+      "sunburst",
+      "treemap",
+      "radar",
+      "waffle",
+      "calendar",
+      "sankey",
+    ] as const) {
+      expect(publishParams(settings({ kind })).agg).toBe("sum");
+    }
+    for (const kind of [
+      "scatter",
+      "bubble",
+      "histogram",
+      "box",
+      "violin",
+    ] as const) {
       expect(publishParams(settings({ kind })).agg).toBe("");
     }
   });
@@ -458,12 +647,19 @@ describe("publishing to the engine", () => {
     expect(publishParams(settings({ kind: "bar", topN: 20 }))["top-n"]).toBe(
       20,
     );
+    for (const kind of ["pie", "sunburst", "treemap", "waffle"] as const) {
+      expect(publishParams(settings({ kind, topN: 20 }))["top-n"]).toBe(20);
+    }
     for (const kind of [
       "scatter",
       "bubble",
       "histogram",
       "box",
       "heatmap",
+      "violin",
+      "radar",
+      "calendar",
+      "sankey",
     ] as const) {
       expect(publishParams(settings({ kind, topN: 20 }))["top-n"]).toBeNull();
     }

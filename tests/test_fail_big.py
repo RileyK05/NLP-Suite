@@ -19,8 +19,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from conftest import has_spacy_model
-from core.pipelines.spacy_backend import build_spacy_pipeline, spacy_model_name
+from core.pipelines.spacy_backend import spacy_model_name
 
 
 def _block_plotly(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,29 +35,19 @@ def _block_plotly(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestMissingModelFailsLoudly:
-    def test_missing_spacy_model_fails_with_fix(self) -> None:
-        """Without a trained model the build fails and names the fix.
-
-        If a model IS installed on this machine the contract is vacuous here;
-        the doctor probes cover the installed state directly.
-        """
-        if has_spacy_model():
-            pytest.skip("model installed; hard-failure path not reachable")
-        result = build_spacy_pipeline("en", frozenset())
-        assert not result.ok
-        error = result.errors[0]
-        assert error.code == "PIPELINE_MODEL_MISSING"
-        assert error.context["fix"] == f"python -m spacy download {spacy_model_name('en')}"
-        assert "silently" in error.message  # says WHY it refuses to degrade
-
-    def test_cli_failure_prints_the_fix(self, capsys: pytest.CaptureFixture[str]) -> None:
+    @pytest.mark.usefixtures("without_spacy_models")
+    def test_cli_failure_prints_the_fix(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The CLI failure path prints the fix on its own line, exit 1."""
-        if has_spacy_model():
-            pytest.skip("model installed; hard-failure path not reachable")
+        from tools import doctor
+
+        # The doctor has its own dedicated tests; this checks CLI diagnostics.
+        monkeypatch.setattr(doctor, "run_doctor", lambda languages: (1, []))
         from tools.conll_wordlist import main as wordlist_main
 
         with pytest.raises(SystemExit) as exc_info:
-            wordlist_main(["tests/fixtures/mini-corpus", "out"])
+            wordlist_main(["tests/fixtures/mini-corpus", "out", "--parser", "spacy", "--strict-parser"])
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "PIPELINE_MODEL_MISSING" in captured.err

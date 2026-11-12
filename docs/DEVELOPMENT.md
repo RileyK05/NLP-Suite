@@ -178,7 +178,7 @@ words):
 | Parse (spaCy) | **30 s** |
 | `readability`, `corpus_statistics` | ~170 ms |
 | `collocations`, `tfidf`, `kwic` | 420–510 ms |
-| `ngrams`, `sentiment_vader_anew` | 1.5–3.2 s |
+| `ngrams`, `polarity_vader` | 1.5–3.2 s |
 
 The parse is roughly 180× an analysis, so changing an n-gram's `n` from 2 to 3
 cost half a minute of reparsing to compute something that takes a sixth of a
@@ -377,6 +377,18 @@ cd desktop && npm ci && npx vitest run && npm run build
 models or lexical data). Run them explicitly with
 `python -m pytest -m model_integration`; a passing default gate alone does not
 verify those integrations.
+
+To locate slow tests, run `python -m pytest --durations=20`; for a focused edit,
+pass the relevant test file or node (`tests/test_jobs.py::TestJobs::test_list_newest_first`).
+Keep model availability checks in fixtures or test bodies so deselected tests
+do not load models during collection. Missing-model tests force that condition
+with `without_spacy_models`, rather than skipping on machines with models installed.
+The cold-start preload checks share one isolated interpreter, and the frontend's
+copied-chart checks run all snippets in one Python process with separate globals
+and figures. Tests that manually call `run_job` must disable the corresponding
+runner's dispatch, so the same job is not executed concurrently twice.
+Vitest caps concurrent workers at four to keep jsdom startup and memory bounded;
+override locally with `npm test -- --maxWorkers=2` if needed.
 
 ### Testing against a real corpus
 

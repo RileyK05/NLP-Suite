@@ -431,7 +431,7 @@ export function CorpusDetails({
 }
 
 /**
- * Dated events for the project's time figures (SHOWCASE_FIGURES_PLAN section 4).
+ * Dated events for the project's time figures (docs/viz-panels.md, showcase figures).
  *
  * "The world on the axis": a stopline at Pearl Harbor or 9/11 turns a trend
  * into a test the reader can check. Events are saved with the project's other

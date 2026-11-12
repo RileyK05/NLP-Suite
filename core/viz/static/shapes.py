@@ -26,13 +26,14 @@ from collections.abc import Callable, Sequence
 import math
 from typing import Any
 
+from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.collections import LineCollection
+from matplotlib.collections import LineCollection, PolyCollection
 from matplotlib.colors import LinearSegmentedColormap, to_rgba
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
+from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 from matplotlib.transforms import blended_transform_factory
 import numpy as np
@@ -697,6 +698,7 @@ def draw_heatmap(prepared: PreparedPanel) -> Drawn:
     finite = matrix[np.isfinite(matrix)]
     diverging = prepared.color_scale == "diverging"
     bound = float(np.nanmax(np.abs(finite))) if finite.size else 1.0
+    low, high = prepared.value_domain or ((-bound, bound) if diverging else (None, None))
     annotate = rows * columns <= 400 and max(rows, columns) <= 20
     step = float(np.nanmax(finite) - np.nanmin(finite)) / 10 if finite.size else 1.0
     digits = 0 if step >= 5 else 1 if step >= 0.5 else 2
@@ -709,8 +711,8 @@ def draw_heatmap(prepared: PreparedPanel) -> Drawn:
         ax=ax,
         cmap=_colormap(prepared),
         center=0.0 if diverging else None,
-        vmin=-bound if diverging else None,
-        vmax=bound if diverging else None,
+        vmin=low,
+        vmax=high,
         mask=~np.isfinite(matrix),
         annot=annotate,
         fmt=f".{digits}f",
@@ -1082,6 +1084,57 @@ def draw_positions(prepared: PreparedPanel) -> Drawn:
     return fig, ["The strip on top counts every hit across all documents at each position."]
 
 
+def draw_geographic(prepared: PreparedPanel) -> Drawn:
+    from core.viz.panel_maps import COAST, GRID, LAND_FILL, PIN, WATER, cell_color, land_polygons, pin_radius
+
+    fig = _figure(_WIDTH_IN, 5.5)
+    ax = fig.subplots()
+    ax.set(xlim=(-180, 180), ylim=(-90, 90), aspect="equal", facecolor=WATER)
+    ax.set_xticks(range(-180, 181, 60), [f"{x}°" for x in range(-180, 181, 60)])
+    ax.set_yticks(range(-90, 91, 30), [f"{y}°" for y in range(-90, 91, 30)])
+    ax.grid(True, color=GRID, linewidth=0.5)
+    ax.add_collection(PolyCollection(land_polygons(), facecolor=LAND_FILL, edgecolor=COAST, linewidth=0.45))
+    half = prepared.map_cell_degrees / 2
+    if half:
+        maximum = max(mark.value or 0 for mark in prepared.marks)
+        for mark in prepared.marks:
+            ax.add_patch(
+                Rectangle(
+                    (mark.x - half, mark.y - half),
+                    2 * half,
+                    2 * half,
+                    facecolor=cell_color(mark.value or 0, maximum),
+                    edgecolor=LAND_FILL,
+                    linewidth=0.5,
+                    alpha=0.86,
+                    zorder=4,
+                )
+            )
+        handle: Artist = Patch(facecolor=cell_color(maximum, maximum), edgecolor=LAND_FILL)
+    else:
+        maximum = max(mark.size or 0 for mark in prepared.marks)
+        ax.scatter(
+            [mark.x for mark in prepared.marks],
+            [mark.y for mark in prepared.marks],
+            s=[pin_radius(mark.size or 0, maximum) ** 2 for mark in prepared.marks],
+            color=PIN,
+            edgecolors="white",
+            linewidths=0.6,
+            alpha=0.84,
+            zorder=4,
+        )
+        handle = Line2D([], [], marker="o", linestyle="", markersize=10, color=PIN)
+    ax.legend(
+        handles=[handle],
+        labels=[f"Maximum: {maximum:,g} {prepared.value_label}"],
+        loc="lower left",
+        bbox_to_anchor=(0, 1.015),
+        frameon=False,
+        borderaxespad=0,
+    )
+    return fig, ["Land outlines: Natural Earth 1:110m."]
+
+
 DRAWERS: dict[str, Callable[[PreparedPanel], Drawn]] = {
     "scatter_labelled": draw_scatter,
     "line_series": draw_line_series,
@@ -1093,6 +1146,7 @@ DRAWERS: dict[str, Callable[[PreparedPanel], Drawn]] = {
     "ribbon": draw_ribbon,
     "stream": draw_stream,
     "positions": draw_positions,
+    "geographic": draw_geographic,
 }
 
 # ``tick_labels`` is re-exported for tests that compare the two renderers.

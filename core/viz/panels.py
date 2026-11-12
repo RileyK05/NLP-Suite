@@ -45,8 +45,10 @@ import pandas as pd
 
 from core.result import Diagnostic, Result
 from core.viz.panel_plotters import IMPLEMENTED_SHAPES
+from core.viz.panels_bert_extract import BERT_EXTRACT_PANELS
 from core.viz.panels_collocations import COLLOCATION_STRENGTH
 from core.viz.panels_contrast import CONTRAST_PANELS
+from core.viz.panels_corpus_detail import CORPUS_DETAIL_PANELS
 from core.viz.panels_document_measures import DOCUMENT_MEASURES_PANELS
 from core.viz.panels_embeddings import (
     WORD2VEC_BERT_NEIGHBOURS,
@@ -56,8 +58,11 @@ from core.viz.panels_embeddings import (
     WORD2VEC_GENSIM_TSNE,
     WORD2VEC_GENSIM_VECTOR_QUERY,
 )
+from core.viz.panels_emotion_nrc import NRC_EMOTION_PANELS
 from core.viz.panels_extras import EXTRAS_PANELS
-from core.viz.panels_keyness import KEYNESS_VOLCANO
+from core.viz.panels_geography import GEOGRAPHY_PANELS
+from core.viz.panels_k_sentences import K_SENTENCES_PANELS
+from core.viz.panels_keyness import KEYNESS_TOP_DISTINCTIVE, KEYNESS_VOLCANO
 from core.viz.panels_lda_flow import LDA_FLOW
 from core.viz.panels_lda_intertopic import LDA_INTERTOPIC
 from core.viz.panels_lda_prevalence import LDA_PREVALENCE
@@ -69,9 +74,12 @@ from core.viz.panels_models import MODELS_PANELS
 from core.viz.panels_ngram_viewer import NGRAM_FREQUENCY_OVER_TIME
 from core.viz.panels_pairs import PAIRS_PANELS
 from core.viz.panels_sentiment import ANNUAL_SENTIMENT_PANELS, SENTIMENT_PANELS
+from core.viz.panels_sentiment_detail import SENTIMENT_DETAIL_PANELS
 from core.viz.panels_sentiment_views import SENTIMENT_VIEWS_PANELS
+from core.viz.panels_spellcheck import SPELLCHECK_PANELS
 from core.viz.panels_stats import STATS_PANELS
 from core.viz.panels_svo_agency import SVO_AGENCY
+from core.viz.panels_table_search import TABLE_SEARCH_PANELS
 from core.viz.panels_terms import TERMS_PANELS
 from core.viz.panels_time_positions import TIME_POSITIONS_PANELS
 from core.viz.panels_verb_profiles import VERB_PROFILE_PANELS
@@ -102,6 +110,7 @@ __all__ = [
 #: beside its builder.
 PANELS: tuple[PanelDefinition, ...] = (
     KEYNESS_VOLCANO,
+    KEYNESS_TOP_DISTINCTIVE,
     NGRAM_FREQUENCY_OVER_TIME,
     LDA_RELEVANCE,
     LDA_INTERTOPIC,
@@ -112,6 +121,7 @@ PANELS: tuple[PanelDefinition, ...] = (
     MALLET_DOCUMENT_TOPICS,
     MALLET_TOPIC_TERMS,
     SVO_AGENCY,
+    *GEOGRAPHY_PANELS,
     # What the vectors mean first; the neighbour list and t-SNE map after.
     *WORD_MEANING_PANELS,
     WORD2VEC_GENSIM_NEIGHBOURS,
@@ -123,19 +133,26 @@ PANELS: tuple[PanelDefinition, ...] = (
     # The annual means are left out: an average with no spread, drawn as a
     # line through single speeches. SENTIMENT_VIEWS_PANELS asks the same
     # question with every speech shown and a rolling median.
+    *SENTIMENT_DETAIL_PANELS,
     *(panel for panel in SENTIMENT_PANELS if panel not in ANNUAL_SENTIMENT_PANELS),
     # The 0.4.0 shape families: per-document measures, term rankings,
     # pairwise similarity/duplicates, and positions over time and text.
     *DOCUMENT_MEASURES_PANELS,
     *TERMS_PANELS,
+    *NRC_EMOTION_PANELS,
     *PAIRS_PANELS,
     *TIME_POSITIONS_PANELS,
+    *CORPUS_DETAIL_PANELS,
     *VERB_PROFILE_PANELS,
     *MODELS_PANELS,
     *STATS_PANELS,
     *SENTIMENT_VIEWS_PANELS,
     *EXTRAS_PANELS,
-    # doc_embeddings: documents by meaning (sentence models, core/models).
+    *SPELLCHECK_PANELS,
+    *K_SENTENCES_PANELS,
+    *BERT_EXTRACT_PANELS,
+    *TABLE_SEARCH_PANELS,
+    # document_embeddings: documents by meaning (sentence models, core/models).
     *MEANING_PANELS,
     # contrast: two or more document sets compared (the Compare page).
     *CONTRAST_PANELS,

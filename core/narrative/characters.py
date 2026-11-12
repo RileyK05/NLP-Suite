@@ -17,7 +17,7 @@ from typing import TypedDict
 
 import pandas as pd
 
-from core.analysis.sentiment_vader_anew import vader_sentences
+from core.analysis.polarity_vader import vader_sentences
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 

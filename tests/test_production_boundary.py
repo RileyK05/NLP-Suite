@@ -140,7 +140,7 @@ def test_bioes_end_boundaries_prevent_adjacent_mentions_merging(conll_frame: pd.
     assert set(result["Entity"]) == {"Paris", "London"}
 
 
-def test_vader_desktop_default_does_not_require_anew(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vader_desktop_does_not_require_anew(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = Workspace(tmp_path)
     project = workspace.create("Sentiment")
     workspace.import_document(project["id"], "text.txt", b"Today is a wonderful day.")
@@ -148,10 +148,10 @@ def test_vader_desktop_default_does_not_require_anew(tmp_path: Path, monkeypatch
     monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
     monkeypatch.setattr("importlib.util.find_spec", lambda *args: object())
     try:
-        job = runner.submit(project["id"], "sentiment_vader_anew", {}, "spacy")
-        assert json.loads(job["request"])["params"]["sentiment_vader_anew"]["analysis"] == "vader"
-        with pytest.raises(ValueError, match="Choose an ANEW"):
-            runner.submit(project["id"], "sentiment_vader_anew", {"analysis": "both"}, "spacy")
+        job = runner.submit(project["id"], "polarity_vader", {}, "spacy")
+        assert json.loads(job["request"])["params"]["polarity_vader"].get("field") == "form"
+        with pytest.raises(ValueError, match="ANEW"):
+            runner.submit(project["id"], "valence_anew", {}, "spacy")
     finally:
         runner.close()
 
@@ -162,7 +162,9 @@ def test_vader_only_does_not_call_resource_loader(conll_frame: pd.DataFrame, mon
     from core.result import Result
 
     monkeypatch.setattr(executor, "load_vader_analyzer", lambda *args: Result.success(object()))
-    monkeypatch.setattr(executor, "vader", lambda *args, **kwargs: Result.success(pd.DataFrame({"Compound": [0.5]})))
+    monkeypatch.setattr(
+        executor, "vader_documents", lambda *args, **kwargs: Result.success(pd.DataFrame({"Compound": [0.5]}))
+    )
     monkeypatch.setattr(
         executor, "vader_sentences", lambda *args, **kwargs: Result.success(pd.DataFrame({"Compound": [0.5]}))
     )
@@ -171,7 +173,7 @@ def test_vader_only_does_not_call_resource_loader(conll_frame: pd.DataFrame, mon
         pytest.fail("VADER-only execution must not load ANEW")
 
     monkeypatch.setattr(executor, "anew", forbidden)
-    plan = build_plan(["sentiment_vader_anew"], {"sentiment_vader_anew": {"analysis": "vader"}}).unwrap()
+    plan = build_plan(["polarity_vader"], {"polarity_vader": {}}).unwrap()
     outcome = executor.execute(plan, table=conll_frame).outcomes[0]
     assert outcome.ok
     assert set(outcome.frames) == {"vader.csv", "vader_sentences.csv"}

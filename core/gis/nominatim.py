@@ -133,8 +133,10 @@ class NominatimGeocoder:
                 if resolved.diagnostics
                 else Diagnostic.error("GEOCODE_UNAVAILABLE", "geocode failed")
             )
-            if diag.code == "GEOCODE_UNKNOWN":
-                diags.append(Diagnostic.info("GEOCODE_UNKNOWN", diag.message, place=place))
+            # A blank cell is not a place, not an outage: UNKNOWN, like the
+            # offline geocoder says of it.
+            if diag.code in ("GEOCODE_UNKNOWN", "GEOCODE_EMPTY"):
+                diags.append(Diagnostic.info(diag.code, diag.message, place=place))
             else:
                 rows[-1]["Status"] = "UNAVAILABLE"
                 diags.append(diag)

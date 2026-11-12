@@ -425,3 +425,21 @@ class TestOutputs:
         with open_session(session):
             nlp.term_rates(nlp.corpus(), LEXICON, match="exact-lowercase")
         assert [call.function for call in session.calls] == ["corpus", "term_rates"]
+
+    def test_show_points_other_canvas_kinds_at_chart(self, session: Session) -> None:
+        with open_session(session), pytest.raises(nlp.SuiteError, match=r"nlp\.chart\(table, kind='pie'"):
+            nlp.show(pd.DataFrame({"a": ["x", "y"], "b": [1, 2]}), x="a", y="b", kind="pie")
+
+
+def test_show_kinds_are_the_kinds_matplotlib_code_reproduces() -> None:
+    """nlp.show only offers a chart the Scripts page can also copy as matplotlib
+    code; a kind added to one list and not the other drew a chart whose copied
+    code fell through to a plain bar."""
+    from core.script.api import _DRAWN_KINDS
+
+    source = (ROOT / "desktop" / "src" / "notebooks.ts").read_text(encoding="utf-8")
+    body = source[source.index("export function matplotlibCode(") :]
+    end = body.find("\nexport ")
+    body = body if end == -1 else body[:end]
+    handled = set(re.findall(r'chart\.kind === "([a-z]+)"', body))
+    assert handled == set(_DRAWN_KINDS)

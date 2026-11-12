@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from core.analysis.mallet import parse_doc_topics
 from core.profiler.registry import get_tool
 
@@ -94,3 +96,71 @@ class TestRegistration:
         lam = next(p for p in gensim.params if p.name == "lambda")
         assert lam.minimum == 0.0 and lam.maximum == 1.0
         assert lam.default == 0.6
+
+
+def test_the_desktop_run_names_documents_as_the_corpus_does(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The desktop's dominant-topic rows say "speech.txt", not the staged "0001_speech.txt.txt"."""
+    import pandas as pd
+
+    from core.analysis import mallet
+    from core.io.reader import Document
+    from core.result import Result
+    from desktop_backend.runner import run_mallet
+
+    def fake_train(input_dir: Path, output_dir: Path, **_kwargs: object) -> Result[pd.DataFrame]:
+        staged = sorted(Path(input_dir).iterdir())
+        rows = [f"{i}\t{path.as_uri()}\t0.7\t0.3" for i, path in enumerate(staged)]
+        (Path(output_dir) / "mallet_doc_topics.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        return Result.success(pd.DataFrame({"Topic": [0, 1], "Keys": ["a", "b"]}))
+
+    monkeypatch.setattr(mallet, "train_topics", fake_train)
+
+    class Jobs:
+        def __init__(self) -> None:
+            self.updates: list[dict[str, object]] = []
+
+        def update_job(self, _job_id: str, **fields: object) -> None:
+            self.updates.append(fields)
+
+    stored = tmp_path / "stored"
+    stored.mkdir()
+    for name, text in (("speech.txt", "one two"), ("notes.txt", "three four")):
+        (stored / name).write_text(text, encoding="utf-8")
+    documents = [
+        Document(doc_id=1, path=stored / "speech.txt", text="one two", sha256="a", label="speech.txt"),
+        Document(doc_id=2, path=stored / "notes.txt", text="three four", sha256="b", label="notes.txt"),
+    ]
+    jobs = Jobs()
+    project_dir = tmp_path / "project"
+    (project_dir / "runs").mkdir(parents=True)
+    assert run_mallet(jobs, {"id": "j"}, {"topics": 2}, documents, project_dir) == 0  # type: ignore[arg-type]
+    run_dir = project_dir / str(jobs.updates[-1]["run_dir"])
+    dominant = pd.read_csv(run_dir / "topics_dominant.csv")
+    assert sorted(dominant["Document"]) == ["notes.txt", "speech.txt"]
+
+
+def test_a_desktop_run_without_document_topics_is_partial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MALLET's keys without its document composition is not "Results ready"."""
+    import pandas as pd
+
+    from core.analysis import mallet
+    from core.io.reader import Document
+    from core.result import Result
+    from desktop_backend.runner import run_mallet
+
+    def keys_only(_input_dir: Path, _output_dir: Path, **_kwargs: object) -> Result[pd.DataFrame]:
+        return Result.success(pd.DataFrame({"Topic": [0], "Keys": ["a"]}))
+
+    monkeypatch.setattr(mallet, "train_topics", keys_only)
+    updates: list[dict[str, object]] = []
+
+    class Jobs:
+        def update_job(self, _job_id: str, **fields: object) -> None:
+            updates.append(fields)
+
+    (tmp_path / "speech.txt").write_text("one two", encoding="utf-8")
+    documents = [Document(doc_id=1, path=tmp_path / "speech.txt", text="one two", sha256="a")]
+    (tmp_path / "project" / "runs").mkdir(parents=True)
+    assert run_mallet(Jobs(), {"id": "j"}, {"topics": 1}, documents, tmp_path / "project") == 1  # type: ignore[arg-type]
+    assert updates[-1]["state"] == "PARTIAL"
+    assert updates[-1]["diagnostics"], "the reason the document topics are missing is kept"

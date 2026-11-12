@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from conftest import has_spacy_model
 from core.result import Diagnostic, Result
 from tools._cli import PARTIAL_PARSE_POLICY, handle_result_states
 
@@ -51,7 +50,7 @@ class TestPartialParsePolicy:
 
 class TestParseCliIntegration:
     @pytest.mark.model_integration
-    @pytest.mark.skipif(not has_spacy_model(), reason="integration; spaCy model required")
+    @pytest.mark.usefixtures("require_spacy_model")
     def test_one_doc_parses_sibling_reports_not_dropped(self) -> None:
         """Good doc + empty sibling: the sibling is reported, never dropped."""
         from core.io.reader import Corpus, Document, hash_text

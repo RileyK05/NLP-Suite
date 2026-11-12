@@ -155,6 +155,11 @@ def event_position(value: str) -> float | None:
             day = date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
         except ValueError:
             return None
+        # The same plausible range a decimal year gets. It also keeps
+        # date(day.year + 1, ...) below in range: a 9999-12-31 event used to
+        # raise there and fail every run the project submitted.
+        if not _MIN_EVENT_YEAR <= day.year <= _MAX_EVENT_YEAR:
+            return None
         start = date(day.year, 1, 1)
         span = (date(day.year + 1, 1, 1) - start).days
         return day.year + (day - start).days / span
@@ -187,8 +192,8 @@ class FieldSettings(BaseModel):
     part_names: dict[str, str] = Field(default_factory=dict)
     #: What is left out of the text the tools read.
     text_cleaning: TextCleaning = Field(default_factory=TextCleaning)
-    #: Dated events to draw as stoplines on every time figure (SHOWCASE_FIGURES_PLAN
-    #: section 4): a historical corpus's figures become a check against the world.
+    #: Dated events to draw as stoplines on every time figure: a historical
+    #: corpus's figures become a check against the world (docs/viz-panels.md).
     events: list[ProjectEvent] = Field(default_factory=list, max_length=MAX_EVENTS)
 
     @field_validator("part_names")

@@ -16,22 +16,18 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-import subprocess
-import sys
 
 from desktop_backend.schemas import CONTRACT_MODELS
+from scripts.gen_contract_ts import render
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATED = ROOT / "desktop" / "src" / "contract.ts"
 
 
 def test_generated_contract_is_committed_and_current() -> None:
-    """Regenerating must be a no-op. A stale contract.ts is drift in progress."""
+    """Compare the generator's output without rewriting the checkout."""
     assert GENERATED.is_file(), "desktop/src/contract.ts is missing; run python scripts/gen_contract_ts.py"
-    before = GENERATED.read_text(encoding="utf-8")
-    subprocess.run([sys.executable, "scripts/gen_contract_ts.py"], cwd=ROOT, check=True, capture_output=True)
-    after = GENERATED.read_text(encoding="utf-8")
-    assert before == after, (
+    assert GENERATED.read_text(encoding="utf-8") == render(), (
         "desktop/src/contract.ts is stale against desktop_backend/schemas.py. Run: python scripts/gen_contract_ts.py"
     )
 

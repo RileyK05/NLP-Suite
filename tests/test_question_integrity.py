@@ -343,3 +343,18 @@ class TestAQuestionNamesItsEvidence:
         with pytest.raises(ValueError) as raised:
             session.resolved()
         assert not isinstance(raised.value, StaleSnapshot)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("don't", ("do", "n't")),
+        ("don\u2019t", ("do", "n\u2019t")),
+        ("won\u2019t", ("wo", "n\u2019t")),
+        ("can\u2019t", ("ca", "n\u2019t")),
+    ],
+)
+def test_the_guess_splits_n_t_with_either_apostrophe_as_spacy_does(text: str, expected: tuple[str, ...]) -> None:
+    # Curly apostrophes are what most published text uses; spaCy splits them
+    # exactly like the straight ones.
+    assert tuple(_approximate_tokens(text)) == expected

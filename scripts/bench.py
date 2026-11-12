@@ -28,7 +28,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--language", default="en")
     parser.add_argument(
         "--analyses",
-        default="readability,lexical_diversity,sentence_complexity,coreference,narrative,lda_gensim,word2vec_gensim",
+        default="readability,lexical_diversity,sentence_complexity,coreference,narrative_arc,lda_gensim,word_vectors_gensim",
         help="comma-separated analysis names from the table below",
     )
     return parser.parse_args(argv)
@@ -104,9 +104,9 @@ def main(argv: list[str] | None = None) -> int:
         "lexical_diversity": lambda: lexical_diversity.run(corpus),
         "sentence_complexity": lambda: sentence_complexity.run(table),
         "coreference": lambda: coreference.run(table),
-        "narrative": lambda: emotion_arc(table),
-        "topic_model": lambda: topic_model.run(table),
-        "word2vec_gensim": lambda: word_embeddings.train(table),
+        "narrative_arc": lambda: emotion_arc(table),
+        "lda_gensim": lambda: topic_model.run(table),
+        "word_vectors_gensim": lambda: word_embeddings.train(table),
     }
     wanted = [name.strip() for name in str(args.analyses).split(",") if name.strip()]
     for name in wanted:

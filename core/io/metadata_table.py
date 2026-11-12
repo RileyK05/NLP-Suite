@@ -21,6 +21,7 @@ from datetime import date, datetime
 import io
 from pathlib import PurePath
 import re
+import unicodedata
 
 import pandas as pd
 
@@ -186,7 +187,11 @@ def proposed_target(column: str) -> str:
         return "Date"
     if key in _ORDER_HEADERS:
         return "Order"
-    cleaned = re.sub(r"[^A-Za-z0-9 _-]", " ", column).strip()
+    # Accents folded before the ASCII filter detail names need, so "Título"
+    # proposes "Titulo" rather than "T tulo" and "Année" "Annee".
+    decomposed = unicodedata.normalize("NFKD", column)
+    plain = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    cleaned = re.sub(r"[^A-Za-z0-9 _-]", " ", plain).strip()
     cleaned = re.sub(r"\s+", " ", cleaned)[:40].strip()
     return cleaned[:1].upper() + cleaned[1:] if cleaned else ""
 

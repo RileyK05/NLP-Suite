@@ -63,12 +63,12 @@ describe("what the live bench will run", () => {
 
   it("offers the BERT tools once their model is here, and not before", () => {
     // The models ship with the app now, so the engine reports them available.
-    const ready = ["word_sense_induction", "bert_extract", "bert_topics", "sentiment_neural_bert", "word2vec_bert"].map(
+    const ready = ["word_senses_bert", "bert_extract", "topic_clusters_bert", "polarity_distilbert_sst2", "word_vectors_bert"].map(
       (name) => tool({ name, availability: { state: "available", message: "", missing: [] } }),
     );
     expect(liveTools(ready).map((t) => t.name)).toEqual(ready.map((t) => t.name));
     const waiting = tool({
-      name: "bert_topics",
+      name: "topic_clusters_bert",
       availability: {
         state: "needs_model",
         message: "This needs BERT base (uncased) (105 MB). Download it from Models.",

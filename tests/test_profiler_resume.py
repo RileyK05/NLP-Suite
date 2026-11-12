@@ -27,14 +27,14 @@ def _corpus(texts: dict[str, str]) -> Corpus:
 def _manifest(tmp_path: Path, corpus: Corpus, params: dict) -> Path:
     outcomes = (
         ToolOutcome(name="readability", ok=True, frames={"readability.csv": pd.DataFrame([{"a": 1}])}, seconds=0.5),
-        ToolOutcome(name="nrc", ok=False, seconds=1.0, diagnostics=()),
+        ToolOutcome(name="emotion_nrc", ok=False, seconds=1.0, diagnostics=()),
     )
     from core.profiler import batch as batch_mod
 
     report = batch_mod.write_batch(
         tmp_path,
         batch_mod.BatchRequest(
-            selection=("readability", "nrc"), params=params, batch=BatchResult(outcomes=outcomes), corpus=corpus
+            selection=("readability", "emotion_nrc"), params=params, batch=BatchResult(outcomes=outcomes), corpus=corpus
         ),
     )
     assert report.ok, report.diagnostics
@@ -60,10 +60,10 @@ class TestResume:
         from core.profiler import resume as resume_mod
 
         corpus = _corpus({"a.txt": "hello world"})
-        params = {"readability": {}, "nrc": {}}
+        params = {"readability": {}, "emotion_nrc": {}}
         manifest = _manifest(tmp_path, corpus, params)
-        reuse = resume_mod.find_reusable(manifest, ["readability", "nrc"], params, corpus)
-        assert set(reuse) == {"readability"}  # failed nrc is never reused
+        reuse = resume_mod.find_reusable(manifest, ["readability", "emotion_nrc"], params, corpus)
+        assert set(reuse) == {"readability"}  # failed emotion_nrc is never reused
         assert reuse["readability"]["ok"] is True
 
     def test_find_reusable_rejects_changed_params(self, tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ class TestReport:
 
         manifest = {
             "tool": "profiler",
-            "selection": ["readability", "nrc"],
+            "selection": ["readability", "emotion_nrc"],
             "children": [
                 {
                     "tool": "readability",
@@ -105,7 +105,7 @@ class TestReport:
                     "diagnostics": [],
                 },
                 {
-                    "tool": "nrc",
+                    "tool": "emotion_nrc",
                     "ok": False,
                     "seconds": 1.0,
                     "run_dir": None,
@@ -117,7 +117,7 @@ class TestReport:
             ],
         }
         text = report_mod.render_report(manifest)
-        assert "readability" in text and "nrc" in text
+        assert "readability" in text and "emotion_nrc" in text
         assert "FAILED" in text and "NRC_LEXICON_MISSING" in text
         assert "readability__ts/readability.csv" in text
         assert "0.5" in text

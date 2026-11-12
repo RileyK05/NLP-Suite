@@ -30,10 +30,10 @@ def model_table() -> pd.DataFrame:
     for backend in ("stanza", "spacy"):
         for language in sorted(BACKEND_LANGUAGES.get(backend, ())):
             if backend == "stanza":
-                ok, detail = _stanza_model_ok(language)
+                ok, detail, _damaged = _stanza_model_ok(language)
                 fix = f'python -c "import stanza; stanza.download({language!r})"' if not ok else ""
             else:
-                ok, detail = _spacy_model_ok(language)
+                ok, detail, _damaged = _spacy_model_ok(language)
                 fix = f"python -m spacy download {spacy_model_name(language)}" if not ok else ""
             rows.append(
                 {

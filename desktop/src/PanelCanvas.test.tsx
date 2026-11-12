@@ -138,6 +138,44 @@ describe("what the panel owes its reader", () => {
   });
 });
 
+describe("geographic figures", () => {
+  it("draws a basemap, keeps cell selection keyboard accessible and fits the data", () => {
+    const selected = vi.fn();
+    const { container, svg } = draw(
+      {
+        shape: "geographic",
+        title: "Place mention concentration",
+        valueLabel: "mentions",
+        mapLand: ["0,0 45,0 20,45 0,0"],
+        mapCellDegrees: 10,
+        width: 950,
+        height: 588,
+        marks: [mark({ key: "Paris", x: 5, y: 45, value: 20 })],
+      },
+      selected,
+    );
+    expect(svg.querySelector("path")?.getAttribute("d")).toMatch(/^M.+L.+Z$/);
+    const cell = svg.querySelector("rect[data-mark]")!;
+    expect(cell.getAttribute("tabindex")).toBe("0");
+    expect(container.textContent).toContain("Cell total up to 20 mentions");
+    act(() =>
+      cell.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      ),
+    );
+    expect(selected).toHaveBeenCalledWith({ key: "Paris" });
+    const button = (name: string) =>
+      [...container.querySelectorAll("button")].find(
+        (item) => item.textContent === name,
+      )!;
+    const initialWidth = Number(cell.getAttribute("width"));
+    act(() => button("Fit to data").click());
+    expect(Number(cell.getAttribute("width"))).toBeGreaterThan(initialWidth);
+    act(() => button("Reset map").click());
+    expect(Number(cell.getAttribute("width"))).toBeCloseTo(initialWidth);
+  });
+});
+
 describe("reference lines explain themselves", () => {
   it("draws the significance line with its note visible on the page", () => {
     // A line at G2 = 3.84 means nothing; this note is the whole reason

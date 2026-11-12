@@ -51,6 +51,37 @@ class TestContract:
         assert CHART_KINDS[:6] == ("bar", "line", "scatter", "histogram", "box", "heatmap")
 
 
+def test_ecdf_keeps_ties_and_uses_each_groups_own_denominator() -> None:
+    frame = pd.DataFrame({"n": [1, 1, 4, 1, 5], "grp": ["a", "a", "a", "b", "b"]})
+    spec = ChartSpec(kind="ecdf", x="n", y="n", group="grp")
+    prepared = prepare_chart_data(frame, spec).unwrap()
+    assert list(prepared.data["x"]) == [1, 4, 1, 5]
+    assert list(prepared.data["frequency"]) == [2, 1, 1, 1]
+    assert list(prepared.data["n"]) == [2, 3, 1, 2]
+    assert list(prepared.data["y"]) == pytest.approx([200 / 3, 100, 50, 100])
+    assert prepared.x_label == "n" and prepared.y_label == "At or below (%)"
+    if HAS_PLOTLY:
+        from core.viz.plotters import build_figure
+
+        fig = build_figure(prepared, spec).unwrap()
+        assert fig.data[0].line.shape == "hv"
+        assert list(fig.data[0].x) == [1, 1, 4, 5]
+        assert list(fig.data[1].customdata) == [2, 3]
+
+
+def test_calendar_aggregates_timestamps_by_date() -> None:
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-02-29 08:00", "2024-02-29 09:00"]),
+            "n": [2, 5],
+        }
+    )
+    assert not prepare_chart_data(frame, ChartSpec(kind="calendar", x="date", y="n")).ok
+    prepared = prepare_chart_data(frame, ChartSpec(kind="calendar", x="date", y="n", agg="sum")).unwrap()
+    assert list(prepared.data["x"]) == [pd.Timestamp("2024-02-29")]
+    assert list(prepared.data["y"]) == [7]
+
+
 class TestHierarchy:
     def test_sunburst_requires_group(self) -> None:
         with pytest.raises(ValueError, match="sunburst needs --group"):
@@ -231,12 +262,19 @@ class TestRenderers:
     def test_calendar_rows_are_months(self) -> None:
         from core.viz.plotters import build_figure
 
-        spec = ChartSpec(kind="calendar", x="date", y="n")
-        prepared = prepare_chart_data(_date_frame(), spec).unwrap()
+        spec = ChartSpec(kind="calendar", x="date", y="n", width=1100, title="Daily counts")
+        frame = pd.concat(
+            [
+                _date_frame(),
+                pd.DataFrame({"date": pd.to_datetime(["2024-01-08", "2024-01-15"]), "n": [3.0, 0.0]}),
+            ]
+        )
+        prepared = prepare_chart_data(frame, spec).unwrap()
         fig = build_figure(prepared, spec).unwrap()
         assert list(fig.data[0].y) == ["2024-01", "2024-02"]
-        assert list(fig.data[0].x) == ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        # Jan: Mon 1.0, Wed 2.0 -> row [1, None, 2, None, None, None, None]
-        assert fig.data[0].z[0] == [1.0, None, 2.0, None, None, None, None]
-        # Feb: Fri 5.0
-        assert fig.data[0].z[1] == [None, None, None, None, 5.0, None, None]
+        assert list(fig.data[0].x) == list(range(1, 32))
+        january, february = fig.data[0].z
+        assert january[0] == 1.0 and january[7] == 3.0 and january[14] == 0.0
+        assert january[1] is None and february[1] == 5.0
+        assert fig.layout.title.text == "Daily counts"
+        assert fig.layout.width == 1100

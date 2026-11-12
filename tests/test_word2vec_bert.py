@@ -1,8 +1,8 @@
-"""word2vec_bert — BERT type vectors with the word2vec_gensim table contract.
+"""word_vectors_bert — BERT type vectors with the word_vectors_gensim table contract.
 
 The heavy backend is never needed here: ``EmbeddingBackend`` is the seam, the
 same protocol ``core.analysis.contextual`` defines, so these tests fix the
-table contracts (HW2 compares this tool against word2vec_gensim column by
+table contracts (HW2 compares this tool against word_vectors_gensim column by
 column) without torch or transformers.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.analysis.word2vec_bert import distances, project_tsne, train_bert, vectors
+from core.analysis.word_vectors_bert import distances, project_tsne, train_bert, vectors
 from core.result import Diagnostic, Result
 
 
@@ -124,7 +124,7 @@ class TestTrain:
 
     def test_a_missing_model_fails_naming_the_models_page(self) -> None:
         # The real backend is out of reach in tests; force its failure path.
-        import core.analysis.word2vec_bert as subject
+        import core.analysis.word_vectors_bert as subject
 
         def broken(model: str) -> Result[object]:
             return Result.failure(Diagnostic.error("W2V_BERT_UNAVAILABLE", "no transformers"))
@@ -163,7 +163,7 @@ class TestDistances:
         assert "cat" in str(found.diagnostics[0].context.get("fix", ""))
 
     def test_a_capitalization_miss_still_finds_the_word(self) -> None:
-        # Lookup is case-insensitive (as in word2vec_gensim), so "Cat" works.
+        # Lookup is case-insensitive (as in word_vectors_gensim), so "Cat" works.
         found = distances(RICH, "Cat", min_count=1, backend=FakeBackend())
         assert found.ok, found.diagnostics
 

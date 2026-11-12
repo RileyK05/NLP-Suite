@@ -22,7 +22,7 @@ def _batch() -> BatchResult:
         outcomes=(
             ToolOutcome(name="readability", ok=True, frames={"readability.csv": ok_frame}, seconds=0.5),
             ToolOutcome(
-                name="nrc",
+                name="emotion_nrc",
                 ok=False,
                 seconds=1.0,
                 diagnostics=(Diagnostic.error("NRC_LEXICON_MISSING", "no lexicon"),),
@@ -35,17 +35,17 @@ class TestBatchEnvelopes:
     def test_children_linked_explicitly(self, tmp_path: Path) -> None:
         from core.profiler import batch as batch_mod
 
-        plan_params = {"readability": {}, "nrc": {}}
+        plan_params = {"readability": {}, "emotion_nrc": {}}
         report = batch_mod.write_batch(
             tmp_path,
-            batch_mod.BatchRequest(selection=("readability", "nrc"), params=plan_params, batch=_batch()),
+            batch_mod.BatchRequest(selection=("readability", "emotion_nrc"), params=plan_params, batch=_batch()),
         )
         assert report.ok, report.diagnostics
         info = report.unwrap()
         assert (info.run_dir / "batch.json").is_file()
         assert (info.run_dir / "result.json").is_file()
         manifest = json.loads((info.run_dir / "batch.json").read_text(encoding="utf-8"))
-        assert [c["tool"] for c in manifest["children"]] == ["readability", "nrc"]
+        assert [c["tool"] for c in manifest["children"]] == ["readability", "emotion_nrc"]
         assert [c["ok"] for c in manifest["children"]] == [True, False]
         # every linked path resolves to a real file (output-root-relative, no globbing needed)
         for child in manifest["children"]:
@@ -54,7 +54,7 @@ class TestBatchEnvelopes:
         # failed tool has no child dir, but its error is recorded
         assert manifest["children"][1]["diagnostics"][0]["code"] == "NRC_LEXICON_MISSING"
         assert info.child_dirs["readability"].is_dir()
-        assert "nrc" not in info.child_dirs
+        assert "emotion_nrc" not in info.child_dirs
 
     def test_reuse_links_prior_record_without_rerun(self, tmp_path: Path) -> None:
         from core.profiler import batch as batch_mod

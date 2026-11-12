@@ -15,7 +15,12 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from core.analysis import sentiment_swn_hedono as sh_mod, sentiment_vader_anew as va_mod
+from core.analysis import (
+    happiness_hedonometer as hedo_mod,
+    polarity_sentiwordnet as swn_mod,
+    polarity_vader as va_mod,
+    valence_anew as anew_mod,
+)
 from core.conll.schema import Col
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "sentiment"
@@ -123,18 +128,18 @@ def _doc_names(frame: pd.DataFrame) -> list[str]:
 # ---------------------------------------------------------------------------
 class TestLoaders:
     def test_load_anew_mini(self) -> None:
-        lex = va_mod.load_anew_lexicon(FIX / "anew_mini.csv")
+        lex = anew_mod.load_anew_lexicon(FIX / "anew_mini.csv")
         assert lex["love"] == (8.0, 5.36, 5.92)
         assert lex["floor"] == (5.14, 3.33, 6.39)
         assert len(lex) == 11
 
     def test_load_hedonometer_mini(self) -> None:
-        lex = sh_mod.load_hedonometer_lexicon(FIX / "hedonometer_mini.json")
+        lex = hedo_mod.load_hedonometer_lexicon(FIX / "hedonometer_mini.json")
         assert lex["love"] == 8.42 and lex["the"] == 4.98
         assert len(lex) == 20
 
     def test_load_nrc_mini(self) -> None:
-        from core.analysis import nrc as nrc_mod
+        from core.analysis import emotion_nrc as nrc_mod
 
         lex = nrc_mod.load_nrc_lexicon(FIX / "nrc_mini.json")
         assert lex["love"] == ["joy", "positive"]
@@ -142,7 +147,7 @@ class TestLoaders:
 
     def test_load_missing_file_fails(self) -> None:
         with pytest.raises(FileNotFoundError):
-            va_mod.load_anew_lexicon(FIX / "nope.csv")
+            anew_mod.load_anew_lexicon(FIX / "nope.csv")
 
     def test_load_malformed_vader_lines_skipped(self, tmp_path: Path) -> None:
         mini = tmp_path / "vader.txt"
@@ -159,8 +164,8 @@ class TestLoaders:
 # ---------------------------------------------------------------------------
 class TestScoring:
     def test_anew_mini_matches_hand_computation(self) -> None:
-        lex = va_mod.load_anew_lexicon(FIX / "anew_mini.csv")
-        res = va_mod.anew(_frame(), field=Col.LEMMA, lexicon=lex)
+        lex = anew_mod.load_anew_lexicon(FIX / "anew_mini.csv")
+        res = anew_mod.anew(_frame(), field=Col.LEMMA, lexicon=lex)
         assert res.ok, res.diagnostics
         got = {row["Document"]: row for row in _records(res.unwrap())}
         assert got["pos.txt"]["Valence"] == "7.96"
@@ -169,8 +174,8 @@ class TestScoring:
         assert got["mixed.txt"]["Hits"] == "2"
 
     def test_hedonometer_mini_matches_hand_computation(self) -> None:
-        lex = sh_mod.load_hedonometer_lexicon(FIX / "hedonometer_mini.json")
-        res = sh_mod.hedonometer(_frame(), field=Col.LEMMA, lexicon=lex)
+        lex = hedo_mod.load_hedonometer_lexicon(FIX / "hedonometer_mini.json")
+        res = hedo_mod.hedonometer(_frame(), field=Col.LEMMA, lexicon=lex)
         assert res.ok, res.diagnostics
         got = {row["Document"]: row for row in _records(res.unwrap())}
         assert got["pos.txt"]["Happiness"] == "6.95"
@@ -179,7 +184,7 @@ class TestScoring:
         assert got["mixed.txt"]["Happiness"] == "4.955"
 
     def test_nrc_mini_matches_hand_computation(self) -> None:
-        from core.analysis import nrc as nrc_mod
+        from core.analysis import emotion_nrc as nrc_mod
 
         lex = nrc_mod.load_nrc_lexicon(FIX / "nrc_mini.json")
         res = nrc_mod.emotions(_frame(), field=Col.LEMMA, lexicon=lex)
@@ -201,7 +206,7 @@ class TestScoring:
             assert abs(total - 1.0) < 5e-4, (doc, total)
 
     def test_swn_fake_matches_recorded_reference(self) -> None:
-        res = sh_mod.sentiwordnet(_frame(), field=Col.LEMMA, resolver=fake_swn_resolver)
+        res = swn_mod.sentiwordnet(_frame(), field=Col.LEMMA, resolver=fake_swn_resolver)
         assert res.ok, res.diagnostics
         got = {row["Document"]: row for row in _records(res.unwrap())}
         exp = {row["Document"]: row for row in _expected(FIX / "swn_expected.csv")}
@@ -287,8 +292,8 @@ class TestRecordedReplay:
 
     def test_anew_oracle_matches_fixture(self) -> None:
         sentlib = _needs_oracle()
-        lex = va_mod.load_anew_lexicon(sentlib / "EnglishShortenedANEW.csv")
-        res = va_mod.anew(_frame(), field=Col.LEMMA, lexicon=lex)
+        lex = anew_mod.load_anew_lexicon(sentlib / "EnglishShortenedANEW.csv")
+        res = anew_mod.anew(_frame(), field=Col.LEMMA, lexicon=lex)
         assert res.ok, res.diagnostics
         got = {row["Document"]: row for row in _records(res.unwrap())}
         exp = {row["Document"]: row for row in _expected(FIX / "anew_expected.csv")}
@@ -296,8 +301,8 @@ class TestRecordedReplay:
 
     def test_hedonometer_oracle_matches_fixture(self) -> None:
         sentlib = _needs_oracle()
-        lex = sh_mod.load_hedonometer_lexicon(sentlib / "hedonometer.json")
-        res = sh_mod.hedonometer(_frame(), field=Col.LEMMA, lexicon=lex)
+        lex = hedo_mod.load_hedonometer_lexicon(sentlib / "hedonometer.json")
+        res = hedo_mod.hedonometer(_frame(), field=Col.LEMMA, lexicon=lex)
         assert res.ok, res.diagnostics
         got = {row["Document"]: row for row in _records(res.unwrap())}
         exp = {row["Document"]: row for row in _expected(FIX / "hedonometer_expected.csv")}
@@ -305,7 +310,7 @@ class TestRecordedReplay:
 
     def test_nrc_bundled_matches_fixture_and_package(self) -> None:
         nrclex = pytest.importorskip("nrclex")
-        from core.analysis import nrc as nrc_mod
+        from core.analysis import emotion_nrc as nrc_mod
 
         lex = nrc_mod.default_nrc_lexicon()
         res = nrc_mod.emotions(_frame(), field=Col.LEMMA, lexicon=lex)
@@ -332,11 +337,26 @@ class TestRecordedReplay:
         if not data_dirs:
             pytest.skip("needs NLTK_DATA with wordnet + sentiwordnet corpora")
         for entry in data_dirs:
-            sh_mod.nltk_data_path_insert(entry)
-        res = sh_mod.sentiwordnet(_frame(), field=Col.LEMMA, resolver=None)
+            swn_mod.nltk_data_path_insert(entry)
+        res = swn_mod.sentiwordnet(_frame(), field=Col.LEMMA, resolver=None)
         if res.value is None and any(d.code == "SWN_DATA_MISSING" for d in res.diagnostics):
             pytest.skip(f"nltk data missing: {res.diagnostics}")
         assert res.ok, res.diagnostics
         got = {row["Document"]: row for row in _records(res.unwrap())}
         exp = {row["Document"]: row for row in _expected(FIX / "swn_expected.csv")}
         assert got == exp
+
+
+def test_an_empty_vader_sentence_table_has_the_same_columns_as_a_full_one() -> None:
+    analyzer = FakeAnalyzer({"i love day": {"neg": 0.0, "neu": 0.2, "pos": 0.8, "compound": 0.9}}, ["love"])
+    frame = _frame({"d": [("i", "PRON"), ("love", "VERB"), ("day", "NOUN")]})
+    full = va_mod.vader_sentences(frame, field=Col.FORM, analyzer=analyzer).unwrap()
+    empty = va_mod.vader_sentences(frame.iloc[0:0], field=Col.FORM, analyzer=analyzer).unwrap()
+    assert list(empty.columns) == list(full.columns)
+
+
+def test_an_anew_file_with_title_case_headers_is_read(tmp_path: Path) -> None:
+    lexicon = tmp_path / "anew.csv"
+    lexicon.write_text("Word,Valence,Arousal,Dominance\nlove,8,5.36,5.92\n", encoding="utf-8")
+    assert anew_mod.load_anew_lexicon(lexicon) == {"love": (8.0, 5.36, 5.92)}
+    assert anew_mod.load_anew_lexicon(FIX / "anew_mini.csv")["love"] == (8.0, 5.36, 5.92)

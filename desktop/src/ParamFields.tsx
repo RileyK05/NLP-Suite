@@ -26,22 +26,12 @@ const NUMERIC = new Set(["int", "float"]);
  * Parameters worth showing for this tool, with the ones that do not apply
  * removed.
  *
- * `sentiment_vader_anew` takes an ANEW lexicon only when it is asked to run
- * the ANEW half; offering the field the rest of the time invites someone to
- * fill in a path that will be ignored.
+ * `desktopParams` drops the flags the desktop does not offer at all, so this
+ * is where a tool's own conditional fields would be filtered; none are left
+ * now that VADER and ANEW are separate tools.
  */
-export function visibleParams(tool: Tool, params: Params): Param[] {
-  // `desktopParams` first: it drops the flags the desktop does not offer at
-  // all (spellcheck's --correct writes files; search's csv mode needs a table),
-  // and bypassing it would put them back.
-  return desktopParams(tool).filter(
-    (param) =>
-      !(
-        tool.name === "sentiment_vader_anew" &&
-        param.name === "anew-lexicon" &&
-        params.analysis !== "both"
-      ),
-  );
+export function visibleParams(tool: Tool, _params: Params): Param[] {
+  return desktopParams(tool);
 }
 
 /** The defaults the engine declares, as a starting set of parameters. */

@@ -1,6 +1,6 @@
 """The figure kit and the showcase figures, checked the way a reader checks them.
 
-``docs/internal/SHOWCASE_FIGURES_PLAN.md`` section 6: a showcase is drawn from real
+``docs/viz-panels.md`` (showcase figures and the figure kit): a showcase is drawn from real
 output, the image is looked at (here, the overlap linter stands in for the
 eye and a render must succeed), it refuses with a reason when the run cannot
 support it, and the provenance footer is complete. These tests run the kit
@@ -181,6 +181,14 @@ def test_project_event_positions_parse_years_decimals_and_iso_dates() -> None:
     assert abs(event_position("1941-12-07") - 1941.93) < 0.01
     assert event_position("not a date") is None
     assert event_position("9999") is None  # out of the plausible range: dropped, not placed at the origin
+
+
+def test_iso_event_dates_outside_the_plausible_range_are_dropped() -> None:
+    from desktop_backend.fields import event_position
+
+    assert event_position("9999-12-31") is None
+    assert event_position("0001-01-01") is None
+    assert event_position("2500-06-30") is not None
 
 
 def test_a_showcase_is_published_beside_a_runs_panels(tmp_path: Path) -> None:

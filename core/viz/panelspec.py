@@ -77,6 +77,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from math import isfinite
 from typing import TYPE_CHECKING, Any, Literal
 
 from core.result import Result
@@ -156,6 +157,7 @@ PanelShape = Literal[
     "distribution",
     "network",
     "positions",
+    "geographic",
 ]
 #: Every shape a panel may declare. Declaring one here does NOT make it
 #: drawable — the renderer's ``IMPLEMENTED_SHAPES`` decides that, and
@@ -203,6 +205,8 @@ PANEL_SHAPES: tuple[str, ...] = (
     # in ``y_categories``; each mark is a tick. Lexical dispersion plots,
     # coreference chains.
     "positions",
+    # Longitude and latitude on a shared offline basemap.
+    "geographic",
 )
 
 #: Colour scales a heatmap may declare. ``sequential`` runs from the lowest
@@ -564,6 +568,8 @@ class PreparedPanel:
     #: the colour bar's title. Empty on an older builder; the bar is then
     #: labelled only by its end values.
     value_label: str = ""
+    #: Heatmap only. Some measurements have a known common scale.
+    value_domain: tuple[float, float] | None = None
     #: Network only.
     edges: tuple[PanelEdge, ...] = ()
     edge_style: str = "straight"
@@ -589,6 +595,9 @@ class PreparedPanel:
     x_axis: str = ""
     #: What one step along an order ``x`` is called ("Chapter", "Session").
     x_noun: str = ""
+    #: Geographic only. Zero draws points; a positive width draws square
+    #: longitude/latitude grid cells centered at each mark.
+    map_cell_degrees: int = 0
 
     def __post_init__(self) -> None:
         if self.shape not in PANEL_SHAPES:
@@ -626,8 +635,20 @@ class PreparedPanel:
             missing = [mark.key for mark in self.marks if mark.value is None]
             if missing:
                 raise ValueError(f"heatmap cells need a value: {missing[:5]}")
+            if self.value_domain is not None:
+                low, high = self.value_domain
+                if not (isfinite(low) and isfinite(high) and low < high):
+                    raise ValueError("heatmap color domain needs two ascending finite values")
         elif self.shape in ("distribution", "positions"):
             _check_indexes(self.marks, "y", self.y_categories)
+        elif self.shape == "geographic":
+            if self.map_cell_degrees < 0:
+                raise ValueError("map cell width must be nonnegative")
+            for mark in self.marks:
+                if not (-180 <= mark.x <= 180 and -90 <= mark.y <= 90):
+                    raise ValueError(f"invalid coordinates for map mark {mark.key!r}")
+                if self.map_cell_degrees and (mark.value is None or mark.value <= 0):
+                    raise ValueError(f"map cell {mark.key!r} needs a positive value")
         elif self.shape == "small_multiples":
             if not self.facets:
                 raise ValueError("small multiples need their facets declared in draw order")

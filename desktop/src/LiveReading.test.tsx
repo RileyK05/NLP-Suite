@@ -100,14 +100,14 @@ function answer(
 ): LiveAnswerWithPanel {
   return {
     request_id: "test-req-read1",
-    tool: "sentiment_vader_anew",
+    tool: "polarity_vader",
     ok: true,
     elapsed_ms: 12,
     snapshot_id: "s1",
     diagnostics: [],
     path: "vader.csv",
     table: sentimentTable,
-    headline: "sentiment_vader_anew: 3 row(s) and 6 column(s).",
+    headline: "polarity_vader: 3 row(s) and 6 column(s).",
     observations: ["These 3 dated row(s) run from 1934-01-03 to 2024-03-07."],
     cautions: [],
     recommended_charts: [timeline, ranking],
@@ -136,7 +136,7 @@ const ready: LiveState = {
 
 const tools: Tool[] = [
   {
-    name: "sentiment_vader_anew",
+    name: "polarity_vader",
     label: "Sentiment (VADER / ANEW)",
     description: "Measure positive and negative tone.",
     params: [],
@@ -176,7 +176,7 @@ async function run(container: HTMLElement) {
     "select[aria-label='Analysis to run']",
   ) as HTMLSelectElement;
   await act(async () => {
-    select.value = "sentiment_vader_anew";
+    select.value = "polarity_vader";
     select.dispatchEvent(new Event("change", { bubbles: true }));
   });
   const button = [...container.querySelectorAll("button")].find((b) =>
@@ -349,10 +349,11 @@ describe("where the chart opens", () => {
     expect([settings.x, settings.y]).toEqual(["Document", "Compound"]);
   });
 
-  it("skips a kind the workbench cannot draw itself", () => {
-    const engineOnly: RecommendedChart = { ...timeline, kind: "calendar" };
-    const settings = openingSettings(sentimentTable, [engineOnly, ranking]);
-    expect(settings.kind).toBe("bar");
+  it("opens on a calendar now that the workbench draws every engine kind", () => {
+    const calendar: RecommendedChart = { ...timeline, kind: "calendar" };
+    const settings = openingSettings(sentimentTable, [calendar, ranking]);
+    expect(settings.kind).toBe("calendar");
+    expect([settings.x, settings.y]).toEqual(["Date", "Compound"]);
   });
 
   it("keeps every category of a timeline and averages it", () => {

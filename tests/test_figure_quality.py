@@ -7,8 +7,9 @@ eighty rows in five hundred pixels -- came in classes
 instances, over every registered panel with every choice of every parameter,
 so a new panel is covered the day it is registered.
 
-Examples are the real 87-speech outputs trimmed to twelve speeches
-(``tests/fixtures/figures``). A panel whose tool could not run on the audit
+Examples include the real 87-speech outputs trimmed to twelve speeches
+(``tests/fixtures/figures``) and small fixtures for new output schemas.
+A panel whose tool could not run on the audit
 machine is listed in ``NO_EXAMPLE`` with the reason; its family test covers
 its logic, and the list is checked so it cannot hide a panel that does have
 an example.
@@ -27,6 +28,7 @@ import pytest
 from core.viz.figure_lint import lint_definition, lint_prepared
 from core.viz.panels import PANELS, best_table, fit_to_rows
 from core.viz.panelspec import PanelDefinition, Provenance
+from tests.test_analysis_detail_panels import GEO, SENTENCES
 
 FIXTURES = Path(__file__).parent / "fixtures" / "figures"
 
@@ -35,8 +37,8 @@ NO_EXAMPLE: dict[str, str] = {
     **{
         name: "neural sentiment backends need models not installed on the audit machine"
         for name in (
-            f"sentiment_neural_{backend}_{kind}"
-            for backend in ("bert", "spacy", "stanza", "corenlp")
+            f"{tool}_{kind}"
+            for tool in ("polarity_distilbert_sst2", "polarity_spacy", "polarity_stanza", "polarity_corenlp")
             for kind in ("sentences", "documents", "tone_over_time", "tone_by_group", "tone_all_measures")
         )
     },
@@ -60,8 +62,10 @@ NO_EXAMPLE: dict[str, str] = {
             "symbolic_ranked_actors",
             "wordnet_ranked_categories",
             "gender_annotator_mentions_over_time",
-            "word2vec_bert_neighbours",
-            "word2vec_gensim_neighbours",
+            "gender_annotator_top_names",
+            "gender_annotator_corpus_breakdown",
+            "word_vectors_bert_neighbours",
+            "word_vectors_gensim_neighbours",
         )
     },
     **{
@@ -95,11 +99,52 @@ def _examples() -> dict[str, list[pd.DataFrame]]:
     for path in sorted(FIXTURES.glob("*.parquet")):
         tool = path.stem.split("__", 1)[0]
         by_tool.setdefault(tool, []).append(pd.read_parquet(path))
+    geo = GEO[GEO["Lat"].between(-70, 70)].copy()
+    by_tool["geocode"] = [geo]
+    by_tool["gis_map"] = [geo.rename(columns={"Mentions": "Weight"})]
+    places = geo[geo["Status"].eq("OK")]
+    by_tool["svo_map"] = [
+        places[["Place", "Lat", "Lon", "Mentions"]].rename(columns={"Mentions": "SVO rows"}),
+        pd.DataFrame(
+            {
+                "Place": ["Paris", "Paris", "London", "Lyon"],
+                "Verb": ["met", "visited", "opened", "met"],
+                "Subject": ["committee", "delegation", "council", "mayor"],
+                "Object": ["delegate", "museum", "library", "council"],
+            }
+        ),
+    ]
+    for tool in ("polarity_distilbert_sst2", "polarity_spacy", "polarity_stanza", "polarity_corenlp"):
+        sentences = SENTENCES[SENTENCES["Label"].ne("neutral")] if tool == "polarity_distilbert_sst2" else SENTENCES
+        by_tool[tool] = [sentences]
+    entities = by_tool["ner"][0]
+    locations = entities.loc[
+        entities["NER Tag"].isin(["LOC", "GPE"]),
+        [
+            "Document ID",
+            "Document",
+            "Entity",
+            "Count",
+        ],
+    ].rename(columns={"Entity": "Location"})
+    by_tool["ner"].append(locations)
     return by_tool
 
 
 def example_for(definition: PanelDefinition) -> pd.DataFrame | None:
     """The fixture the app would choose (``panels.best_table``)."""
+    if definition.name.endswith("_lexicon_coverage"):
+        measure = definition.requires[-1]
+        values = {"Valence": [6.1, 5.3, 4.9], "Net": [0.06, -0.02, 0.01], "Happiness": [6.0, 5.8, 5.5]}
+        return pd.DataFrame(
+            {
+                "Document ID": [1, 2, 3],
+                "Document": ["Library.txt", "Transit.txt", "Harbor.txt"],
+                "Tokens": [320, 405, 180],
+                "Hits": [130, 29, 55],
+                measure: values[measure],
+            }
+        )
     frames = [frame for frame in _examples().get(definition.tool, []) if not frame.empty]
     name = best_table(definition, [(str(index), list(frame.columns)) for index, frame in enumerate(frames)])
     return frames[int(name)] if name is not None else None

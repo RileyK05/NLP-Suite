@@ -118,23 +118,28 @@ class TestTheComparisonToolsStaySeparate:
     def test_the_three_topic_families_are_three_tools(self) -> None:
         """HW2 asks which of MALLET and Gensim is better -- one card cannot answer."""
         topics = sorted(spec.name for spec in ALL_SPECS if spec.family == "topics")
-        assert set(topics) >= {"lda_gensim", "lda_mallet", "bert_topics"}, topics
+        assert set(topics) >= {"lda_gensim", "lda_mallet", "topic_clusters_bert"}, topics
         assert len(topics) >= 2, f"topic modeling is not separated: {topics}"
 
     def test_the_two_training_architectures_are_a_parameter_not_a_tool(self) -> None:
         """CBOW vs skip-gram is one training run's setting (HW2); BERT vs
         Gensim is two different tools. The first is a parameter, the second a
         family split -- keep them apart."""
-        w2v = get_tool("word2vec_gensim")
+        w2v = get_tool("word_vectors_gensim")
         assert w2v is not None
         sg = next((p for p in w2v.params if p.name == "sg"), None)
         assert sg is not None and set(sg.choices) == {0, 1}
         # BERT vs Gensim stays a family split, and the rubric's third
         # embedding question (word sense induction) is a third tool.
-        assert get_tool("word2vec_bert") is not None
+        assert get_tool("word_vectors_bert") is not None
         embeddings = sorted(spec.name for spec in ALL_SPECS if spec.family == "embeddings")
-        # doc_embeddings (0.4.0) is a fourth: documents, not words, by meaning.
-        assert embeddings == ["doc_embeddings", "word2vec_bert", "word2vec_gensim", "word_sense_induction"], embeddings
+        # document_embeddings (0.4.0) is a fourth: documents, not words, by meaning.
+        assert embeddings == [
+            "document_embeddings",
+            "word_senses_bert",
+            "word_vectors_bert",
+            "word_vectors_gensim",
+        ], embeddings
 
 
 @pytest.mark.parametrize("family", sorted(FAMILY_LABELS))

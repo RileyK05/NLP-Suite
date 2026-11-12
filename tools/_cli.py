@@ -161,7 +161,7 @@ def get_pipeline(cache: PipelineCache, config: NLPConfig, args: argparse.Namespa
     result = resolve_pipeline(cache, config, allow_fallback=getattr(args, "allow_parser_fallback", True))
     if result.value is None:
         for diag in result.diagnostics:
-            if diag.code.startswith("PIPELINE_MODEL_"):
+            if diag.code.startswith("PIPELINE_MODEL_") or diag.code == "PIPELINE_BACKEND_NOT_INSTALLED":
                 print("\nThe environment check below shows what else is missing:\n", file=sys.stderr)
                 from tools.doctor import run_doctor
 

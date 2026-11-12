@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from core.conll.schema import Col, canonical_columns
+from core.deps import OptionalDependencyError, import_optional
 from core.io.reader import Corpus, display_names
 from core.result import Diagnostic, Result
 
@@ -162,11 +163,10 @@ def build_spacy_pipeline(language: str, tasks: frozenset[str]) -> Result[SpacyPi
     blank-pipeline fallback. No model is ever downloaded at import time.
     """
     try:
-        import spacy
-    except ImportError as exc:
-        return Result.failure(
-            Diagnostic.error("PIPELINE_MISSING_DEP", f"spaCy is not installed: {exc}", backend="spacy")
-        )
+        spacy = import_optional("spacy")
+    except OptionalDependencyError as exc:
+        detail = "not installed" if exc.missing else f"installed but will not import ({exc.reason})"
+        return Result.failure(Diagnostic.error("PIPELINE_MISSING_DEP", f"spaCy is {detail}", backend="spacy"))
 
     from core.config import supports_language
 

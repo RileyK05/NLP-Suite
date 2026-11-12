@@ -23,6 +23,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sqlite3
 from typing import TYPE_CHECKING, Any
 import uuid
 
@@ -31,7 +32,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from core.file_ops.sections import RULES, SectionPlan, TurnPlan, detect_sections, detect_turns
 from core.io.reader import read_text
 from core.result import Result
-from desktop_backend.fields import FieldSettings, _bump, _check_name, details, resolved_axis, settings
+from desktop_backend.fields import (
+    MAX_FIELDS_PER_PROJECT,
+    FieldSettings,
+    _bump,
+    _check_name,
+    details,
+    field_names,
+    resolved_axis,
+    settings,
+)
 from desktop_backend.paths import portable_key, storage_filename
 from desktop_backend.store import MAX_DOCUMENTS, now
 
@@ -169,7 +179,7 @@ class _Piece:
     details: list[tuple[str, str]]
 
 
-def _store(  # noqa: PLR0913 - the one transaction every kind of split shares
+def _store(  # noqa: PLR0912, PLR0913, PLR0915 - the one transaction every kind of split shares
     workspace: Workspace,
     project_id: str,
     document: dict[str, Any],
@@ -192,6 +202,15 @@ def _store(  # noqa: PLR0913 - the one transaction every kind of split shares
     for piece in pieces:
         for name, _value in piece.details:
             _check_name(name)
+    # The cap every other way of adding a detail enforces. Past it, editing any
+    # detail in the project is refused until one is deleted.
+    kinds = {item["name"].casefold() for item in field_names(workspace, project_id)}
+    adding = {name.casefold() for piece in pieces for name, _value in piece.details} - kinds
+    if len(kinds) + len(adding) > MAX_FIELDS_PER_PROJECT:
+        raise ValueError(
+            f"Splitting adds {len(adding)} kinds of detail, and a project may have at most "
+            f"{MAX_FIELDS_PER_PROJECT}. Delete details you no longer need, then split again."
+        )
     documents_before = workspace.documents(project_id)
     axis_before = resolved_axis(
         workspace, project_id, documents_before, details(workspace, project_id, documents_before)
@@ -221,8 +240,10 @@ def _store(  # noqa: PLR0913 - the one transaction every kind of split shares
                 used.add(portable_key(stored))
                 target = root / stored
                 with target.open("xb") as handle:
+                    # Recorded as soon as it exists, so a write that fails
+                    # half-way (a full disk) is removed with the rest.
+                    written.append(target)
                     handle.write(data)
-                written.append(target)
                 identifier = uuid.uuid4().hex
                 digest = hashlib.sha256(data).hexdigest()
                 derivation = {**piece.derivation, "source_name": document["name"], "source_sha256": document["sha256"]}
@@ -260,6 +281,18 @@ def _store(  # noqa: PLR0913 - the one transaction every kind of split shares
                 _bump(db, project_id, new_settings.model_dump())
             else:
                 _bump(db, project_id)
+    except sqlite3.IntegrityError as exc:
+        for path in written:
+            path.unlink(missing_ok=True)
+        if "documents" not in str(exc):
+            raise
+        # The same book split the same way again: each section's name and text
+        # already belong to a document here (documents_identity), even if
+        # that document is in Trash.
+        raise ValueError(
+            "These sections are already in the project (some may be in Trash), "
+            "so nothing was split. Delete those sections or choose another rule."
+        ) from exc
     except BaseException:
         for path in written:
             path.unlink(missing_ok=True)

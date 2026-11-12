@@ -16,7 +16,7 @@ import { type Component, type Table, type Tool } from "./api";
  * list by hand is how `bubble` came to be missing from the desktop entirely
  * while the Excel exporter still advertised it.
  */
-const CHART_KINDS: {
+export const CHART_KINDS: {
   kind: string;
   label: string;
   hint: string;
@@ -41,6 +41,11 @@ const CHART_KINDS: {
     label: "Histogram",
     hint: "how a measure is distributed",
   },
+  {
+    kind: "ecdf",
+    label: "Cumulative distribution",
+    hint: "percent at or below each observed value",
+  },
   { kind: "box", label: "Box plot", hint: "spread and outliers per group" },
   {
     kind: "heatmap",
@@ -58,7 +63,7 @@ const CHART_KINDS: {
     legacy: true,
   },
   { kind: "waffle", label: "Waffle", hint: "square-unit share of a whole" },
-  { kind: "calendar", label: "Calendar", hint: "daily values on a year grid" },
+  { kind: "calendar", label: "Calendar", hint: "daily values by month" },
   { kind: "sankey", label: "Sankey", hint: "flow between two categories" },
 ];
 
@@ -115,6 +120,7 @@ const AGG_REJECTED = new Set([
   "box",
   "violin",
   "histogram",
+  "ecdf",
   "bubble",
 ]);
 const DATE_REQUIRED = new Set(["calendar"]);
@@ -134,7 +140,7 @@ export function chartBlockedReasons(
     reasons.push(
       `Calendar needs a date column for X ("${x}" does not look like dates).`,
     );
-  if (!DATE_REQUIRED.has(kind) && x === y && x)
+  if (kind !== "ecdf" && !DATE_REQUIRED.has(kind) && x === y && x)
     reasons.push("X and Y must be different columns.");
   if (!yNumeric)
     reasons.push(`Y must be a numeric column ("${y || "none"}" is not).`);
@@ -393,7 +399,7 @@ export function VisualizeDialog({
                 family.x,
                 family.y,
                 family.group,
-                family.agg,
+                AGG_REJECTED.has(k.kind) ? "" : family.agg,
                 table,
               );
               const disabled = probe.length > 0;
@@ -406,7 +412,16 @@ export function VisualizeDialog({
                   className={
                     family.kind === k.kind ? "viz-kind selected" : "viz-kind"
                   }
-                  onClick={() => setFamily({ ...family, kind: k.kind })}
+                  onClick={() =>
+                    setFamily({
+                      ...family,
+                      kind: k.kind,
+                      format:
+                        family.format === "xlsx" && !k.legacy
+                          ? "html"
+                          : family.format,
+                    })
+                  }
                 >
                   {k.label}
                   {k.legacy && (
@@ -427,7 +442,7 @@ export function VisualizeDialog({
             Excel export covers. Pick the <code>xlsx</code> format below for a
             real Excel workbook with a native chart in it.
           </p>
-          <label className="field-label">
+          <label className="field-label" hidden={family.kind === "ecdf"}>
             {paramLabel(charts, "x", "Horizontal axis")}
             <select
               value={family.x}
@@ -439,7 +454,9 @@ export function VisualizeDialog({
             </select>
           </label>
           <label className="field-label">
-            {paramLabel(charts, "y", "Vertical axis")}
+            {family.kind === "ecdf"
+              ? "Measure"
+              : paramLabel(charts, "y", "Vertical axis")}
             <select
               value={family.y}
               onChange={(e) => setFamily({ ...family, y: e.target.value })}
@@ -488,7 +505,15 @@ export function VisualizeDialog({
               onChange={(e) => setFamily({ ...family, format: e.target.value })}
             >
               {formatChoices.map((f) => (
-                <option key={f.value} value={f.value} disabled={!f.available}>
+                <option
+                  key={f.value}
+                  value={f.value}
+                  disabled={
+                    !f.available ||
+                    (f.value === "xlsx" &&
+                      !EXCEL_CHART_KINDS.includes(family.kind))
+                  }
+                >
                   {f.label}
                 </option>
               ))}
@@ -617,7 +642,7 @@ export function VisualizeDialog({
           if (family.family === "charts") {
             onSubmit("table_charts", {
               kind: family.kind,
-              x: family.x,
+              x: family.kind === "ecdf" ? family.y : family.x,
               y: family.y,
               group: family.group,
               // Never send an aggregation to a kind that refuses one.

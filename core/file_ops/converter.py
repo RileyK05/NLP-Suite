@@ -21,7 +21,6 @@ A missing optional package is detected at call time
 from __future__ import annotations
 
 from collections.abc import Callable
-import html as html_module
 from html.parser import HTMLParser
 import importlib.util
 import io
@@ -57,6 +56,12 @@ def _importlib_available(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
+_BLOCK_TAGS = frozenset(
+    {"article", "blockquote", "br", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "li", "ol", "p"}
+    | {"section", "table", "tr", "ul"}
+)
+
+
 class _TextExtractor(HTMLParser):
     """HTML -> text preserving block boundaries (C6-10)."""
 
@@ -68,12 +73,19 @@ class _TextExtractor(HTMLParser):
     def handle_starttag(self, tag: str, attrs: object) -> None:
         if tag in ("script", "style"):
             self._skip += 1
-        elif tag in ("p", "br", "div", "h1", "h2", "h3", "h4", "li", "tr"):
+        elif tag in _BLOCK_TAGS:
             self.parts.append("\n")
+        elif tag in ("td", "th"):
+            self.parts.append(" ")
 
     def handle_endtag(self, tag: str) -> None:
+        # A block or cell ends a word too: "<p>Hello</p>World" is two words.
         if tag in ("script", "style") and self._skip:
             self._skip -= 1
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+        elif tag in ("td", "th"):
+            self.parts.append(" ")
 
     def handle_data(self, data: str) -> None:
         if not self._skip:
@@ -81,7 +93,9 @@ class _TextExtractor(HTMLParser):
 
     def text(self) -> str:
         # Collapse intra-paragraph whitespace, keep paragraph breaks.
-        raw = html_module.unescape("".join(self.parts))
+        # No unescape here: HTMLParser (convert_charrefs=True) has already decoded
+        # entities, and a second pass turns an escaped "&amp;lt;" into "<".
+        raw = "".join(self.parts)
         paragraphs = [" ".join(block.split()) for block in raw.split("\n")]
         return "\n".join(block for block in paragraphs if block)
 
@@ -100,13 +114,6 @@ def _pdf_to_text(raw: bytes) -> Result[str]:
         from pdfminer.pdfdocument import PDFDocument  # noqa: PLC0415
         from pdfminer.pdfpage import PDFPage  # noqa: PLC0415
         from pdfminer.pdfparser import PDFParser  # noqa: PLC0415
-
-        def _is_encrypted(data: bytes) -> bool:
-            try:
-                PDFDocument(PDFParser(BytesIO(data)))
-            except Exception:
-                return False
-            return False
 
         try:
             pages = list(PDFPage.create_pages(PDFDocument(PDFParser(BytesIO(raw)))))
@@ -214,9 +221,9 @@ def _rtf_to_text(raw: bytes) -> Result[str]:
         return Result.success(text)
     except ImportError as exc:
         return Result.failure(Diagnostic.error("CONVERT_NEEDS_LIB", f".rtf needs striprtf ({exc})", suffix=".rtf"))
-    except (UnicodeDecodeError, Exception) as exc:
-        if isinstance(exc, UnicodeDecodeError):
-            return Result.failure(Diagnostic.error("CONVERT_MALFORMED", f"RTF is not valid text: {exc}"))
+    except UnicodeDecodeError as exc:
+        return Result.failure(Diagnostic.error("CONVERT_MALFORMED", f"RTF is not valid text: {exc}"))
+    except Exception as exc:
         first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
         return Result.failure(Diagnostic.error("CONVERT_MALFORMED", f"RTF unreadable: {first}"))
 
@@ -295,6 +302,8 @@ def convert_document_to_text(input_path: Path) -> Result[str]:
     else:
         extractor = _TextExtractor()
         extractor.feed(text)
+        # feed() holds back a trailing "&..." or "<..." until close().
+        extractor.close()
         out = extractor.text()
     if not out.strip():
         return Result.failure(Diagnostic.error("CONVERT_EMPTY", f"{path} converted to empty text", path=str(path)))
@@ -306,7 +315,10 @@ def convert_text_to_table(text: str, delimiter: str = ",") -> Result[pd.DataFram
     if not text.strip():
         return Result.failure(Diagnostic.error("CONVERT_EMPTY", "text is empty"))
     try:
-        frame = pd.read_csv(io.StringIO(text), delimiter=delimiter)
+        # Verbatim cells: type inference would turn "00123" into 123 and erase
+        # "NA", "NULL" or "None" -- both in an imported document and in a
+        # CSV -> TSV conversion.
+        frame = pd.read_csv(io.StringIO(text), delimiter=delimiter, dtype=str, keep_default_na=False)
     except Exception as exc:
         return Result.failure(Diagnostic.error("CONVERT_PARSE_FAILED", f"could not parse table: {exc}"))
     return Result.success(frame)

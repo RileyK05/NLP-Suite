@@ -218,7 +218,7 @@ class TestModelsApi:
         assert row["status"] == "not_downloaded"
         assert row["kindLabel"] == "Sentiment"
         assert row["license"] == "Apache-2.0"
-        assert "sentiment_neural_bert" in row["usedBy"]
+        assert "polarity_distilbert_sst2" in row["usedBy"]
         assert row["removable"] is False
 
     def test_download_then_delete(self, client: Any) -> None:
@@ -229,8 +229,8 @@ class TestModelsApi:
         assert row["status"] == "ready" and row["removable"] is True
         # Tools that run it are now available rather than waiting on a model.
         tools = {tool["name"]: tool for tool in client.get("/api/tools").json()}
-        if "sentiment_neural_bert" in tools:
-            assert tools["sentiment_neural_bert"]["availability"]["state"] != "needs_model"
+        if "polarity_distilbert_sst2" in tools:
+            assert tools["polarity_distilbert_sst2"]["availability"]["state"] != "needs_model"
         removed = client.delete(f"/api/models/{MODEL}")
         assert removed.status_code == 200
         assert removed.json()["status"] == "not_downloaded"
@@ -245,14 +245,14 @@ class TestModelsApi:
 
     def test_model_choices_are_named_by_what_they_do(self, client: Any) -> None:
         tools = {tool["name"]: tool for tool in client.get("/api/tools").json()}
-        model = next(p for p in tools["bert_topics"]["params"] if p["name"] == "model")
+        model = next(p for p in tools["topic_clusters_bert"]["params"] if p["name"] == "model")
         labels = model["choice_labels"]
         assert labels["bert-base-uncased"].startswith("BERT base (uncased): word vectors")
         assert (
             labels["granite-embedding-english-r2"].endswith("sentence and document vectors")
             or "not installed" in (labels["granite-embedding-english-r2"])
         )
-        sentiment = next(p for p in tools["sentiment_neural_bert"]["params"] if p["name"] == "model")
+        sentiment = next(p for p in tools["polarity_distilbert_sst2"]["params"] if p["name"] == "model")
         assert "sentiment" in sentiment["choice_labels"]["distilbert-sst2"]
 
     def test_unknown_model_is_404(self, client: Any) -> None:

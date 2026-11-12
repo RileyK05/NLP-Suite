@@ -54,7 +54,7 @@ from core.viz.panelspec import (
 __all__ = ["WORD_MEANING_PANELS"]
 
 WORD = "Word"
-_TOOLS = {"word2vec_gensim": "Word2Vec", "word2vec_bert": "BERT"}
+_TOOLS = {"word_vectors_gensim": "Word2Vec", "word_vectors_bert": "BERT"}
 _LABEL_MAX = 60
 _MAX_BARS = 60
 _MIN_CONTEXT_SENTENCES = 2
@@ -937,7 +937,7 @@ def _over_time(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Prove
             )
     return Result.success(
         PreparedPanel(
-            panel="word2vec_bert_meaning_over_time",
+            panel="word_vectors_bert_meaning_over_time",
             shape="heatmap",
             title=f"The company {word} kept, period by period",
             subtitle=f"its {k} nearest words in each of {len(periods)} periods"
@@ -1017,7 +1017,7 @@ def _change(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Provenan
         )
     return Result.success(
         PreparedPanel(
-            panel="word2vec_bert_meaning_change",
+            panel="word_vectors_bert_meaning_change",
             shape="ranked_bars",
             title="Words whose company changed most",
             subtitle=f"the {len(drawn)} words most different between their first and last period · {int(params['min-uses'])}+ uses"
@@ -1033,10 +1033,10 @@ def _change(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Provenan
 
 
 WORD2VEC_BERT_MEANING_OVER_TIME = PanelDefinition(
-    name="word2vec_bert_meaning_over_time",
+    name="word_vectors_bert_meaning_over_time",
     title="Meaning over time (BERT)",
     question="What company did this word keep in each period?",
-    tool="word2vec_bert",
+    tool="word_vectors_bert",
     shape="heatmap",
     summary="A word's nearest words in each decade (or year) of a dated corpus, and how near each stayed in the "
     "other periods: new company arriving and old company leaving.",
@@ -1064,10 +1064,10 @@ WORD2VEC_BERT_MEANING_OVER_TIME = PanelDefinition(
 )
 
 WORD2VEC_BERT_MEANING_CHANGE = PanelDefinition(
-    name="word2vec_bert_meaning_change",
+    name="word_vectors_bert_meaning_change",
     title="Words whose company changed most (BERT)",
     question="Which words are used differently now than at the start?",
-    tool="word2vec_bert",
+    tool="word_vectors_bert",
     shape="ranked_bars",
     summary="Words ranked by how different their company was in the last period they were used in against the "
     "first, with the words near them then and now.",
@@ -1215,7 +1215,7 @@ def _split_words(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Pro
         )
     return Result.success(
         PreparedPanel(
-            panel="word_sense_induction_split_words",
+            panel="word_senses_bert_split_words",
             shape="ranked_bars",
             title="Words used in two senses",
             subtitle=f"the {len(marks)} clearest splits · each label: the word, then context words of sense 1 | sense 2"
@@ -1321,7 +1321,7 @@ def _senses(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Provenan
             )
     return Result.success(
         PreparedPanel(
-            panel="word_sense_induction_senses",
+            panel="word_senses_bert_senses",
             shape="ranked_bars",
             title=f"The two senses of {lemma}",
             subtitle=f"words that tell the senses apart · separation {float(rows['Separation'].iloc[0]):.2f}"
@@ -1342,10 +1342,10 @@ def _senses(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Provenan
 _SENSE_REQUIRES = ("Lemma", "Sense", "Separation", "Sentence")
 
 WORD_SENSE_SPLIT_WORDS = PanelDefinition(
-    name="word_sense_induction_split_words",
+    name="word_senses_bert_split_words",
     title="Words used in two senses",
     question="Which words does the corpus use in two different ways?",
-    tool="word_sense_induction",
+    tool="word_senses_bert",
     shape="ranked_bars",
     summary="The words whose uses split most clearly into two senses, each with the context words that mark "
     "each sense.",
@@ -1376,10 +1376,10 @@ WORD_SENSE_SPLIT_WORDS = PanelDefinition(
 )
 
 WORD_SENSE_SENSES = PanelDefinition(
-    name="word_sense_induction_senses",
+    name="word_senses_bert_senses",
     title="The two senses of a word",
     question="What tells this word's two uses apart?",
-    tool="word_sense_induction",
+    tool="word_senses_bert",
     shape="ranked_bars",
     summary="For one word, the words that appear with each of its two senses; click one to read those sentences.",
     requires=_SENSE_REQUIRES,
@@ -1408,8 +1408,8 @@ WORD_SENSE_SENSES = PanelDefinition(
 
 
 WORD_MEANING_PANELS: tuple[PanelDefinition, ...] = (
-    *_definitions("word2vec_gensim"),
-    *_definitions("word2vec_bert"),
+    *_definitions("word_vectors_gensim"),
+    *_definitions("word_vectors_bert"),
     WORD2VEC_BERT_MEANING_OVER_TIME,
     WORD2VEC_BERT_MEANING_CHANGE,
     WORD_SENSE_SPLIT_WORDS,

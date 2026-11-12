@@ -6,40 +6,21 @@ from pathlib import Path
 
 import pytest
 
-try:
-    import spacy
-except ImportError:
-    spacy = None  # type: ignore[assignment]
-
 from app.scanner import find_runs
 from core.analysis.conll_wordlist import run as wordlist_run
 from core.conll.schema import Col
 from core.io.reader import read_corpus
 from core.io.writer import OutputWriter
 from core.pipelines.cache import PipelineCache
-from core.pipelines.spacy_backend import build_spacy_pipeline, spacy_model_name
+from core.pipelines.spacy_backend import build_spacy_pipeline
 from tools.conll_wordlist import main as wordlist_main
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mini-corpus"
 
 
-def _has_spacy_model() -> bool:
-    try:
-        spacy.load(spacy_model_name("en"))
-        return True
-    except Exception:
-        return False
-
-
 pytestmark = [
     pytest.mark.model_integration,
-    pytest.mark.skipif(
-        not _has_spacy_model(),
-        reason=(
-            "spaCy model not installed — the suite hard-fails on missing models "
-            f"(run: python -m spacy download {spacy_model_name('en')})"
-        ),
-    ),
+    pytest.mark.usefixtures("require_spacy_model"),
 ]
 
 

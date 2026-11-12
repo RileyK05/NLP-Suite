@@ -93,8 +93,9 @@ def test_the_record_of_what_was_read_is_flagged_not_hidden(
     project = workspace.create("Corpus run")
     workspace.import_document(project["id"], "a.txt", b"One sentence here. And a second one.")
     runner = client.app.state.runner
-    runner.submit(project["id"], "readability", {}, "spacy")
-    runner.close()
+    monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
+    job = runner.submit(project["id"], "readability", {}, "spacy")
+    assert run_job(workspace.root, job["id"]) == 0
     assert workspace.jobs(project["id"])[0]["state"] == "DONE", workspace.jobs(project["id"])
     rows = client.get(f"/api/projects/{project['id']}/tables").json()
     by_path = {row["path"]: row for row in rows}

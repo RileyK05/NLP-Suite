@@ -87,6 +87,7 @@ __all__ = [
     "NOMINALIZATION_OVER_TIME",
     "READABILITY_ALL_MEASURES",
     "READABILITY_BY_GROUP",
+    "READABILITY_GRADE_COMPARISON",
     "READABILITY_LENGTH_CHECK",
     "READABILITY_OVER_TIME",
     "SENTENCE_COMPLEXITY_ALL_MEASURES",
@@ -1471,6 +1472,92 @@ _STYLE_ICONICITY = MeasureTool(
 
 #: The shared factory and its simplest prepare step, for other families whose
 #: tables are also one row per document (sentiment scores, style guesses):
+_GRADE_METRICS = (
+    ("Flesch-Kincaid Grade", "Flesch-Kincaid"),
+    ("Gunning Fog Index", "Gunning Fog"),
+    ("Coleman-Liau Index", "Coleman-Liau"),
+    ("Automated Readability Index", "ARI"),
+    ("SMOG Index", "SMOG"),
+)
+
+
+def readability_grade_comparison(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Distribution of reading grade level scores across 5 standard formulas."""
+    _ = params
+    working = frame.copy()
+    needed = [col for col, _ in _GRADE_METRICS]
+    missing = [c for c in needed if c not in working.columns]
+    if missing:
+        return Result.failure(Diagnostic.error("PANEL_MISSING_COLUMN", f"missing grade columns: {missing}"))
+
+    for c in needed:
+        working[c] = pd.to_numeric(working[c], errors="coerce")
+
+    doc_col = DOC if DOC in working.columns else DOC_ID
+    labels = document_labels(working[doc_col].astype(str).tolist()) if doc_col in working.columns else {}
+
+    y_categories = tuple(short for _, short in _GRADE_METRICS)
+
+    marks: list[PanelMark] = []
+    for y_idx, (col, short) in enumerate(_GRADE_METRICS):
+        for _, row in working.iterrows():
+            val = row[col]
+            if pd.isna(val):
+                continue
+            doc_id = str(row.get(DOC_ID, ""))
+            doc_name = str(row.get(DOC, doc_id))
+            doc_disp = labels.get(doc_name, doc_name)
+            marks.append(
+                PanelMark(
+                    key=f"{doc_id}:{short}",
+                    label=doc_disp,
+                    x=float(val),
+                    y=float(y_idx),
+                    evidence=Evidence(
+                        scope="rows",
+                        filters=((DOC_ID, doc_id),) if DOC_ID in working.columns else (),
+                        count=1,
+                        describe=f"{doc_disp}: {short} grade level = {float(val):.1f}",
+                    ),
+                )
+            )
+
+    prepared = PreparedPanel(
+        panel=READABILITY_GRADE_COMPARISON.name,
+        shape="distribution",
+        title=READABILITY_GRADE_COMPARISON.title,
+        subtitle=f"Distribution of reading grade levels across {len(working)} document(s) for 5 standard formulas",
+        marks=tuple(marks),
+        x_label="Grade Level",
+        y_label="Formula",
+        provenance=provenance,
+        data=working,
+        y_categories=y_categories,
+        notes=READABILITY_GRADE_COMPARISON.notes,
+    )
+    return Result.success(prepared)
+
+
+READABILITY_GRADE_COMPARISON = PanelDefinition(
+    name="readability_grade_comparison",
+    title="Readability grade metrics comparison",
+    question="How do different grade-level formulas (Flesch-Kincaid, Gunning Fog, Coleman-Liau, ARI, SMOG) compare across the corpus?",
+    tool="readability",
+    shape="distribution",
+    summary="Distribution of document reading difficulty scores across five standard grade formulas.",
+    requires=(DOC_ID, *(col for col, _ in _GRADE_METRICS)),
+    params=(),
+    build=readability_grade_comparison,
+    notes=(
+        "Different readability formulas weight sentence length and word difficulty (syllables vs characters) differently.",
+        "Comparing formulas reveals whether texts are complex due to long sentence structures or polysyllabic vocabulary.",
+    ),
+)
+
 #: their trends and groupings then behave exactly as every other measure's.
 measure_panels = _factory
 prepare_passthrough = _prepare_passthrough
@@ -1480,6 +1567,7 @@ DOCUMENT_MEASURES_PANELS: tuple[PanelDefinition, ...] = (
     READABILITY_BY_GROUP,
     READABILITY_LENGTH_CHECK,
     READABILITY_ALL_MEASURES,
+    READABILITY_GRADE_COMPARISON,
     LEXICAL_DIVERSITY_OVER_TIME,
     LEXICAL_DIVERSITY_BY_GROUP,
     LEXICAL_DIVERSITY_LENGTH_CHECK,

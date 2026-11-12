@@ -107,7 +107,7 @@ model), so the panel is built and tested against the engine's exact schema only.
 | ngrams | ranked phrases (phrase-boundary function-word rule, coverage) | verified |
 | conll_wordlist | ranked words; refuses with advice when the run's top-n is all function words | verified |
 | tfidf | one document's top terms; document x term heatmap; warns when IDF is not separating | verified |
-| nrc | document x emotion heatmap | verified |
+| emotion_nrc | document x emotion heatmap | verified |
 | semantic | ranked lemmas with their tags | verified (demo vocabulary) |
 | verbnet, framenet, symbolic, wordnet | ranked classes/frames/categories | unverified (corpora missing) |
 | ngram_cooccurrence | PPMI against evidence; one word's partners; network | verified |
@@ -126,13 +126,14 @@ model), so the panel is built and tested against the engine's exact schema only.
 | lda_gensim | relevance, intertopic map, prevalence, topic flow | verified |
 | lda_stability | stability bars; topic x seed match heatmap | verified |
 | lda_mallet | document topic mix; ordered topic-term list | unverified (MALLET not installed) |
-| bert_topics | topic words; topics through time | verified |
-| word2vec_gensim / word2vec_bert | precomputed neighbours; t-SNE; query any saved word vector without retraining | verified (Gensim) |
-| shape_hc | dendrogram; clusters through time | verified |
-| shape_svd, shape_nmf | explained; loadings along the speech; documents on components; NMF mix | verified |
-| sentiment_vader_anew | extremes; trend, groups, all measures (VADER; ANEW when installed) | verified (VADER) |
-| sentiment_neural_* | extremes; trend, groups, all measures | unverified (models missing) |
-| sentiment_swn_hedono | trend, groups, all measures | unverified |
+| topic_clusters_bert | topic words; topics through time | verified |
+| word_vectors_gensim / word_vectors_bert | precomputed neighbours; t-SNE; query any saved word vector without retraining | verified (Gensim) |
+| story_shape_hc | dendrogram; clusters through time | verified |
+| story_shape_svd, story_shape_nmf | explained; loadings along the speech; documents on components; NMF mix | verified |
+| polarity_vader | extremes; trend, groups, all measures (VADER) | verified (VADER) |
+| valence_anew | extremes; valence trend by date (ANEW) | verified when the ANEW lexicon is installed |
+| polarity_distilbert_sst2, polarity_spacy, polarity_stanza, polarity_corenlp | extremes; trend, groups, all measures | unverified (models missing) |
+| polarity_sentiwordnet, happiness_hedonometer | trend, groups, all measures | unverified |
 | gender_guess | style scores by trend and group, with the "writing style, not a person" warning | verified |
 | clause_svo | agency; top triples | verified |
 | quote_annotator | table-first; who is quoted; quotes per speech | verified |
@@ -143,7 +144,7 @@ model), so the panel is built and tested against the engine's exact schema only.
 | table_trend / stats_trends | observations with Sen's slope | verified (engine output) |
 | table_rankcorr, wordcloud_gephi (+ table_) | table-first (the output is one coefficient / an image and a GEXF) | n/a |
 | csv_stats | every pairwise correlation as a diverging heatmap (`correlation_matrix.csv`) | verified |
-| word_sense_induction | table-first (the split is a baseline, not a clustering) | n/a |
+| word_senses_bert | table-first (the split is a baseline, not a clustering) | n/a |
 | convert, filenames, profiler, k_sentences, bert_extract, search, table_search, spellcheck, geocode, gis_map, svo_map | table-first | n/a |
 | charts, panels, table_charts | the generic builders themselves | n/a |
 

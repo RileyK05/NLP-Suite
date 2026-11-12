@@ -95,7 +95,7 @@ class TestTheCorpusDatesReachTheResult:
         """Sentiment publishes a document table and a sentence table. Both are
         about documents, so a timeline should be askable of either -- dating
         only the first frame would make that depend on which one you opened."""
-        outcome = _run(real_snapshot, real_corpus, "sentiment_vader_anew", {"analysis": "vader"})
+        outcome = _run(real_snapshot, real_corpus, "polarity_vader", {})
         assert len(outcome.frames) > 1
         for name, frame in outcome.frames.items():
             assert "Document ID" in frame.columns, name
@@ -121,8 +121,8 @@ class TestTheChartOfferedFirstAnswersSomething:
         87 bars of how many sentences each contained, sorted by size."""
         from core.insight.recommend import recommend_charts
 
-        frame = _run(real_snapshot, real_corpus, "sentiment_vader_anew", {"analysis": "vader"}).frames["vader.csv"]
-        first = recommend_charts(frame, tool="sentiment_vader_anew", limit=4)[0]
+        frame = _run(real_snapshot, real_corpus, "polarity_vader", {}).frames["vader.csv"]
+        first = recommend_charts(frame, tool="polarity_vader", limit=4)[0]
 
         assert first.spec.kind == "line"
         assert first.spec.x == "Date"
@@ -137,16 +137,16 @@ class TestTheChartOfferedFirstAnswersSomething:
     ) -> None:
         from core.insight.recommend import recommend_charts
 
-        frame = _run(real_snapshot, real_corpus, "sentiment_vader_anew", {"analysis": "vader"}).frames["vader.csv"]
+        frame = _run(real_snapshot, real_corpus, "polarity_vader", {}).frames["vader.csv"]
         without = frame.drop(columns=["Date", "Year"])
-        first = recommend_charts(without, tool="sentiment_vader_anew", limit=4)[0]
+        first = recommend_charts(without, tool="polarity_vader", limit=4)[0]
         assert first.spec.kind == "bar"
         assert (first.spec.x, first.spec.y) == ("Document", "Compound")
 
     def test_the_reading_says_what_stretch_of_time_the_table_covers(self, real_snapshot: Any, real_corpus: Any) -> None:
         from core.insight.readout import readout
 
-        frame = _run(real_snapshot, real_corpus, "sentiment_vader_anew", {"analysis": "vader"}).frames["vader.csv"]
-        reading = readout(frame, tool="sentiment_vader_anew")
+        frame = _run(real_snapshot, real_corpus, "polarity_vader", {}).frames["vader.csv"]
+        reading = readout(frame, tool="polarity_vader")
         first, last = sorted(frame["Date"].dropna())[0], sorted(frame["Date"].dropna())[-1]
         assert any(first in line and last in line for line in reading.observations), reading.observations

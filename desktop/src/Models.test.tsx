@@ -21,7 +21,7 @@ vi.mock("./api", () => ({
   downloadModel: (id: string) => downloadModel(id),
   cancelModelDownload: (id: string) => cancelModelDownload(id),
   deleteModel: (id: string) => deleteModel(id),
-  title: (name: string) => ({ bert_topics: "Topic clusters (BERT)" })[name] ?? name,
+  title: (name: string) => ({ topic_clusters_bert: "Topic clusters (BERT)" })[name] ?? name,
 }));
 
 const { Models } = await import("./Models");
@@ -65,7 +65,7 @@ function model(overrides: Partial<ModelInfo>): ModelInfo {
     license: "Apache-2.0",
     source: "https://huggingface.co/google-bert/bert-base-uncased",
     precision: "q8e4",
-    usedBy: ["bert_topics"],
+    usedBy: ["topic_clusters_bert"],
     download: null,
     ...overrides,
   };

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from core.conll.schema import Col, canonical_columns
+from core.deps import OptionalDependencyError, import_optional
 from core.io.reader import Corpus, display_names
 from core.pipelines.quiet import CapturedLogs, captured_logs
 from core.result import Diagnostic, Result
@@ -206,11 +207,10 @@ def build_stanza_pipeline(language: str, tasks: frozenset[str]) -> Result[Stanza
             Diagnostic.error("PIPELINE_BAD_TASK", f"unsupported Stanza task(s): {unknown}", tasks=unknown)
         )
     try:
-        import stanza
-    except ImportError as exc:
-        return Result.failure(
-            Diagnostic.error("PIPELINE_MISSING_DEP", f"stanza is not installed: {exc}", backend="stanza")
-        )
+        stanza = import_optional("stanza")
+    except OptionalDependencyError as exc:
+        detail = "not installed" if exc.missing else f"installed but will not import ({exc.reason})"
+        return Result.failure(Diagnostic.error("PIPELINE_MISSING_DEP", f"stanza is {detail}", backend="stanza"))
     # Bound by the ``with`` below before Stanza runs, so the failure branches
     # can read whatever it logged on its way to raising.
     logged = CapturedLogs()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_INLINE_BYTES = 64 * 1024  # hand-built fixtures stay small
@@ -30,7 +31,10 @@ def source_files(suffix: str):
         folders[:] = [
             name
             for name in folders
-            if name not in (".git", "__pycache__", "out", ".pytest-tmp")
+            if name not in (".git", "__pycache__", "out", ".pytest-tmp", ".venv", "venv")
+            # Prune any Python virtual environment, named .venv/venv
+            # explicitly or detected by a pyvenv.cfg file (custom name).
+            and not (Path(directory) / name / "pyvenv.cfg").is_file()
             and (Path(directory) / name).relative_to(ROOT).as_posix() not in generated
         ]
         for name in files:
@@ -80,3 +84,17 @@ class TestNoVendoring:
             if path.stat().st_size > MAX_INLINE_BYTES:
                 offenders.append(rel)
         assert not offenders, f"data-sized JSON outside fixtures: {offenders}"
+
+
+class TestSourceFilesPrunesVirtualenvs:
+    def test_prunes_virtualenv(self, tmp_path, monkeypatch) -> None:
+        env = tmp_path / "myenv"
+        (env / "lib").mkdir(parents=True)
+        (env / "pyvenv.cfg").write_text("")
+        (env / "lib" / "big.csv").write_text("a,b,c\n")
+        (tmp_path / "data.csv").write_text("x,y\n")
+
+        monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+        names = {path.name for path in source_files(".csv")}
+        assert "data.csv" in names
+        assert "big.csv" not in names

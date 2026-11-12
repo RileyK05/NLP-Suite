@@ -142,3 +142,31 @@ class TestC67Corrections:
         envelope = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
         codes = [d["code"] for d in envelope["diagnostics"]]
         assert any(c.startswith("CONVERT_") for c in codes)
+
+
+def test_html_block_and_cell_boundaries(tmp_path: Path) -> None:
+    table_path = tmp_path / "table.html"
+    table_path.write_text("<table><tr><td>Hello</td><td>World</td></tr></table>", encoding="utf-8")
+    assert C.convert_document_to_text(table_path).unwrap() == "Hello World"
+    para_path = tmp_path / "para.html"
+    para_path.write_text("<p>Hello</p>World", encoding="utf-8")
+    assert C.convert_document_to_text(para_path).unwrap() == "Hello\nWorld"
+    trailing = tmp_path / "trailing.html"
+    trailing.write_text("<p>One</p><p>Research &", encoding="utf-8")
+    assert C.convert_document_to_text(trailing).unwrap() == "One\nResearch &"
+
+
+def test_html_entities_are_decoded_once(tmp_path: Path) -> None:
+    page = tmp_path / "unescape.html"
+    page.write_text("<p>&amp;lt;b&amp;gt; not bold &amp; plain</p>", encoding="utf-8")
+    assert C.convert_document_to_text(page).unwrap() == "&lt;b&gt; not bold & plain"
+
+
+def test_csv_values_are_kept_verbatim(tmp_path: Path) -> None:
+    csv_text = "id,name,amount\n00123,Alice,1.50\nNA,Bob,\n"
+    source = tmp_path / "data.csv"
+    source.write_text(csv_text, encoding="utf-8")
+    assert C.convert_document_to_text(source).unwrap() == "id name amount\n00123 Alice 1.50\nNA Bob "
+    frame = C.convert_text_to_table(csv_text).unwrap()
+    assert frame["id"].tolist() == ["00123", "NA"]
+    assert frame["amount"].tolist() == ["1.50", ""]

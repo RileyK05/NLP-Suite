@@ -44,17 +44,17 @@ def test_live_embedding_result_exposes_saved_vector_query_without_retraining() -
             {"Word": "nation", "Count": 7, "Vector": "0,1"},
         ]
     )
-    result = LiveResult(tool="word2vec_gensim", ok=True, frames={"vectors.csv": vectors})
+    result = LiveResult(tool="word_vectors_gensim", ok=True, frames={"vectors.csv": vectors})
     settings = {"field": "lemma", "vector-size": 2, "seed": 42}
 
     offered = live_panels_offered(result)
-    assert "word2vec_gensim_saved_vectors" in [panel["name"] for panel in offered]
+    assert "word_vectors_gensim_saved_vectors" in [panel["name"] for panel in offered]
     # Three words are too few for meaning groups (the first figure) or a
     # bad-good axis; the first figure that can read them is drawn instead.
     default = live_panel(result, settings)
     assert default is not None and default["ok"]
     assert default["title"] == "The neighbourhood of government"
-    queried = draw_live_panel(result, settings, "word2vec_gensim_saved_vectors", {"query": "state"})
+    queried = draw_live_panel(result, settings, "word_vectors_gensim_saved_vectors", {"query": "state"})
     assert queried["ok"]
     assert next(mark["label"] for mark in queried["marks"]) == "government"
 
@@ -70,8 +70,11 @@ def test_live_analyse_route_returns_the_prepared_panel(tmp_path: Path, monkeypat
         def resolved(self, snapshot_id: str | None = None):
             return SimpleNamespace(id="snapshot-1")
 
-        def analyse(self, tool: str, params: dict[str, object], axis: dict[str, str] | None = None) -> LiveResult:
+        def analyse(
+            self, tool: str, params: dict[str, object], axis: dict[str, str] | None = None, *, snapshot: object = None
+        ) -> LiveResult:
             assert axis == {"kind": "auto", "noun": "Document"}, "the route passes the project's axis choice"
+            assert getattr(snapshot, "id", None) == "snapshot-1", "the route answers from the snapshot it checked"
             return result
 
         def remember(self, result: LiveResult, settings: dict[str, object], snapshot_id: str) -> str:

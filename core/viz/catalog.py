@@ -103,11 +103,11 @@ VISUALIZATIONS: tuple[Visualization, ...] = (
         module="core/viz/charts.py + core/viz/plotters.py",
         tool="charts",
         produces=("html", "png", "svg", "pdf"),
-        summary="Standalone interactive HTML charts, now across thirteen chart kinds.",
+        summary="Standalone interactive HTML charts, now across fifteen chart kinds.",
         legacy_module="charts_Plotly_util.py, charts_util.py",
         legacy_note="Plotly HTML for a handful of kinds, written per calling module.",
         advantage=(
-            "Thirteen kinds rather than a handful, all behind one typed ChartSpec with explicit "
+            "Fifteen kinds rather than a handful, all behind one typed ChartSpec with explicit "
             "aggregation, normalization and rate semantics, so a chart states how its numbers were "
             "combined instead of leaving it implied. Static PNG/SVG/PDF export is available, and the "
             "plotted numbers are always written beside the chart so any figure can be traced to its rows."

@@ -243,3 +243,12 @@ def test_a_damaged_upload_is_refused_plainly(client: tuple[TestClient, Workspace
         f"/api/projects/{project_id}/fields/import", json={"filename": "p.csv", "content": "not base64!!"}
     )
     assert response.status_code == 400 and "choose it again" in response.json()["detail"]
+
+
+def test_an_accented_header_proposes_its_unaccented_name() -> None:
+    """Detail names are ASCII; an accent is folded, not turned into a space."""
+    from core.io.metadata_table import proposed_target
+
+    assert proposed_target("Título") == "Titulo"
+    assert proposed_target("Année de parution") == "Annee de parution"
+    assert proposed_target("speaker") == "Speaker"

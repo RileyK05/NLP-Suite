@@ -20,7 +20,7 @@ import pytest
 from core.analysis import word_meaning
 from core.analysis.contextual import sense_uses
 from core.analysis.postags import word_class
-from core.analysis.word2vec_bert import train_bert
+from core.analysis.word_vectors_bert import train_bert
 from core.viz.panels import get_panel
 from core.viz.panelspec import Provenance
 
@@ -303,14 +303,14 @@ def _build(name: str, frame: pd.DataFrame, **params: Any):  # type: ignore[no-un
 
 
 class TestTheWordVectorFigures:
-    @pytest.mark.parametrize("tool", ["word2vec_gensim", "word2vec_bert"])
+    @pytest.mark.parametrize("tool", ["word_vectors_gensim", "word_vectors_bert"])
     def test_every_word_vector_tool_has_the_meaning_figures(self, tool: str) -> None:
         for view in ("meaning_groups", "meaning_axis", "word_network", "meaning_plane"):
             assert get_panel(f"{tool}_{view}") is not None
 
     def test_the_axis_places_chosen_words_and_leaves_the_poles_off(self) -> None:
         prepared = _build(
-            "word2vec_bert_meaning_axis",
+            "word_vectors_bert_meaning_axis",
             _vectors(WORDS, CLASSES),
             **{"one-end": "war", "other-end": "peace", "place": "trade", "words-per-end": 3},
         ).unwrap()
@@ -324,7 +324,7 @@ class TestTheWordVectorFigures:
 
     def test_the_plane_names_its_axes_and_labels_placed_words(self) -> None:
         prepared = _build(
-            "word2vec_bert_meaning_plane",
+            "word_vectors_bert_meaning_plane",
             _vectors(WORDS, CLASSES),
             **{
                 "x-one-end": "war",
@@ -346,19 +346,22 @@ class TestTheWordVectorFigures:
             for j in range(10)
         }
         result = _build(
-            "word2vec_gensim_meaning_groups", _vectors(many), groups=12, **{"words-per-group": 15, "word-class": "any"}
+            "word_vectors_gensim_meaning_groups",
+            _vectors(many),
+            groups=12,
+            **{"words-per-group": 15, "word-class": "any"},
         )
         prepared = result.unwrap()
         assert len(prepared.marks) <= 60
         assert "PANEL_WORDS_CAPPED" in [d.code for d in result.diagnostics]
 
     def test_nouns_asked_of_a_run_without_classes_says_so(self) -> None:
-        result = _build("word2vec_gensim_meaning_groups", _vectors(WORDS), groups=2)
+        result = _build("word_vectors_gensim_meaning_groups", _vectors(WORDS), groups=2)
         assert "PANEL_NO_WORD_CLASS" in [d.code for d in result.diagnostics]
         assert result.unwrap().title == "Groups of words that mean alike"
 
     def test_the_network_links_neighbours_and_defaults_to_a_frequent_noun(self) -> None:
-        result = _build("word2vec_bert_word_network", _vectors(WORDS, CLASSES), neighbours=5)
+        result = _build("word_vectors_bert_word_network", _vectors(WORDS, CLASSES), neighbours=5)
         prepared = result.unwrap()
         assert prepared.provenance.params["word"] == "war"
         keys = {mark.key for mark in prepared.marks}
@@ -366,7 +369,7 @@ class TestTheWordVectorFigures:
         assert sum(edge.source == "node:war" for edge in prepared.edges) == 5
 
     def test_an_unknown_word_is_refused(self) -> None:
-        result = _build("word2vec_bert_word_network", _vectors(WORDS), word="zeppelin")
+        result = _build("word_vectors_bert_word_network", _vectors(WORDS), word="zeppelin")
         assert [d.code for d in result.diagnostics] == ["PANEL_QUERY_NOT_FOUND"]
 
     def test_the_tsne_map_is_coloured_by_named_group(self) -> None:
@@ -379,7 +382,7 @@ class TestTheWordVectorFigures:
                 "Group": ["war, army", "war, army", "peace", ""],
             }
         )
-        prepared = _build("word2vec_bert_tsne", tsne, **{"hide-function-words": False}).unwrap()
+        prepared = _build("word_vectors_bert_tsne", tsne, **{"hide-function-words": False}).unwrap()
         assert prepared.groups == ("war, army", "peace", "(other words)")
         assert {m.label: m.group for m in prepared.marks}["the"] == "(other words)"
 
@@ -394,7 +397,7 @@ class TestTheChangeFigures:
 
     def test_the_heatmap_follows_one_word_through_its_periods(self) -> None:
         over_time, _ = self._tables()
-        prepared = _build("word2vec_bert_meaning_over_time", over_time, word="energy", neighbours=2).unwrap()
+        prepared = _build("word_vectors_bert_meaning_over_time", over_time, word="energy", neighbours=2).unwrap()
         assert prepared.x_categories == ("1940s (6 uses)", "1980s (6 uses)")
         assert set(prepared.y_categories) <= {"spirit", "strength", "vigor", "fuel", "oil", "electric"}
         early = prepared.y_categories[0]
@@ -403,12 +406,12 @@ class TestTheChangeFigures:
 
     def test_a_word_not_compared_is_refused_with_the_way_forward(self) -> None:
         over_time, _ = self._tables()
-        result = _build("word2vec_bert_meaning_over_time", over_time, word="zeppelin")
+        result = _build("word_vectors_bert_meaning_over_time", over_time, word="zeppelin")
         assert "Words whose company changed most" in result.diagnostics[0].message
 
     def test_the_change_ranking_names_each_word_span(self) -> None:
         _, change = self._tables()
-        prepared = _build("word2vec_bert_meaning_change", change, **{"min-uses": 2, "word-class": "any"}).unwrap()
+        prepared = _build("word_vectors_bert_meaning_change", change, **{"min-uses": 2, "word-class": "any"}).unwrap()
         assert prepared.marks[0].label == "energy (1940s to 1980s)"
         assert "spirit" in prepared.marks[0].evidence.describe or "strength" in prepared.marks[0].evidence.describe
 
@@ -447,7 +450,7 @@ class TestTheSenseFigures:
         return pd.DataFrame(rows)
 
     def test_split_words_are_labelled_by_the_context_of_each_sense(self) -> None:
-        prepared = _build("word_sense_induction_split_words", self._uses(), **{"min-uses": 5}).unwrap()
+        prepared = _build("word_senses_bert_split_words", self._uses(), **{"min-uses": 5}).unwrap()
         label = prepared.marks[0].label
         assert label.startswith("bank: ")
         first, second = label.removeprefix("bank: ").split(" | ")
@@ -455,7 +458,7 @@ class TestTheSenseFigures:
         assert set(second.split(", ")) <= {"river", "water", "shore"}
 
     def test_each_context_word_opens_the_sentences_of_its_sense_that_hold_it(self) -> None:
-        prepared = _build("word_sense_induction_senses", self._uses()).unwrap()
+        prepared = _build("word_senses_bert_senses", self._uses()).unwrap()
         assert prepared.provenance.params["word"] == "bank"
         river = next(mark for mark in prepared.marks if mark.label == "river")
         assert river.x > 0
@@ -465,7 +468,7 @@ class TestTheSenseFigures:
         assert behind["Sentence"].str.contains("river").all()
 
     def test_another_part_of_speech_finds_none_and_says_so(self) -> None:
-        result = _build("word_sense_induction_senses", self._uses(), **{"word-class": "verb"})
+        result = _build("word_senses_bert_senses", self._uses(), **{"word-class": "verb"})
         assert result.value is None
         assert "part of speech" in result.diagnostics[0].message
 

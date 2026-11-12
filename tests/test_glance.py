@@ -6,13 +6,13 @@ whole recipe, so it is skipped where the English model is not installed.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
 
-from conftest import has_spacy_model
 from core.insight.glance import GLANCE_FIGURES, RECIPE, glance_key, summarize
 from desktop_backend.store import Workspace
 
@@ -58,9 +58,7 @@ class TestRecipe:
             {"Document": ["1934_roosevelt.txt", "1994_clinton.txt"], "Tokens": [2000, 9000], "Sentences": [90, 400]}
         )
         tone = pd.DataFrame({"Document": ["1934_roosevelt.txt", "1994_clinton.txt"], "Compound": [0.3, 0.1]})
-        lines = summarize(
-            {"text_statistics": {"text_statistics.csv": stats}, "sentiment_vader_anew": {"vader.csv": tone}}
-        )
+        lines = summarize({"text_statistics": {"text_statistics.csv": stats}, "polarity_vader": {"vader.csv": tone}})
         assert lines[0].startswith("2 documents, 11,000 words")
         # Both positive: the lower one is "least positive", not "most negative".
         assert "least positive" in lines[1]
@@ -94,7 +92,7 @@ class TestRecipe:
                 "Compound": [0.1 * i for i in range(1, 11)],
             }
         )
-        lines = summarize({"sentiment_vader_anew": {"vader.csv": frame}}, "order", "Chapter")
+        lines = summarize({"polarity_vader": {"vader.csv": frame}}, "order", "Chapter")
         assert "across the chapters it rises" in lines[0]
 
     def test_a_book_says_its_name_first(self) -> None:
@@ -126,7 +124,6 @@ class TestRecipe:
         assert lines[0].startswith("3 documents, 300 words")
 
 
-@pytest.mark.skipif(not has_spacy_model(), reason="needs the spaCy English model to parse")
 class TestGlanceJob:
     def run(self, workspace: Workspace, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Any]:
         from desktop_backend.glance import GLANCE_TOOL, status
@@ -136,14 +133,21 @@ class TestGlanceJob:
         for name, text in SPEECHES.items():
             workspace.import_document(project_id, name, text.encode("utf-8"))
         runner = Runner(workspace)
-        monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
-        job = runner.submit(project_id, GLANCE_TOOL, {}, "spacy")
-        run_job(workspace.root, job["id"])
-        runner.close()
+        try:
+            monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
+            job = runner.submit(project_id, GLANCE_TOOL, {}, "spacy")
+            assert run_job(workspace.root, job["id"]) == 0, json.dumps(workspace.jobs(project_id), indent=2)
+        finally:
+            runner.close()
         return project_id, status(workspace, project_id)
 
-    def test_one_job_runs_the_recipe_and_summarises_it(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        workspace = Workspace(tmp_path / "workspace")
+    @pytest.mark.model_integration
+    @pytest.mark.usefixtures("require_spacy_model")
+    def test_one_job_runs_the_recipe_and_summarises_it(
+        self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Publication filenames plus project/run ids need a short Windows base.
+        workspace = Workspace(tmp_path_factory.mktemp("g") / "w")
         project_id, answer = self.run(workspace, monkeypatch)
         assert answer["state"] == "ready", answer.get("job")
         text = " ".join(answer["summary"])
@@ -156,13 +160,9 @@ class TestGlanceJob:
         assert first.read_bytes()[:4] == b"\x89PNG"
         with pytest.raises(KeyError):
             figure_file(workspace, project_id, "../../outside.png")
-
-    def test_a_changed_corpus_makes_the_glance_stale(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from desktop_backend.glance import status
 
-        workspace = Workspace(tmp_path / "workspace")
-        project_id, answer = self.run(workspace, monkeypatch)
-        assert answer["state"] == "ready"
+        # Reuse the completed recipe rather than parsing and drawing it twice.
         workspace.import_document(project_id, "2020-02-04_donald trump_sotu.txt", b"The economy is strong.")
         assert status(workspace, project_id)["state"] == "stale"
 

@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -85,12 +86,13 @@ const NEAREST_SHAPES = new Set([
   "small_multiples",
   "distribution",
   "network",
+  "geographic",
 ]);
 /** How far (in drawing units) the pointer may be from a point to read it. */
 const NEAREST_REACH = 22;
 const TOOLTIP_WIDTH = 280;
 /** Shapes a reader can zoom by dragging a box over the plot. */
-const ZOOM_SHAPES = new Set(["scatter_labelled", "line_series"]);
+const ZOOM_SHAPES = new Set(["scatter_labelled", "line_series", "geographic"]);
 /** A drag shorter than this (drawing units) is a click, not a zoom box. */
 const MIN_DRAG = 8;
 
@@ -98,6 +100,13 @@ const MIN_DRAG = 8;
  *  y0..y1 bottom to top. Nested zooms compose, so each is a fraction of the
  *  view it was drawn on. */
 export type Zoom = { x0: number; x1: number; y0: number; y1: number };
+
+function mapWindow({ x0, x1, y0, y1 }: Zoom, padding = 0): Zoom {
+  const span = Math.min(1, Math.max(0.035, x1 - x0, y1 - y0) + padding * 2);
+  const left = Math.min(1 - span, Math.max(0, (x0 + x1 - span) / 2));
+  const bottom = Math.min(1 - span, Math.max(0, (y0 + y1 - span) / 2));
+  return { x0: left, x1: left + span, y0: bottom, y1: bottom + span };
+}
 
 /** A scale narrowed to a zoom's share of it (no further padding). */
 function zoomScale(
@@ -227,7 +236,11 @@ function truncate(label: string, maxPx = LABEL_MAX_PX): string {
 /** Every mark the layout placed, in no particular order: for counting tab
  *  stops and finding a group's colour for the legend. */
 function placedMarks(layout: PanelLayout): PlacedMark[] {
-  if (layout.shape === "scatter_labelled" || layout.shape === "line_series")
+  if (
+    layout.shape === "scatter_labelled" ||
+    layout.shape === "line_series" ||
+    layout.shape === "geographic"
+  )
     return layout.marks;
   if (layout.shape === "ranked_bars")
     return layout.rows.flatMap((row) => row.marks);
@@ -274,15 +287,20 @@ export function PanelCanvas({
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const clipId = useId().replaceAll(":", "");
-  const shown = hidden.size
-    ? {
-        ...prepared,
-        marks: prepared.marks.filter(
-          (mark) => !hidden.has(mark.group || "(all)"),
-        ),
-      }
-    : prepared;
-  const result = buildPanelLayout(shown);
+  const result = useMemo(
+    () =>
+      buildPanelLayout(
+        hidden.size
+          ? {
+              ...prepared,
+              marks: prepared.marks.filter(
+                (mark) => !hidden.has(mark.group || "(all)"),
+              ),
+            }
+          : prepared,
+      ),
+    [prepared, hidden],
+  );
   const canvas = canvasSize(prepared);
   const { WIDTH, HEIGHT, PLOT } = canvas;
 
@@ -406,6 +424,11 @@ export function PanelCanvas({
     return { x: at.x, y: at.y };
   };
   const zoomable = ZOOM_SHAPES.has(layout.shape);
+  const zoomTo = (view: Zoom | null) => {
+    setZoom(view);
+    setFocusIndex(0);
+    setHovered(null);
+  };
 
   const onDown = (event: MouseEvent<SVGSVGElement>) => {
     if (!zoomable || event.button !== 0) return;
@@ -435,12 +458,13 @@ export function PanelCanvas({
     const base = zoom ?? { x0: 0, x1: 1, y0: 0, y1: 1 };
     const across = base.x1 - base.x0;
     const up = base.y1 - base.y0;
-    setZoom({
+    const next = {
       x0: base.x0 + box.x0 * across,
       x1: base.x0 + box.x1 * across,
       y0: base.y0 + box.y0 * up,
       y1: base.y0 + box.y1 * up,
-    });
+    };
+    zoomTo(layout.shape === "geographic" ? mapWindow(next) : next);
   };
 
   const onMove = (event: MouseEvent<SVGSVGElement>) => {
@@ -476,6 +500,13 @@ export function PanelCanvas({
 
   return (
     <div className="panel-canvas" ref={wrapRef}>
+      <div className="chart-head panel-head">
+        <div>
+          <span className="chart-kicker">Analysis figure</span>
+          <div className="chart-title">{prepared.title}</div>
+          {prepared.subtitle && <p>{prepared.subtitle}</p>}
+        </div>
+      </div>
       <p className="chart-readout" role="status">
         {readout}
       </p>
@@ -497,7 +528,7 @@ export function PanelCanvas({
           onMouseMove={onMove}
           onMouseDown={onDown}
           onMouseUp={onUp}
-          onDoubleClick={() => setZoom(null)}
+          onDoubleClick={() => zoomTo(null)}
           onClick={onBackgroundClick}
           onMouseLeave={() => {
             setHovered(null);
@@ -525,6 +556,16 @@ export function PanelCanvas({
               zoom={zoom}
               clipId={clipId}
               annotations={result.annotations}
+              markProps={markProps}
+              pick={pick}
+              isDim={isDim}
+            />
+          )}
+          {layout.shape === "geographic" && (
+            <GeographicFigure
+              layout={layout}
+              zoom={zoom}
+              clipId={clipId}
               markProps={markProps}
               pick={pick}
               isDim={isDim}
@@ -629,20 +670,65 @@ export function PanelCanvas({
           )}
         </svg>
       </CanvasSize.Provider>
-      {zoomable && (
-        <p className="panel-zoom-hint">
-          {zoom ? (
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => setZoom(null)}
-            >
-              Reset zoom
-            </button>
-          ) : (
-            "Drag a box over the plot to zoom in; double-click to reset."
-          )}
-        </p>
+      {layout.shape === "geographic" ? (
+        <div className="panel-map-tools">
+          <span className="panel-map-scale">
+            <span
+              className={
+                layout.cellDegrees ? "panel-map-ramp" : "panel-map-bubbles"
+              }
+              aria-hidden="true"
+            />
+            {layout.cellDegrees ? "Cell total" : "Pin weight"} up to{" "}
+            {formatNumber(layout.maximum)} {prepared.valueLabel}
+          </span>
+          <span>Natural Earth land</span>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              const xs = layout.marks.map((mark) => (mark.x + 180) / 360);
+              const ys = layout.marks.map((mark) => (mark.y + 90) / 180);
+              zoomTo(
+                mapWindow(
+                  {
+                    x0: Math.min(...xs),
+                    x1: Math.max(...xs),
+                    y0: Math.min(...ys),
+                    y1: Math.max(...ys),
+                  },
+                  Math.max(0.04, layout.cellDegrees / 270),
+                ),
+              );
+            }}
+          >
+            Fit to data
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={!zoom}
+            onClick={() => zoomTo(null)}
+          >
+            Reset map
+          </button>
+        </div>
+      ) : (
+        zoomable && (
+          <p className="panel-zoom-hint">
+            {zoom ? (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setZoom(null)}
+              >
+                Reset zoom
+              </button>
+            ) : (
+              "Drag a box over the plot to zoom in; double-click to reset."
+            )}
+          </p>
+        )
       )}
       {legend.length > 1 && (
         <ul className="chart-legend panel-legend">
@@ -698,6 +784,146 @@ type FigureProps = {
 
 /** A plot rectangle, for the shapes that do not use the default one. */
 type Area = { left: number; top: number; width: number; height: number };
+
+function GeographicFigure({
+  layout,
+  zoom,
+  clipId,
+  markProps,
+  pick,
+  isDim,
+}: Omit<FigureProps, "prepared"> & {
+  layout: Extract<PanelLayout, { shape: "geographic" }>;
+  zoom: Zoom | null;
+  clipId: string;
+}) {
+  const { PLOT } = useCanvas();
+  const view = zoom ?? { x0: 0, x1: 1, y0: 0, y1: 1 };
+  const xMin = -180 + 360 * view.x0;
+  const xMax = -180 + 360 * view.x1;
+  const yMin = -90 + 180 * view.y0;
+  const yMax = -90 + 180 * view.y1;
+  const x = (value: number) =>
+    PAD.left + ((value - xMin) / (xMax - xMin)) * PLOT.width;
+  const y = (value: number) =>
+    PAD.top + ((yMax - value) / (yMax - yMin)) * PLOT.height;
+  const land = useMemo(() => {
+    const sx = PLOT.width / (xMax - xMin);
+    const sy = PLOT.height / (yMax - yMin);
+    return layout.land
+      .map(
+        (ring) =>
+          `M${ring.map(([lon, lat]) => `${(PAD.left + (lon - xMin) * sx).toFixed(2)},${(PAD.top + (yMax - lat) * sy).toFixed(2)}`).join("L")}Z`,
+      )
+      .join("");
+  }, [layout.land, xMin, xMax, yMin, yMax, PLOT.width, PLOT.height]);
+  const inViewTicks = (min: number, max: number, count: number) =>
+    axisTicks(min, max, count)
+      .map(({ value }) => value)
+      .filter((value) => value >= min && value <= max);
+  const longitude = zoom
+    ? inViewTicks(xMin, xMax, 6)
+    : [-180, -120, -60, 0, 60, 120, 180];
+  const latitude = zoom
+    ? inViewTicks(yMin, yMax, 5)
+    : [-90, -60, -30, 0, 30, 60, 90];
+  const bottom = PAD.top + PLOT.height;
+  const right = PAD.left + PLOT.width;
+  const half = layout.cellDegrees / 2;
+  const visible = layout.marks.filter(
+    (mark) =>
+      mark.x + half >= xMin &&
+      mark.x - half <= xMax &&
+      mark.y + half >= yMin &&
+      mark.y - half <= yMax,
+  );
+  return (
+    <g>
+      <rect
+        x={PAD.left}
+        y={PAD.top}
+        width={PLOT.width}
+        height={PLOT.height}
+        rx={4}
+        fill="#e9f2f6"
+      />
+      <clipPath id={`${clipId}-land`}>
+        <rect
+          x={PAD.left}
+          y={PAD.top}
+          width={PLOT.width}
+          height={PLOT.height}
+          rx={4}
+        />
+      </clipPath>
+      <g clipPath={`url(#${clipId}-land)`} pointerEvents="none">
+        {longitude.map((value) => (
+          <line
+            key={value}
+            x1={x(value)}
+            x2={x(value)}
+            y1={PAD.top}
+            y2={bottom}
+            stroke="#cadbe2"
+          />
+        ))}
+        {latitude.map((value) => (
+          <line
+            key={value}
+            x1={PAD.left}
+            x2={right}
+            y1={y(value)}
+            y2={y(value)}
+            stroke="#cadbe2"
+          />
+        ))}
+        <path d={land} fill="#fbfcf9" stroke="#a8bcbf" strokeWidth={0.7} />
+      </g>
+      <g fill={TEXT} fontSize={11} aria-hidden="true">
+        {longitude.map((value) => (
+          <text key={value} x={x(value)} y={bottom + 19} textAnchor="middle">
+            {value}°
+          </text>
+        ))}
+        {latitude.map((value) => (
+          <text key={value} x={PAD.left - 9} y={y(value) + 4} textAnchor="end">
+            {value}°
+          </text>
+        ))}
+      </g>
+      <g clipPath={`url(#${half ? `${clipId}-land` : clipId})`}>
+        {visible.map((mark) =>
+          half ? (
+            <rect
+              key={mark.key}
+              x={x(mark.x - half)}
+              y={y(mark.y + half)}
+              width={x(mark.x + half) - x(mark.x - half)}
+              height={y(mark.y - half) - y(mark.y + half)}
+              rx={1.5}
+              fill={mark.color}
+              stroke="#fbfcf9"
+              opacity={0.86 * isDim(mark)}
+              {...markProps(mark, () => pick(mark))}
+            />
+          ) : (
+            <circle
+              key={mark.key}
+              cx={x(mark.x)}
+              cy={y(mark.y)}
+              r={mark.radius}
+              fill={mark.color}
+              stroke="white"
+              strokeWidth={1.25}
+              opacity={0.83 * isDim(mark)}
+              {...markProps(mark, () => pick(mark))}
+            />
+          ),
+        )}
+      </g>
+    </g>
+  );
+}
 
 /** Axes and reference lines shared by every shape's figure. */
 function Frame({

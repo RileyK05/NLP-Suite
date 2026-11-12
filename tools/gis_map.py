@@ -31,7 +31,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--lat-col", default="Lat", help="latitude column")
     p.add_argument("--lon-col", default="Lon", help="longitude column")
     p.add_argument("--name-col", default="Place", help="place-name column")
-    p.add_argument("--weight-col", default="", help="column driving pin radius / heat intensity")
+    p.add_argument("--weight-col", default="", help="map weights (defaults to Mentions when present)")
+    p.add_argument("--cell-size", type=int, choices=(5, 10, 15, 30), default=10, help="heatmap cell width in degrees")
     p.add_argument("--group-col", default="", help="column grouping placemarks into a Google Earth tour")
     p.add_argument("--title", default="", help="map title")
     return p.parse_args(argv)
@@ -62,10 +63,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"fix: {diag.context['fix']}", file=sys.stderr)
         return 1
 
-    from core.gis.mapping import heatmap_html, kml, tour_kml
+    from core.gis.mapping import _UNRESOLVED, _weight, heatmap_html, kml, tour_kml
     from core.gis.pins import pinmap_html
 
-    weight = args.weight_col or None
+    weight = args.weight_col or ("Mentions" if "Mentions" in frame else None)
     tour = None
     if args.group_col:
         tour = tour_kml(
@@ -92,7 +93,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
         (
             "heatmap.html",
-            heatmap_html(frame, args.lat_col, args.lon_col, weight_col=weight, title=args.title),
+            heatmap_html(
+                frame,
+                args.lat_col,
+                args.lon_col,
+                weight_col=weight,
+                title=args.title,
+                name_col=args.name_col,
+                cell_degrees=args.cell_size,
+            ),
             "heatmap",
             "chart",
         ),
@@ -123,13 +132,29 @@ def main(argv: list[str] | None = None) -> int:
             for diag in written.diagnostics:
                 print(diag, file=sys.stderr)
             return 1
+    status = frame.get("Status", pd.Series("OK", index=frame.index)).astype(str).str.strip().str.upper()
+    points = pd.DataFrame(
+        {
+            "Place": frame.get(args.name_col, frame[args.lat_col].astype(str) + ", " + frame[args.lon_col].astype(str)),
+            "Lat": frame[args.lat_col],
+            "Lon": frame[args.lon_col],
+            "Status": status.where(status.isin(_UNRESOLVED), "OK"),
+            "Weight": frame[weight].map(_weight) if weight in frame else 1.0,
+        }
+    )
+    written = writer.write_table(points, "map_points.csv", description="Coordinates and weights supplied to the maps")
+    if not written.ok:
+        writer.abandon()
+        for diag in written.diagnostics:
+            print(diag, file=sys.stderr)
+        return 1
     writer.add_diagnostics(*all_diags)
     env = writer.finalize()
     if not env.ok:
         for diag in env.diagnostics:
             print(diag, file=sys.stderr)
         return 1
-    print(f"Wrote {len(planned)} artifact(s) to {writer.run_dir}")
+    print(f"Wrote {len(planned) + 1} artifact(s) to {writer.run_dir}")
     return 0
 
 

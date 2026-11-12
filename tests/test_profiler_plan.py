@@ -34,7 +34,7 @@ class TestPlanValidation:
         assert any(d.code == "PROFILER_UNKNOWN_PARAM" for d in res.diagnostics)
 
     def test_bad_choice_fails(self) -> None:
-        res = plan_mod.build_plan(["word2vec_gensim"], {"word2vec_gensim": {"sg": 7}})
+        res = plan_mod.build_plan(["word_vectors_gensim"], {"word_vectors_gensim": {"sg": 7}})
         assert res.value is None
         assert any(d.code == "PROFILER_BAD_PARAM" for d in res.diagnostics)
 

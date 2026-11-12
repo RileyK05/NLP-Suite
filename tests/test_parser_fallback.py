@@ -14,6 +14,8 @@ that names a parser which never touched the text.
 
 from __future__ import annotations
 
+import importlib.util
+
 import pandas as pd
 import pytest
 
@@ -80,6 +82,21 @@ def _cache(**builders: object) -> PipelineCache:
     return cache
 
 
+def _stanza_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make Stanza look absent even on a machine where its package is present."""
+    from core.pipelines import resolve
+
+    monkeypatch.setattr(resolve, "available_backends", lambda: ("spacy",))
+    real_find_spec = importlib.util.find_spec
+
+    def find_spec(name: str, package: str | None = None) -> object:
+        if name == "stanza":
+            return None
+        return real_find_spec(name, package)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+
+
 CONFIG = NLPConfig(parser="stanza", language="en")
 
 
@@ -116,6 +133,35 @@ class TestFallbackHappens:
     def test_every_model_problem_triggers_it(self, code: str) -> None:
         result = resolve_pipeline(_cache(stanza=_model_missing("stanza", code), spacy=_works("spacy")), CONFIG)
         assert result.ok and result.unwrap().backend == "spacy"
+
+
+class TestBackendPackageNotInstalled:
+    """The README's spaCy-only pip path: Stanza is the default but absent."""
+
+    def test_a_missing_package_falls_back_to_an_installed_backend(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _stanza_not_installed(monkeypatch)
+        result = resolve_pipeline(_cache(spacy=_works("spacy")), CONFIG)
+        assert result.ok
+        assert result.unwrap().backend == "spacy"
+        warning = next(d for d in result.diagnostics if d.code == "PARSER_FALLBACK")
+        assert warning.context["requested"] == "stanza"
+        assert warning.context["used"] == "spacy"
+        assert warning.context["fix"] == "pip install stanza"
+
+    def test_strict_mode_reports_the_missing_package_with_the_fix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _stanza_not_installed(monkeypatch)
+        result = resolve_pipeline(_cache(spacy=_works("spacy")), CONFIG, allow_fallback=False)
+        assert result.value is None
+        diagnostic = next(d for d in result.diagnostics if d.code == "PIPELINE_BACKEND_NOT_INSTALLED")
+        assert diagnostic.context["fix"] == "pip install stanza"
+        assert diagnostic.context["backend"] == "stanza"
+
+    def test_an_explicit_builder_is_never_second_guessed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _stanza_not_installed(monkeypatch)
+        result = resolve_pipeline(_cache(stanza=_works("stanza"), spacy=_works("spacy")), CONFIG)
+        assert result.ok
+        assert result.unwrap().backend == "stanza"
+        assert not [d for d in result.diagnostics if d.code == "PARSER_FALLBACK"]
 
 
 class TestFallbackDoesNotHappen:
@@ -176,8 +222,8 @@ class TestTheDoctorReportsThisHonestly:
     def _checks(monkeypatch: pytest.MonkeyPatch, *, stanza: bool, spacy: bool) -> dict[str, object]:
         from tools import doctor
 
-        monkeypatch.setattr(doctor, "_stanza_model_ok", lambda lang: (stanza, "stubbed"))
-        monkeypatch.setattr(doctor, "_spacy_model_ok", lambda lang: (spacy, "stubbed"))
+        monkeypatch.setattr(doctor, "_stanza_model_ok", lambda lang: (stanza, "stubbed", False))
+        monkeypatch.setattr(doctor, "_spacy_model_ok", lambda lang: (spacy, "stubbed", False))
         monkeypatch.setattr(doctor, "_has_module", lambda name: True)
         return {c.name: c for c in doctor._check_parsers(["en"])}
 

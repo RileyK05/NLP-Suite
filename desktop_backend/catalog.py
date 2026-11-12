@@ -19,11 +19,12 @@ CORPUS_TOOLS = (
     "lda_gensim",
     "lda_stability",
     "lda_mallet",
-    "word2vec_gensim",
-    "sentiment_vader_anew",
+    "word_vectors_gensim",
+    "polarity_vader",
+    "valence_anew",
     "nominalization",
     "style",
-    "narrative",
+    "narrative_arc",
     "clause_svo",
     "ner",
     "ngrams",
@@ -47,31 +48,32 @@ CORPUS_TOOLS = (
     "gender_guess",
     "verb_analysis",
     "ngram_viewer",
-    "sentiment_neural_bert",
-    "sentiment_neural_spacy",
-    "sentiment_neural_stanza",
-    "sentiment_neural_corenlp",
-    "shape_hc",
-    "shape_svd",
-    "shape_nmf",
+    "polarity_distilbert_sst2",
+    "polarity_spacy",
+    "polarity_stanza",
+    "polarity_corenlp",
+    "story_shape_hc",
+    "story_shape_svd",
+    "story_shape_nmf",
     "geocode",
     "svo_map",
-    "word2vec_bert",
+    "word_vectors_bert",
     # BERT-family tools: the models ship with the app (core.models) and run
     # through ONNX Runtime, so they have a desktop contract now.
-    "word_sense_induction",
+    "word_senses_bert",
     "bert_extract",
-    "bert_topics",
-    "doc_embeddings",
+    "topic_clusters_bert",
+    "document_embeddings",
 )
 
 INTERNAL_TOOLS = frozenset(
     {
         "coreference",
-        "semantic",
+        "semantic_classes",
         "knowledge_graph",
-        "sentiment_swn_hedono",
-        "nrc",
+        "polarity_sentiwordnet",
+        "happiness_hedonometer",
+        "emotion_nrc",
     }
 )
 
@@ -83,20 +85,13 @@ def desktop_spec(spec: ToolSpec) -> ToolSpec:
     tool up — is replaced by one written for whoever is choosing it. The three
     specs below say more than a description, so they keep their own wording.
     """
-    if spec.name not in {"sentiment_vader_anew", "search", "spellcheck"}:
+    if spec.name not in {"valence_anew", "search", "spellcheck"}:
         spec = replace(spec, description=tool_description(spec.name, spec.description))
-    if spec.name == "sentiment_vader_anew":
+    if spec.name == "valence_anew":
         return replace(
             spec,
             assets=(),
-            description="Measure positive and negative tone in sentences and documents. VADER is included; ANEW needs your lexicon file.",
-            params=tuple(
-                replace(param, default="vader")
-                if param.name == "analysis"
-                else replace(param, help="Choose your ANEW ratings CSV when using both analyses.")
-                for param in spec.params
-                if param.name in {"analysis", "anew-lexicon"}
-            ),
+            description="Rate each document's words for valence, arousal and dominance against your ANEW ratings file.",
         )
     if spec.name == "search":
         return replace(

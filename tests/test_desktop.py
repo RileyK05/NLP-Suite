@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import contextlib
 import io
 import json
 from pathlib import Path
+import struct
 import time
 import zipfile
 
@@ -68,7 +68,7 @@ def test_catalog_separates_visualization_from_analysis(client: TestClient) -> No
     catalog = {tool["name"]: tool for tool in client.get("/api/tools").json()}
     visual = {name for name, tool in catalog.items() if tool["category"] == "visualization"}
     assert visual == VISUALIZATION_TOOLS & set(catalog)
-    assert {"table_charts", "table_wordcloud_gephi", "narrative", "shapes"} <= visual
+    assert {"table_charts", "table_wordcloud_gephi", "narrative_arc", "shapes"} <= visual
     assert visual & set(catalog) == visual
     assert catalog["table_charts"]["category"] != catalog["table_chi2"]["category"]
 
@@ -124,6 +124,10 @@ def test_visualize_endpoint_reuses_artifact_without_exposing_paths(
     _, envelope = workspace.artifacts(project["id"], job["id"])
     csvs = [i for i, artifact in enumerate(envelope.artifacts) if artifact.path.endswith(".csv")]
     with TestClient(create_app(workspace, "test-local-token")) as session:
+        # This test executes the submitted job synchronously below. Do not
+        # also dispatch it in a worker: two runs race to publish the same
+        # artifacts and shutdown waits on a redundant cold worker startup.
+        monkeypatch.setattr(session.app.state.runner.pool, "submit", lambda *args: None)
         session.headers["Authorization"] = "Bearer test-local-token"
         response = session.post(
             f"/api/projects/{project['id']}/jobs/{job['id']}/visualize",
@@ -173,6 +177,8 @@ def test_inline_artifact_preview_serves_viewable_types(
     )
     assert run_job(workspace.root, job["id"]) == 0, workspace.jobs(project["id"])
     runner.close()
+    # The PNG is rendered through a scratch file that must not be left in runs/.
+    assert not (workspace.project_dir(project["id"]) / "runs" / ".staging_wc.png").exists()
     _, envelope = workspace.artifacts(project["id"], job["id"])
     with TestClient(create_app(workspace, "test-local-token")) as session:
         session.headers["Authorization"] = "Bearer test-local-token"
@@ -226,68 +232,70 @@ def test_cancel_queued_job_is_terminal(workspace: Workspace, monkeypatch: pytest
     runner.close()
 
 
-def test_cancel_running_worker_promptly(workspace: Workspace) -> None:
-    """Cancellation must return while a real analysis is mid-flight.
+def test_cancel_running_worker_promptly(workspace: Workspace, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancellation must return while a worker's completion read is blocked.
 
     Regression for the review finding: _dispatch used to hold the state
     lock across the blocking pipe read, so cancel() blocked until the
     analysis finished. The pipe sever must interrupt the dispatch instead.
     """
+    import sys
     import threading
     import time as _time
 
     project = workspace.create("Cancel running")
-    workspace.import_document(project["id"], "input.txt", b"A test document." * 500)
+    workspace.import_document(project["id"], "input.txt", b"A test document.")
+    received = workspace.root / "worker-received"
+    # Real pipes and a real process, with no unrelated NLP imports. The marker
+    # proves a job reached the worker before cancellation, unlike RUNNING,
+    # which is set before the worker has even started.
+    code = (
+        "import sys, threading\nfrom pathlib import Path\n"
+        'print(\'{"event": "ready"}\', flush=True)\n'
+        "job = sys.stdin.readline()\n"
+        f"Path({str(received)!r}).write_text(job)\n"
+        "threading.Event().wait()\n"
+    )
+    monkeypatch.setattr("desktop_backend.runner.worker_command", lambda root: [sys.executable, "-u", "-c", code])
     runner = Runner(workspace)
     try:
         job = runner.submit(project["id"], "readability", {}, "spacy")
         # Let the dispatch thread reach its blocking readline.
-        deadline = _time.monotonic() + 60
+        deadline = _time.monotonic() + 10
         while _time.monotonic() < deadline:
-            if workspace.jobs(project["id"])[0]["state"] == "RUNNING":
+            if received.exists():
                 break
             _time.sleep(0.05)
         else:
-            raise AssertionError("job never reached RUNNING")
-
-        done = threading.Event()
+            raise AssertionError("worker never received the job")
 
         def do_cancel() -> None:
             runner.cancel(project["id"], job["id"])
-            done.set()
 
-        canceller = threading.Thread(target=do_cancel)
+        worker = runner._worker
+        assert worker is not None
+        canceller = threading.Thread(target=do_cancel, daemon=True)
         started = _time.monotonic()
         canceller.start()
-        canceller.join(timeout=120)
+        canceller.join(timeout=5)
         assert not canceller.is_alive(), "cancel() blocked behind the running analysis"
-        assert _time.monotonic() - started < 120
-        done.set()
-        deadline = _time.monotonic() + 30
-        while _time.monotonic() < deadline:
-            if workspace.jobs(project["id"])[0]["state"] == "CANCELLED":
-                break
-            _time.sleep(0.05)
+        assert _time.monotonic() - started < 5
         assert workspace.jobs(project["id"])[0]["state"] == "CANCELLED"
+        assert worker.poll() is not None, "cancelled worker was not reaped"
     finally:
+        # Even a locking regression must not strand the pool during teardown.
+        if runner._worker is not None and runner._worker.poll() is None:
+            runner._worker.kill()
         runner.close()
-    # A fresh worker can still serve the next submission after the sever.
-    project2 = workspace.create("After cancel")
-    workspace.import_document(project2["id"], "input.txt", b"Another document.")
-    runner2 = Runner(workspace)
-    try:
-        job2 = runner2.submit(project2["id"], "readability", {}, "spacy")
-        assert job2["state"] in ("QUEUED", "RUNNING")
-    finally:
-        runner2.close()
 
 
-def test_project_archive_roundtrip(client: TestClient, workspace: Workspace) -> None:
+def test_project_archive_roundtrip(client: TestClient, workspace: Workspace, monkeypatch: pytest.MonkeyPatch) -> None:
     project = workspace.create("Portable")
     workspace.import_document(project["id"], "speech.html", b"<p>Our words deserve a careful reading.</p>")
     runner = client.app.state.runner
+    monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
     job = runner.submit(project["id"], "readability", {}, "spacy")
-    runner.close()
+    assert run_job(workspace.root, job["id"]) == 0
     finished = workspace.jobs(project["id"])[0]
     assert finished["state"] == "DONE", finished
     archive = client.get(f"/api/projects/{project['id']}/backup")
@@ -302,13 +310,16 @@ def test_project_archive_roundtrip(client: TestClient, workspace: Workspace) -> 
     assert len(workspace.projects()) == 2
 
 
-def test_readout_markdown_is_viewable_inline(client: TestClient, workspace: Workspace) -> None:
+def test_readout_markdown_is_viewable_inline(
+    client: TestClient, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The plain-language reading ships with every run; the app must be able to show it."""
     project = workspace.create("Readout view")
     workspace.import_document(project["id"], "speech.txt", b"Our words deserve a careful reading.")
     runner = client.app.state.runner
+    monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
     job = runner.submit(project["id"], "readability", {}, "spacy")
-    runner.close()
+    assert run_job(workspace.root, job["id"]) == 0
     _, envelope = workspace.artifacts(project["id"], job["id"])
     index = next(i for i, a in enumerate(envelope.artifacts) if a.path == "readout.md")
     response = client.get(f"/api/projects/{project['id']}/jobs/{job['id']}/artifacts/{index}")
@@ -371,6 +382,123 @@ def test_restore_rejects_changed_payload(client: TestClient, workspace: Workspac
     assert len(workspace.projects()) == 1
 
 
+@pytest.mark.parametrize("damage", ["corrupt-deflate", "encrypted-flag", "created"])
+def test_restore_rejects_malformed_archives(client: TestClient, workspace: Workspace, damage: str) -> None:
+    project = workspace.create("Malformed")
+    workspace.import_document(project["id"], "text.txt", b"Text worth preserving.")
+    original = client.get(f"/api/projects/{project['id']}/backup").content
+    if damage == "created":
+        with zipfile.ZipFile(io.BytesIO(original)) as incoming:
+            members = {name: incoming.read(name) for name in incoming.namelist()}
+        manifest = json.loads(members["project.json"])
+        manifest["project"] = dict(manifest["project"], created={})
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as outgoing:
+            for name, payload in members.items():
+                outgoing.writestr(name, json.dumps(manifest) if name == "project.json" else payload)
+        content = buffer.getvalue()
+    elif damage == "corrupt-deflate":
+        buffer = io.BytesIO()
+        with (
+            zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as outgoing,
+            zipfile.ZipFile(io.BytesIO(original)) as incoming,
+        ):
+            for name in incoming.namelist():
+                outgoing.writestr(name, incoming.read(name))
+        data = bytearray(buffer.getvalue())
+        with zipfile.ZipFile(io.BytesIO(bytes(data))) as archive:
+            info = archive.getinfo("project.json")
+            offset = info.header_offset + 30 + len(info.filename) + len(info.extra)
+        for index in range(offset + 5, offset + 40):
+            data[index] ^= 0xFF
+        content = bytes(data)
+    else:
+        data = bytearray(original)
+        with zipfile.ZipFile(io.BytesIO(original)) as archive:
+            infos = archive.infolist()
+        for info in infos:
+            flags = struct.unpack_from("<H", data, info.header_offset + 6)[0]
+            struct.pack_into("<H", data, info.header_offset + 6, flags | 0x1)
+        central = data.find(b"PK\x01\x02")
+        while central != -1:
+            flags = struct.unpack_from("<H", data, central + 8)[0]
+            struct.pack_into("<H", data, central + 8, flags | 0x1)
+            central = data.find(b"PK\x01\x02", central + 4)
+        content = bytes(data)
+    before = workspace.projects()
+    response = client.post("/api/projects/restore", content=content)
+    assert response.status_code == 400, response.text
+    assert workspace.projects() == before
+
+
+def _question_payload(document_id: str, matching: dict[str, object] | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "name": "Public health",
+        "snapshot_id": "a" * 64,
+        "parser": "spacy",
+        "document_ids": [document_id],
+        "specification": {
+            "schema_version": 1,
+            "kind": "phrase_distribution",
+            "text": "public health",
+            "comparison_text": "private health",
+            "case_sensitive": False,
+            "position_bins": 10,
+            "evidence_year": 2020,
+            "evidence_document_id": document_id,
+        },
+    }
+    if matching is not None:
+        payload["matching"] = matching
+    return payload
+
+
+def test_restore_keeps_question_matching_rules(client: TestClient, workspace: Workspace) -> None:
+    from desktop_backend.archives import backup, restore
+
+    project = workspace.create("Questions")
+    document = workspace.import_document(project["id"], "text.txt", b"public health")
+    matching = {
+        "version": 1,
+        "tokenizer": "spacy",
+        "source": "saved",
+        "tokens": ["public", "health"],
+        "comparison_tokens": ["private", "health"],
+    }
+    saved = client.post(
+        f"/api/projects/{project['id']}/questions", json=_question_payload(str(document["id"]), matching)
+    )
+    assert saved.status_code == 200, saved.text
+    archive = workspace.root / "question-matching.nlpsuite"
+    backup(workspace, project["id"], archive)
+    restored = restore(workspace, archive)
+    assert workspace.questions(restored["id"])[0]["matching"] == matching
+
+
+def test_restore_defaults_question_matching_when_absent(client: TestClient, workspace: Workspace) -> None:
+    from desktop_backend.archives import restore
+    from desktop_backend.questions import MatchingProfile
+
+    project = workspace.create("Old questions")
+    document = workspace.import_document(project["id"], "text.txt", b"public health")
+    saved = client.post(f"/api/projects/{project['id']}/questions", json=_question_payload(str(document["id"])))
+    assert saved.status_code == 200, saved.text
+    original = client.get(f"/api/projects/{project['id']}/backup").content
+    with zipfile.ZipFile(io.BytesIO(original)) as incoming:
+        members = {name: incoming.read(name) for name in incoming.namelist()}
+    manifest = json.loads(members["project.json"])
+    for question in manifest["questions"]:
+        question.pop("matching", None)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as outgoing:
+        for name, payload in members.items():
+            outgoing.writestr(name, json.dumps(manifest) if name == "project.json" else payload)
+    archive = workspace.root / "question-default-matching.nlpsuite"
+    archive.write_bytes(buffer.getvalue())
+    restored = restore(workspace, archive)
+    assert workspace.questions(restored["id"])[0]["matching"] == MatchingProfile().model_dump()
+
+
 @pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
     return Workspace(tmp_path / "workspace")
@@ -388,6 +516,12 @@ def test_requires_authentication(client: TestClient) -> None:
     assert client.get("/api/projects", headers={"Origin": "https://evil.example"}).status_code == 403
     assert client.get("/api/projects", headers={"Host": "evil.example"}).status_code == 403
     assert client.get("/api/projects").status_code == 200
+
+
+def test_a_token_with_non_ascii_bytes_is_refused_not_a_server_error(client: TestClient) -> None:
+    """``compare_digest`` rejects non-ASCII text outright; that must read as a wrong token (401), not a 500."""
+    refused = client.get("/api/projects", headers={"Authorization": "Bearer café".encode("latin-1")})
+    assert refused.status_code == 401
 
 
 def test_project_persists_after_reopening(workspace: Workspace) -> None:
@@ -599,7 +733,7 @@ def test_result_search_reaches_rows_beyond_first_page(client: TestClient, worksp
     assert client.get(base + "?offset=-1").status_code == 422
 
 
-def test_desynced_worker_is_reaped_not_leaked(workspace: Workspace) -> None:
+def test_desynced_worker_is_reaped_not_leaked(workspace: Workspace, monkeypatch: pytest.MonkeyPatch) -> None:
     """Review finding S7: a worker emitting a malformed line must be stopped.
 
     The old code dropped the handle (self._worker = None) without
@@ -608,83 +742,69 @@ def test_desynced_worker_is_reaped_not_leaked(workspace: Workspace) -> None:
     through _stop_worker, so nothing survives.
     """
 
+    import subprocess
+    import sys
+
+    code = (
+        "import json, sys\nfrom pathlib import Path\n"
+        "from desktop_backend.store import Workspace\n"
+        "workspace = Workspace(Path(sys.argv[1]))\n"
+        "print(json.dumps({'event': 'ready'}), flush=True)\n"
+        "for line in sys.stdin:\n"
+        "    job = line.strip()\n"
+        "    if sys.argv[2] == 'bad':\n"
+        "        job = 'not-this-job'\n"
+        "    else:\n"
+        "        workspace.update_job(job, state='DONE', stage='Protocol test')\n"
+        "    print(json.dumps({'event': 'done', 'job': job, 'returncode': 0}), flush=True)\n"
+    )
+    broken = True
+    monkeypatch.setattr(
+        "desktop_backend.runner.worker_command",
+        lambda root: [sys.executable, "-u", "-c", code, str(root), "bad" if broken else "good"],
+    )
     project_id = workspace.create("Desync")["id"]
     workspace.import_document(project_id, "text.txt", b"Simple words for a simple read.")
     runner = Runner(workspace)
+    spawned: list[subprocess.Popen[str]] = []
+    original_spawn = runner._spawn_worker
+
+    def track_spawn() -> subprocess.Popen[str] | None:
+        worker = original_spawn()
+        if worker is not None:
+            spawned.append(worker)
+        return worker
+
+    monkeypatch.setattr(runner, "_spawn_worker", track_spawn)
     try:
         job = runner.submit(project_id, "readability", {}, "spacy")
-        deadline = time.monotonic() + 60
+        deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if workspace.jobs(project_id)[0]["state"] not in ("QUEUED", "RUNNING"):
                 break
             time.sleep(0.1)
-        assert workspace.jobs(project_id)[0]["state"] == "DONE"
-        # Simulate a desynchronized completion line: next dispatch reads a
-        # line that doesn't match its job and must reap the worker.
-        worker = runner._worker
-        assert worker is not None
-        pid = worker.pid
-
-        # Forge a bad line: close the real stdout and swap in a stub that
-        # returns garbage, mimicking a worker that emitted out-of-order JSON.
-        class FakeStdout:
-            def readline(self) -> str:
-                return '{"event": "done", "job": "not-this-job", "returncode": 0}\n'
-
-        runner._worker_busy = True
-        runner._worker_job_id = job["id"]
-        original_stdout = worker.stdout
-        fake_job = "desync" + "0" * 25
-        with workspace.connect() as db:
-            from desktop_backend.store import now
-
-            db.execute(
-                "INSERT INTO jobs (id, project_id, tool, state, stage, created, finished, run_dir, diagnostics, request) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (fake_job, project_id, "readability", "RUNNING", "Testing", now(), None, None, "[]", "{}"),
-            )
-        try:
-            worker.stdout = FakeStdout()  # type: ignore[assignment]
-            # _dispatch converts the desync into a FAILED job (the terminal
-            # state carries the diagnostic); it must not raise out.
-            runner._dispatch(fake_job)
-        finally:
-            worker.stdout = original_stdout  # type: ignore[assignment]
-            with contextlib.suppress(OSError, ValueError):
-                original_stdout.close()
-        states = {j["id"]: j["state"] for j in workspace.jobs(project_id)}
-        assert states[fake_job] == "FAILED"
-        # The stale worker must be gone: _stop_worker killed and reaped it.
+        assert workspace.jobs(project_id)[0]["state"] == "FAILED"
+        assert len(spawned) == 1
+        assert spawned[0].poll() is not None, "desynchronized worker was not reaped"
         assert runner._worker is None
-        assert worker.poll() is not None or not subprocess_run_alive(pid)
-    finally:
-        runner.close()
-    # The next submission spawns a fresh, working worker.
-    project2 = workspace.create("After desync")["id"]
-    workspace.import_document(project2, "text.txt", b"Another simple document.")
-    runner2 = Runner(workspace)
-    try:
-        runner2.submit(project2, "readability", {}, "spacy")
-        deadline = time.monotonic() + 60
+        # Recovery must happen on this same runner, not a fresh instance whose
+        # state says nothing about the failed dispatch.
+        broken = False
+        again = runner.submit(project_id, "readability", {}, "spacy")
+        deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            if workspace.jobs(project2)[0]["state"] not in ("QUEUED", "RUNNING"):
+            jobs = {item["id"]: item for item in workspace.jobs(project_id)}
+            if jobs[again["id"]]["state"] not in ("QUEUED", "RUNNING"):
                 break
             time.sleep(0.1)
-        assert workspace.jobs(project2)[0]["state"] == "DONE"
+        assert jobs[again["id"]]["state"] == "DONE"
+        assert jobs[job["id"]]["state"] == "FAILED"
+        assert len(spawned) == 2 and spawned[0].pid != spawned[1].pid
     finally:
-        runner2.close()
-
-
-def subprocess_run_alive(pid: int | None) -> bool:
-    if pid is None:
-        return False
-    import ctypes
-
-    handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
-    if not handle:
-        return False
-    ctypes.windll.kernel32.CloseHandle(handle)
-    return True
+        for worker in spawned:
+            if worker.poll() is None:
+                worker.kill()
+        runner.close()
 
 
 def test_insight_endpoint_reads_a_finished_run(
@@ -744,12 +864,13 @@ def test_setup_names_every_component_it_reports(client: TestClient) -> None:
     )
 
 
-def test_a_run_may_choose_either_parser(client: TestClient, workspace: Workspace) -> None:
+def test_a_run_may_choose_either_parser(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """The desktop sent parser="spacy" with every job and offered no choice.
 
     Both backends have always been accepted here, so a machine with a working
     Stanza install could not use it.
     """
+    monkeypatch.setattr(client.app.state.runner.pool, "submit", lambda *args: None)
     project = client.post("/api/projects", json={"name": "Parsers"}).json()
     client.post(
         f"/api/projects/{project['id']}/documents?name=a.txt",
@@ -768,7 +889,9 @@ def test_a_run_may_choose_either_parser(client: TestClient, workspace: Workspace
     assert refused.status_code == 400
 
 
-def test_two_runs_can_be_compared_in_one_click(client: TestClient) -> None:
+def test_two_runs_can_be_compared_in_one_click(
+    client: TestClient, workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The graded "which backend is better" questions, minus the spreadsheet.
 
     HW2 and HW5 ask which of two backends is better. Answering used to mean
@@ -776,6 +899,7 @@ def test_two_runs_can_be_compared_in_one_click(client: TestClient) -> None:
     one click over ``core.compare``. Two runs of one tool over one document
     are the control: they must agree, and the comparison must say so.
     """
+    monkeypatch.setattr(client.app.state.runner.pool, "submit", lambda *args: None)
     project_id = client.post("/api/projects", json={"name": "Compare"}).json()["id"]
     client.post(
         f"/api/projects/{project_id}/documents?name=text.txt",
@@ -786,13 +910,8 @@ def test_two_runs_can_be_compared_in_one_click(client: TestClient) -> None:
         response = client.post(f"/api/projects/{project_id}/jobs", json={"tool": "readability"})
         assert response.status_code == 200
         ids.append(response.json()["id"])
-    jobs: dict[str, dict] = {}
-    deadline = time.monotonic() + 80
-    while time.monotonic() < deadline:
-        jobs = {j["id"]: j for j in client.get(f"/api/projects/{project_id}/jobs").json()}
-        if all(jobs[i]["state"] not in ("RUNNING", "QUEUED") for i in ids):
-            break
-        time.sleep(0.1)
+        assert run_job(workspace.root, ids[-1]) == 0
+    jobs = {j["id"]: j for j in client.get(f"/api/projects/{project_id}/jobs").json()}
     assert [jobs[i]["state"] for i in ids] == ["DONE", "DONE"]
 
     compared = client.post(
@@ -814,3 +933,78 @@ def test_comparing_a_run_that_does_not_exist_says_why(client: TestClient) -> Non
     ).json()
     assert body["ok"] is False
     assert body["diagnostics"][0]["code"] == "COMPARE_NO_RUN"
+
+
+def test_wordcloud_write_failure_reports_the_writer_diagnostic(
+    workspace: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wordcloud whose HTML cannot be written fails with the writer's reason,
+    not with the (empty) diagnostics of the build that succeeded."""
+    from core.io.writer import OutputWriter
+    from core.result import Diagnostic, Result
+
+    source = tmp_path / "dataset.csv"
+    source.write_text("word,count\nfreedom,120\nliberty,95\n", encoding="utf-8")
+    project = workspace.create("Wordcloud write failure")
+    runner = Runner(workspace)
+    monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
+    job = runner.submit(
+        project["id"],
+        "table_wordcloud_gephi",
+        {"input": str(source), "mode": "wordcloud", "word-col": "word", "weight-col": "count", "image": False},
+        "spacy",
+    )
+    runner.close()
+
+    def refuse(self: OutputWriter, *args: object, **kwargs: object) -> Result[Path]:
+        return Result.failure(Diagnostic.error("WRITER_TEST_REFUSED", "disk full"))
+
+    monkeypatch.setattr(OutputWriter, "write_html", refuse)
+    assert run_job(workspace.root, job["id"]) == 1
+    failed = next(row for row in workspace.jobs(project["id"]) if row["id"] == job["id"])
+    assert failed["state"] == "FAILED"
+    assert any(d["code"] == "WRITER_TEST_REFUSED" for d in failed["diagnostics"])
+
+
+def test_a_trashed_project_takes_no_new_runs(workspace: Workspace) -> None:
+    """A run queued in Trash would recreate the project's folder and make it unrestorable."""
+    project = workspace.create("Trashed")
+    workspace.import_document(project["id"], "a.txt", b"Hello world. This is text.")
+    workspace.trash_project(project["id"], True)
+    runner = Runner(workspace)
+    try:
+        with pytest.raises(ValueError, match="from Trash before starting an analysis"):
+            runner.submit(project["id"], "text_statistics", {}, "spacy")
+    finally:
+        runner.close()
+    assert workspace.jobs(project["id"], include_trashed=True) == []
+    workspace.trash_project(project["id"], False)
+
+
+def test_a_changed_corpus_file_is_a_400_on_the_scripts_page(client: TestClient, workspace: Workspace) -> None:
+    """The notebook library refuses with a SuiteError; the page must get its words, not a 500."""
+    project = workspace.create("Scripts")
+    document = workspace.import_document(project["id"], "a.txt", b"Hello world. This is text.")
+    stored = workspace.project_dir(project["id"]) / "corpus" / str(document["stored_name"])
+    stored.write_bytes(b"Edited behind the app's back.")
+    response = client.get(f"/api/projects/{project['id']}/script-corpus")
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]
+
+
+def test_a_cleared_resource_field_submits_as_no_file(workspace: Workspace, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clearing a resource sends "", which used to be opened as the current directory and refused."""
+    project = workspace.create("Cleared")
+    workspace.import_document(project["id"], "a.txt", b"A test document. Another one.")
+    workspace.import_document(project["id"], "b.txt", b"A second document here.")
+    runner = Runner(workspace)
+    monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
+    try:
+        job = runner.submit(project["id"], "doc_similarity", {"stopwords": ""}, "spacy")
+    finally:
+        runner.close()
+    assert job["state"] == "QUEUED"
+    [stored] = workspace.jobs(project["id"])
+    request = json.loads(stored["request"]) if isinstance(stored["request"], str) else stored["request"]
+    assert request["params"]["doc_similarity"]["stopwords"] is None
+    assert request["resources"] == []

@@ -17,11 +17,13 @@ coordinate is.
 from __future__ import annotations
 
 import html as html_lib
+import math
 
 import pandas as pd
 
-from core.gis.mapping import _coords
+from core.gis.mapping import _coords, _weight
 from core.result import Diagnostic, Result
+from core.viz.panel_maps import PIN, add_plotly_land, svg_world
 
 __all__ = ["pinmap_html"]
 
@@ -35,7 +37,7 @@ def _radius(weight: float, max_weight: float) -> float:
     """Pin radius from a weight: heavier place, bigger pin (bounded)."""
     if max_weight <= 0:
         return _MIN_RADIUS
-    return _MIN_RADIUS + (_MAX_RADIUS - _MIN_RADIUS) * (weight / max_weight)
+    return max(_MIN_RADIUS, _MAX_RADIUS * math.sqrt(weight / max_weight))
 
 
 def pinmap_html(  # noqa: PLR0913, PLR0911 -- column names plus weight/title, and one named return per failure mode
@@ -63,12 +65,7 @@ def pinmap_html(  # noqa: PLR0913, PLR0911 -- column names plus weight/title, an
             continue
         lat, lon = pair
         name = str(row[name_col]) if name_col in frame.columns else f"{lat},{lon}"
-        weight = 1.0
-        if weight_col and weight_col in frame.columns:
-            try:
-                weight = max(float(row[weight_col]), 0.0)
-            except (TypeError, ValueError):
-                weight = 1.0
+        weight = _weight(row.get(weight_col, 1) if weight_col else 1)
         points.append((lat, lon, name, weight))
     if not points:
         return Result.failure(Diagnostic.error("PINS_NO_COORDS", "no valid coordinates"))
@@ -80,7 +77,7 @@ def pinmap_html(  # noqa: PLR0913, PLR0911 -- column names plus weight/title, an
         diags.append(
             Diagnostic.warning(
                 "PINS_SKIPPED_ROWS",
-                f"{skipped} row(s) had missing or out-of-range coordinates and were skipped",
+                f"{skipped} row(s) were unresolved or had invalid coordinates and were skipped",
                 count=skipped,
             )
         )
@@ -89,21 +86,35 @@ def pinmap_html(  # noqa: PLR0913, PLR0911 -- column names plus weight/title, an
         import plotly.graph_objects as go  # noqa: PLC0415 -- plotly is an optional viz backend
 
         max_weight = max((weight for *_, weight in points), default=1.0) or 1.0
-        figure = go.Figure(
-            go.Scattergeo(
-                lat=[lat for lat, _, _, _ in points],
-                lon=[lon for _, lon, _, _ in points],
-                text=[name for _, _, name, _ in points],
+        figure = go.Figure()
+        add_plotly_land(figure)
+        figure.add_trace(
+            go.Scatter(
+                y=[lat for lat, _, _, _ in points],
+                x=[lon for _, lon, _, _ in points],
+                text=[html_lib.escape(name) for _, _, name, _ in points],
+                hovertemplate="%{text}<br>%{y:.2f}°, %{x:.2f}°<extra></extra>",
                 mode="markers",
                 marker={
                     "size": [_radius(weight, max_weight) * 2.2 for *_, weight in points],
-                    "color": "#1f77b4",
-                    "opacity": 0.75,
+                    "color": PIN,
+                    "opacity": 0.83,
+                    "line": {"color": "white", "width": 1},
                 },
+                showlegend=False,
             )
         )
-        figure.update_layout(title_text=title or "Pin map", font_size=11, margin={"l": 0, "r": 0, "t": 40, "b": 0})
-        return Result.success(figure.to_html(full_html=False, include_plotlyjs="cdn"), *diags)
+        figure.update_layout(
+            template="plotly_white",
+            title_text=html_lib.escape(title or "Pin map"),
+            font_size=11,
+            height=540,
+            margin={"l": 38, "r": 30, "t": 55, "b": 50},
+        )
+        return Result.success(
+            figure.to_html(full_html=False, include_plotlyjs=True) + "<p>Land outlines: Natural Earth.</p>",
+            *diags,
+        )
     except ImportError:
         pass
     except Exception as exc:
@@ -126,7 +137,7 @@ def pinmap_html(  # noqa: PLR0913, PLR0911 -- column names plus weight/title, an
 
 def _svg_html(points: list[tuple[float, float, str, float]], title: str) -> str:
     """Equirectangular SVG scatter — same points the chart would show."""
-    title_html = f"<h3>{html_lib.escape(title)}</h3>" if title else "<h3>Pin map</h3>"
+    safe_title = html_lib.escape(title or "Pin map")
     max_weight = max((weight for *_, weight in points), default=1.0) or 1.0
     circles: list[str] = []
     for lat, lon, name, weight in points:
@@ -134,13 +145,8 @@ def _svg_html(points: list[tuple[float, float, str, float]], title: str) -> str:
         y = (90.0 - lat) / 180.0 * _HEIGHT
         radius = _radius(weight, max_weight)
         circles.append(
-            f"<circle cx='{x:.1f}' cy='{y:.1f}' r='{radius:.1f}' fill='#1f77b4' fill-opacity='0.75'>"
+            f"<circle cx='{x:.1f}' cy='{y:.1f}' r='{radius:.1f}' fill='{PIN}' fill-opacity='0.83' tabindex='0'>"
             f"<title>{html_lib.escape(name)}</title></circle>"
         )
-    return (
-        f"{title_html}"
-        f"<svg width='100%' viewBox='0 0 {_WIDTH} {_HEIGHT}' xmlns='http://www.w3.org/2000/svg' role='img'>"
-        f"<rect x='0' y='0' width='{_WIDTH}' height='{_HEIGHT}' fill='#e8f1f8' stroke='#99a'/>"
-        + "".join(circles)
-        + "</svg>"
-    )
+    marks = f"<g transform='translate(-180 -90) scale({360 / _WIDTH})'>{''.join(circles)}</g>"
+    return f"<h3>{safe_title}</h3>{svg_world(marks, safe_title)}<p>Land outlines: Natural Earth.</p>"

@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 import pytest
@@ -111,6 +112,18 @@ def test_a_chapter_is_not_split_again(book: tuple[Workspace, str, dict[str, obje
         public_plan(workspace, project_id, str(made[0]["id"]), SplitBody())
 
 
+def test_splitting_the_same_book_twice_is_refused_plainly(book: tuple[Workspace, str, dict[str, object]]) -> None:
+    workspace, project_id, document = book
+    split_document(workspace, project_id, str(document["id"]), SplitBody(keep_whole=True))
+    corpus = workspace.project_dir(project_id) / "corpus"
+    files_before = sorted(path.name for path in corpus.iterdir())
+    count_before = len(workspace.documents(project_id))
+    with pytest.raises(ValueError, match="already in the project"):
+        split_document(workspace, project_id, str(document["id"]), SplitBody(keep_whole=True))
+    assert len(workspace.documents(project_id)) == count_before
+    assert sorted(path.name for path in corpus.iterdir()) == files_before
+
+
 def test_purging_the_book_keeps_each_chapters_record(book: tuple[Workspace, str, dict[str, object]]) -> None:
     workspace, project_id, document = book
     made = split_document(workspace, project_id, str(document["id"]), SplitBody())
@@ -153,3 +166,59 @@ def test_the_routes_preview_then_apply(book: tuple[Workspace, str, dict[str, obj
     assert base64.b64encode((BOOKS / "two_books.txt").read_bytes()) == base64.b64encode(
         (workspace.project_dir(project_id) / "corpus" / str(document["stored_name"])).read_bytes()
     )
+
+
+def test_a_write_that_fails_half_way_leaves_no_partial_file(
+    book: tuple[Workspace, str, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, project_id, document = book
+    corpus = workspace.project_dir(project_id) / "corpus"
+    files_before = sorted(path.name for path in corpus.iterdir())
+    real_open = Path.open
+    opened = {"sections": 0}
+
+    class FullDisk:
+        """The third section's file is created, then its write fails."""
+
+        def __init__(self, handle: Any) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> FullDisk:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._handle.close()
+
+        def write(self, data: bytes) -> int:
+            self._handle.write(data[:10])
+            raise OSError(28, "No space left on device")
+
+    def open_(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        handle = real_open(self, mode, *args, **kwargs)
+        if mode == "xb":
+            opened["sections"] += 1
+            if opened["sections"] == 3:
+                return FullDisk(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", open_)
+    with pytest.raises(OSError, match="No space"):
+        split_document(workspace, project_id, str(document["id"]), SplitBody())
+    monkeypatch.undo()
+    assert sorted(path.name for path in corpus.iterdir()) == files_before
+    assert len(workspace.documents(project_id)) == 1
+
+
+def test_a_split_that_would_pass_the_detail_cap_is_refused(book: tuple[Workspace, str, dict[str, object]]) -> None:
+    """Past the cap every later detail edit is refused, so the split must not be the way past it."""
+    from desktop_backend.fields import MAX_FIELDS_PER_PROJECT, FieldRow, set_fields
+
+    workspace, project_id, document = book
+    rows = [
+        FieldRow(document_id=str(document["id"]), name=f"Note {i}", value="x") for i in range(MAX_FIELDS_PER_PROJECT)
+    ]
+    set_fields(workspace, project_id, rows)
+    count_before = len(workspace.documents(project_id))
+    with pytest.raises(ValueError, match="at most"):
+        split_document(workspace, project_id, str(document["id"]), SplitBody(keep_whole=True))
+    assert len(workspace.documents(project_id)) == count_before

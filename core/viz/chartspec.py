@@ -105,6 +105,7 @@ ChartKind = Literal[
     "calendar",
     "bubble",
     "sankey",
+    "ecdf",
 ]
 AggFunc = Literal["sum", "mean", "median", "count"]
 Normalize = Literal["none", "percent", "share"]
@@ -133,6 +134,7 @@ CHART_KINDS: tuple[str, ...] = (
     # tool (core/viz/shapes.py), reachable from no chart surface; as a kind it
     # is drawn by the same ChartSpec pipeline as every other chart.
     "sankey",
+    "ecdf",
 )
 # Kinds that draw one mark per input row rather than one per x category.
 # They reject ``agg`` outright, and they must also be exempt from the
@@ -141,6 +143,7 @@ CHART_KINDS: tuple[str, ...] = (
 # exactly what happened to ``bubble``: it was added to the rejection list but
 # left out of the dispatch below, so it fell through to the bar/line path.
 _OBSERVATION_KINDS: tuple[str, ...] = ("scatter", "box", "violin", "bubble")
+_DISTRIBUTION_KINDS: tuple[str, ...] = ("histogram", "ecdf")
 # Kinds whose x must be real calendar dates, not date-shaped text.
 _DATE_AXIS_KINDS: tuple[str, ...] = ("calendar",)
 # Kinds whose x is a hierarchical categorical path (one or two levels).
@@ -253,6 +256,8 @@ class PreparedChart:
     * scatter/box: one row per observation, same three columns
     * histogram: ``bin_center``, ``bin_left``, ``bin_right``, ``bin_width``,
       ``count``, ``group``
+    * ecdf: measure ``x``, ``group``, cumulative percent ``y``,
+      exact-value ``frequency`` and cumulative count ``n``
     * rate-scaled bar/line additionally carries ``denominator`` (the
       aggregated per-cell denominator totals) so rates are independently
       auditable from the CSV alone.
@@ -329,7 +334,7 @@ def _check_missing_axis_values(frame: pd.DataFrame, spec: ChartSpec) -> list[Dia
     columns: list[str] = []
     if spec.group is not None:
         columns.append(spec.group)
-    if spec.kind != "histogram":
+    if spec.kind not in _DISTRIBUTION_KINDS:
         columns.append(spec.x)
     for column in columns:
         mask = frame[column].isna()
@@ -433,15 +438,15 @@ def _resolve_semantics(spec: ChartSpec) -> list[Diagnostic]:
                 "for grouped summaries.",
             )
         )
-    if spec.agg is not None and kind == "histogram":
+    if spec.agg is not None and kind in _DISTRIBUTION_KINDS:
         diags.append(
             _unsupported(
                 "agg",
                 kind,
-                "--agg is not valid for a histogram: bins count observations directly; aggregation is undefined.",
+                f"--agg is not valid for {kind}: the distribution counts individual observations.",
             )
         )
-    if spec.normalize != "none" and kind in (*_OBSERVATION_KINDS, "heatmap", "radar", "calendar"):
+    if spec.normalize != "none" and kind in (*_OBSERVATION_KINDS, "heatmap", "radar", "calendar", "ecdf"):
         diags.append(
             _unsupported(
                 "normalize",
@@ -483,7 +488,7 @@ def _resolve_semantics(spec: ChartSpec) -> list[Diagnostic]:
                 "aggregated bar/line cells.",
             )
         )
-    if kind in ("pie", "sunburst", "treemap", "radar", "sankey") and spec.bins is not None:
+    if kind in ("pie", "sunburst", "treemap", "radar", "sankey", "ecdf") and spec.bins is not None:
         diags.append(_unsupported("bins", kind, f"--bins is only valid for histograms, not {kind}."))
     if kind == "sankey" and spec.normalize != "none":
         diags.append(
@@ -507,7 +512,7 @@ def _resolve_semantics(spec: ChartSpec) -> list[Diagnostic]:
                 "over the whole-chart observation total; pass --scale-by total or none.",
             )
         )
-    if kind in (*_OBSERVATION_KINDS, "calendar") and spec.scale_by != "total":
+    if kind in (*_OBSERVATION_KINDS, "calendar", "ecdf") and spec.scale_by != "total":
         diags.append(
             _unsupported(
                 "scale-by",
@@ -525,7 +530,7 @@ def _resolve_semantics(spec: ChartSpec) -> list[Diagnostic]:
             )
         )
     rates_requested = spec.rate_per is not None or spec.denominator_column is not None
-    if rates_requested and kind in (*_OBSERVATION_KINDS, "heatmap", "histogram", "radar", "calendar"):
+    if rates_requested and kind in (*_OBSERVATION_KINDS, *_DISTRIBUTION_KINDS, "heatmap", "radar", "calendar"):
         diags.append(
             _unsupported(
                 "rate",
@@ -690,7 +695,7 @@ def _prepare_chart(
             # ignored category selector, if any was passed at all) — the
             # prepared label names what the axis actually shows. Explicit
             # overrides still win over everything.
-            x_label=spec.x_label or (str(spec.y) if spec.kind == "histogram" else str(spec.x)),
+            x_label=spec.x_label or (str(spec.y) if spec.kind in _DISTRIBUTION_KINDS else str(spec.x)),
             y_label=spec.y_label or y_label,
             spec=spec,
         )
@@ -776,6 +781,8 @@ def _record_selection(prepared_by: dict[str, str], spec: ChartSpec, stage: str) 
 
 
 def _layout_name(spec: ChartSpec) -> str:
+    if spec.kind == "ecdf":
+        return "cumulative"
     if spec.kind == "histogram":
         return "bins"
     if spec.kind == "heatmap":
@@ -819,6 +826,14 @@ def _prepare_by_kind(
         # axis entirely, so the rendered x axis is named by the VALUE column
         # (spec.y), never by the ignored category column.
         return _prepare_histogram(data[["y", "group"]].copy(), spec, prepared_by)
+    if spec.kind == "ecdf":
+        counts = data.groupby(["group", "y"], sort=True).size().rename("frequency").reset_index()
+        counts = counts.rename(columns={"y": "x"})
+        grouped = counts.groupby("group", sort=False)["frequency"]
+        counts["n"] = grouped.cumsum()
+        counts["y"] = counts["n"] / grouped.transform("sum") * 100
+        prepared_by["distribution"] = "per-group percentage of observations at or below x"
+        return Result.success((counts[["x", "group", "y", "frequency", "n"]], "At or below (%)"))
     if spec.kind in _OBSERVATION_KINDS:
         return Result.success((data[["x", "group", "y"]].copy(), spec.y))
     if spec.kind == "heatmap":
@@ -993,7 +1008,7 @@ def _prepare_calendar(
 
     Requires datetime x (``CHART_NOT_DATETIME`` otherwise) and aggregation
     for duplicate dates; y is the cell measure. The renderer draws a
-    month-by-(weekday) matrix per year.
+    month-by-day-of-month matrix.
     """
     x = data["x"]
     if not pd.api.types.is_datetime64_any_dtype(x):
@@ -1005,7 +1020,8 @@ def _prepare_calendar(
                 kind="calendar",
             )
         )
-    result = _aggregate_or_refuse(data, ["x"], spec, "calendar")
+    days = data.assign(x=x.dt.normalize())
+    result = _aggregate_or_refuse(days, ["x"], spec, "calendar")
     if result.value is None:
         return Result[tuple[pd.DataFrame, str]](None, result.diagnostics)
     prepared_by["calendar_span"] = f"{x.min():%Y-%m-%d}..{x.max():%Y-%m-%d}"

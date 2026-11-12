@@ -1,4 +1,4 @@
-"""Figures for doc_embeddings: documents by meaning.
+"""Figures for document_embeddings: documents by meaning.
 
 The similarity heatmap and neighbour network are Document similarity's own
 figures read from a table in the same shape (``doc_pairs.csv``), retitled
@@ -197,10 +197,10 @@ def _search(frame: pd.DataFrame, params: Mapping[str, Any], provenance: Provenan
 
 
 DOC_EMBEDDINGS_HEATMAP = PanelDefinition(
-    name="doc_embeddings_heatmap",
+    name="document_embeddings_heatmap",
     title="Documents by meaning (heatmap)",
     question="Which documents mean most alike, whatever words they use?",
-    tool="doc_embeddings",
+    tool="document_embeddings",
     shape="heatmap",
     summary="Document x document cosine similarity of sentence-model vectors, ordered by date.",
     requires=(DOC_A, DOC_B, SIMILARITY, BAND),
@@ -210,10 +210,10 @@ DOC_EMBEDDINGS_HEATMAP = PanelDefinition(
 )
 
 DOC_EMBEDDINGS_NEIGHBOURS = PanelDefinition(
-    name="doc_embeddings_neighbours",
+    name="document_embeddings_neighbours",
     title="Nearest documents by meaning",
     question="Which documents sit together by meaning, and do eras or speakers stand out?",
-    tool="doc_embeddings",
+    tool="document_embeddings",
     shape="network",
     summary="Each document linked to its nearest by meaning, grouped by decade or speaker.",
     requires=(DOC_A, DOC_B, SIMILARITY),
@@ -223,10 +223,10 @@ DOC_EMBEDDINGS_NEIGHBOURS = PanelDefinition(
 )
 
 DOC_EMBEDDINGS_MAP = PanelDefinition(
-    name="doc_embeddings_map",
+    name="document_embeddings_map",
     title="Map of the corpus by meaning",
     question="Which documents form neighbourhoods of meaning, and which stand apart?",
-    tool="doc_embeddings",
+    tool="document_embeddings",
     shape="scatter_labelled",
     summary="Documents placed by their sentence-model vectors, coloured by k-means cluster.",
     requires=(DOCUMENT, X, Y, CLUSTER),
@@ -246,10 +246,10 @@ DOC_EMBEDDINGS_MAP = PanelDefinition(
 )
 
 DOC_EMBEDDINGS_SEARCH = PanelDefinition(
-    name="doc_embeddings_search",
+    name="document_embeddings_search",
     title="Semantic search results",
     question="Which sentences in the corpus are closest in meaning to my query?",
-    tool="doc_embeddings",
+    tool="document_embeddings",
     shape="ranked_bars",
     summary="The sentences nearest the query in meaning, best first.",
     requires=(DOCUMENT, SENTENCE, COSINE, RANK),

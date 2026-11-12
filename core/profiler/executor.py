@@ -23,7 +23,6 @@ import pandas as pd
 
 from core.analysis import word_meaning
 from core.analysis.bert_extract import summarize as summarize_bert
-from core.analysis.bert_topics import bert_topics
 from core.analysis.clause_svo import clause_frequencies, extract_svo
 from core.analysis.collocations import collocations as collocation_measures
 from core.analysis.conll_wordlist import run as wordlist
@@ -33,6 +32,8 @@ from core.analysis.corpus_statistics import run as corpus_statistics
 from core.analysis.dispersion import dispersion as dispersion_measures
 from core.analysis.doc_duplicates import exact_groups, fuzzy_pairs, normalized_groups
 from core.analysis.doc_similarity import find_duplicates, pairwise_similarity
+from core.analysis.emotion_nrc import emotions
+from core.analysis.happiness_hedonometer import hedonometer
 from core.analysis.k_sentences import run as k_sentences
 from core.analysis.keyness import detail_groups, keyness as keyness_scores
 from core.analysis.knowledge_graph import build as kg_build
@@ -49,19 +50,20 @@ from core.analysis.nominalization import (
     load_curated_words,
     sentence_frequency,
 )
-from core.analysis.nrc import emotions
+from core.analysis.polarity_sentiwordnet import sentiwordnet
+from core.analysis.polarity_vader import load_vader_analyzer, vader_documents, vader_sentences
 from core.analysis.readability import run as run_readability
-from core.analysis.semantic import aggregate as semantic_tags
+from core.analysis.semantic_classes import aggregate as semantic_classes_tags
 from core.analysis.sentence_complexity import run as run_complexity
-from core.analysis.sentiment_swn_hedono import hedonometer, sentiwordnet
-from core.analysis.sentiment_vader_anew import anew, load_vader_analyzer, vader, vader_sentences
 from core.analysis.spellcheck import load_wordlist, run as run_spellcheck
 from core.analysis.style import concreteness, iconic_words, iconicity
 from core.analysis.svo_compare import compare as svo_compare
 from core.analysis.table_search import SearchFilter, search as table_search
 from core.analysis.text_statistics import run as text_statistics
 from core.analysis.tfidf import tfidf as tfidf_terms
+from core.analysis.topic_clusters_bert import topic_clusters_bert
 from core.analysis.topic_stability import topic_stability
+from core.analysis.valence_anew import anew
 from core.analysis.word_embeddings import project_tsne, train as train_w2v
 from core.conll.schema import Col
 from core.corpus_axis import Axis, axis_of
@@ -657,7 +659,7 @@ def _adapt_lda_stability(ctx: BatchContext, params: dict[str, object]) -> Result
 
 def _adapt_word_embeddings(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("word2vec_gensim", "table")
+        return _missing_input("word_vectors_gensim", "table")
     field = Col.FORM if params.get("field", "lemma") == "form" else Col.LEMMA
     trained = train_w2v(
         ctx.table,
@@ -719,54 +721,59 @@ def _adapt_word_embeddings(ctx: BatchContext, params: dict[str, object]) -> Resu
     return Result.success(frames, *diags)
 
 
-def _adapt_sentiment_vader_anew(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_polarity_vader(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("sentiment_vader_anew", "table")
+        return _missing_input("polarity_vader", "table")
     field = Col.FORM if params.get("field", "form") == "form" else Col.LEMMA
-    anew_field = Col.FORM if params.get("anew-field", "lemma") == "form" else Col.LEMMA
     loaded = load_vader_analyzer(_lexicon_param(params, "vader-lexicon"))
     if not loaded.ok:
         return Result.failure(*loaded.diagnostics)
-    docs = vader(ctx.table, field=field, analyzer=loaded.unwrap())
-    if docs.value is None:
-        return Result.failure(*docs.diagnostics)
+    # Sentences are scored once; the per-document table is their mean.
     sents = vader_sentences(ctx.table, field=field, analyzer=loaded.unwrap())
     if sents.value is None:
         return Result.failure(*sents.diagnostics)
-    frames = {"vader.csv": docs.unwrap(), "vader_sentences.csv": sents.unwrap()}
-    diagnostics = [*docs.diagnostics, *sents.diagnostics, *loaded.diagnostics]
-    if params.get("analysis") != "vader":
-        anew_result = anew(ctx.table, field=anew_field, lexicon=_lexicon_param(params, "anew-lexicon"))
-        if anew_result.value is None:
-            return Result.failure(*anew_result.diagnostics)
-        frames["anew.csv"] = anew_result.unwrap()
-        diagnostics.extend(anew_result.diagnostics)
-    return Result.success(frames, *diagnostics)
+    frames = {"vader.csv": vader_documents(sents.unwrap()), "vader_sentences.csv": sents.unwrap()}
+    return Result.success(frames, *sents.diagnostics, *loaded.diagnostics)
 
 
-def _adapt_sentiment_swn_hedono(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_valence_anew(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("sentiment_swn_hedono", "table")
+        return _missing_input("valence_anew", "table")
+    anew_field = Col.FORM if params.get("anew-field", "lemma") == "form" else Col.LEMMA
+    anew_result = anew(ctx.table, field=anew_field, lexicon=_lexicon_param(params, "anew-lexicon"))
+    if anew_result.value is None:
+        return Result.failure(*anew_result.diagnostics)
+    return Result.success({"anew.csv": anew_result.unwrap()}, *anew_result.diagnostics)
+
+
+def _adapt_polarity_sentiwordnet(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+    if ctx.table is None:
+        return _missing_input("polarity_sentiwordnet", "table")
     field = Col.FORM if params.get("field", "lemma") == "form" else Col.LEMMA
     swn = sentiwordnet(ctx.table, field=field)
     if swn.value is None:
         return Result.failure(*swn.diagnostics)
+    return Result.success({"swn.csv": swn.unwrap()}, *swn.diagnostics)
+
+
+def _adapt_happiness_hedonometer(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+    if ctx.table is None:
+        return _missing_input("happiness_hedonometer", "table")
+    field = Col.FORM if params.get("field", "lemma") == "form" else Col.LEMMA
     hedo = hedonometer(ctx.table, field=field, lexicon=_lexicon_param(params, "hedonometer-lexicon"))
     if hedo.value is None:
         return Result.failure(*hedo.diagnostics)
-    return Result.success(
-        {"swn.csv": swn.unwrap(), "hedonometer.csv": hedo.unwrap()}, *swn.diagnostics, *hedo.diagnostics
-    )
+    return Result.success({"hedonometer.csv": hedo.unwrap()}, *hedo.diagnostics)
 
 
 def _adapt_nrc(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("nrc", "table")
+        return _missing_input("emotion_nrc", "table")
     field = Col.FORM if params.get("field", "lemma") == "form" else Col.LEMMA
     result = emotions(ctx.table, field=field, lexicon=_lexicon_param(params, "lexicon"))
     if result.value is None:
         return Result.failure(*result.diagnostics)
-    return Result.success({"nrc.csv": result.unwrap()}, *result.diagnostics)
+    return Result.success({"emotion_nrc.csv": result.unwrap()}, *result.diagnostics)
 
 
 def _adapt_nominalization(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
@@ -834,9 +841,9 @@ def _adapt_coreference(ctx: BatchContext, params: dict[str, object]) -> Result[d
     return Result.success({"coreference.csv": result.unwrap()}, *result.diagnostics)
 
 
-def _adapt_narrative(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_narrative_arc(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("narrative", "table")
+        return _missing_input("narrative_arc", "table")
     field = Col.FORM if params.get("field", "form") == "form" else Col.LEMMA
     scored = emotion_arc(ctx.table, field=field)
     if scored.value is None:
@@ -866,7 +873,7 @@ def _adapt_narrative(ctx: BatchContext, params: dict[str, object]) -> Result[dic
 
 def _adapt_contextual(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("word_sense_induction", "table")
+        return _missing_input("word_senses_bert", "table")
     field = Col.FORM if params.get("field", "form") == "form" else Col.LEMMA
     model = params.get("model", "bert-base-uncased")
     if not isinstance(model, str):
@@ -1286,14 +1293,14 @@ def _adapt_table_search(ctx: BatchContext, params: dict[str, object]) -> Result[
     return Result.success({"search_results.csv": result.unwrap().frame}, *result.diagnostics)
 
 
-def _adapt_semantic(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_semantic_classes(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("semantic", "table")
+        return _missing_input("semantic_classes", "table")
     field = Col.FORM if params.get("field", "lemma") == "form" else Col.LEMMA
-    result = semantic_tags(ctx.table, field=field)
+    result = semantic_classes_tags(ctx.table, field=field)
     if result.value is None:
         return Result.failure(*result.diagnostics)
-    return Result.success({"semantic_tags.csv": result.unwrap()}, *result.diagnostics)
+    return Result.success({"semantic_classes_tags.csv": result.unwrap()}, *result.diagnostics)
 
 
 def _adapt_knowledge_graph(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
@@ -1508,13 +1515,13 @@ def _adapt_lexicon_series(ctx: BatchContext, params: dict[str, object]) -> Resul
     return Result.success({"lexicon_series.csv": result.unwrap()}, *labels.diagnostics, *result.diagnostics)
 
 
-def _adapt_bert_topics(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_topic_clusters_bert(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     if ctx.table is None:
-        return _missing_input("bert_topics", "table")
+        return _missing_input("topic_clusters_bert", "table")
     model = params.get("model", "bert-base-uncased")
     if not isinstance(model, str):
         raise TypeError(f"param 'model' must be str, got {model!r}")
-    result = bert_topics(
+    result = topic_clusters_bert(
         ctx.table,
         n_topics=_int(params, "topics", 3),
         top_n=_int(params, "top-n", 5),
@@ -1525,7 +1532,7 @@ def _adapt_bert_topics(ctx: BatchContext, params: dict[str, object]) -> Result[d
         return Result.failure(*result.diagnostics)
     topics, documents = result.unwrap()
     return Result.success(
-        {"bert_topics.csv": topics, "bert_topic_docs.csv": documents},
+        {"topic_clusters_bert.csv": topics, "bert_topic_docs.csv": documents},
         *result.diagnostics,
     )
 
@@ -1735,29 +1742,29 @@ def _adapt_ngram_viewer(ctx: BatchContext, params: dict[str, object]) -> Result[
     )
 
 
-def _adapt_sentiment_neural_bert(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_polarity_distilbert_sst2(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.sentiment_neural import bert_sentences
 
     if ctx.table is None:
-        return _missing_input("sentiment_neural_bert", "table")
+        return _missing_input("polarity_distilbert_sst2", "table")
     result = bert_sentences(ctx.table, model=_str(params, "model", "distilbert-sst2"))
     return _neural_sentiment_frames(result)
 
 
-def _adapt_sentiment_neural_spacy(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_polarity_spacy(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.sentiment_neural import spacy_sentences
 
     if ctx.table is None:
-        return _missing_input("sentiment_neural_spacy", "table")
+        return _missing_input("polarity_spacy", "table")
     result = spacy_sentences(ctx.table, model=_str(params, "model", "en_core_web_sm"))
     return _neural_sentiment_frames(result)
 
 
-def _adapt_sentiment_neural_stanza(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_polarity_stanza(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.sentiment_neural import stanza_sentences
 
     if ctx.table is None:
-        return _missing_input("sentiment_neural_stanza", "table")
+        return _missing_input("polarity_stanza", "table")
     result = stanza_sentences(ctx.table, language=_str(params, "language", "en"))
     return _neural_sentiment_frames(result)
 
@@ -1779,11 +1786,11 @@ def _neural_sentiment_frames(result: Result[pd.DataFrame]) -> Result[dict[str, p
     )
 
 
-def _adapt_sentiment_neural_corenlp(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_polarity_corenlp(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.sentiment_neural import corenlp_sentences
 
     if ctx.corpus is None:
-        return _missing_input("sentiment_neural_corenlp", "corpus")
+        return _missing_input("polarity_corenlp", "corpus")
     names = display_names(ctx.corpus.docs)
     docs = [(str(doc.doc_id), names[doc.doc_id], doc.text) for doc in ctx.corpus.docs]
     result = corenlp_sentences(docs, server_url=_str(params, "server", "http://localhost:9000"))
@@ -1839,11 +1846,11 @@ def _named_shapes(
     return Result.success(frames, *result.diagnostics)
 
 
-def _adapt_shape_hc(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_story_shape_hc(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.shape_reduction import hierarchical_cluster
     from core.viz.shape_reduction import dendrogram_html
 
-    prepared = _shape_frames(ctx, params, "shape_hc")
+    prepared = _shape_frames(ctx, params, "story_shape_hc")
     if prepared.value is None:
         return Result.failure(*prepared.diagnostics)
     shape, matrix_table = prepared.unwrap()
@@ -1855,22 +1862,22 @@ def _adapt_shape_hc(ctx: BatchContext, params: dict[str, object]) -> Result[dict
     result = clustered.unwrap()
     frames: dict[str, pd.DataFrame] = {
         "shape_matrix.csv": matrix_table,
-        "shape_hc_assignments.csv": result.assignments,
-        "shape_hc_merges.csv": result.merges,
+        "story_shape_hc_assignments.csv": result.assignments,
+        "story_shape_hc_merges.csv": result.merges,
     }
     chart = dendrogram_html(result, title="Story shapes: hierarchical clustering")
     if chart.value is not None:
-        frames["shape_hc_dendrogram.html"] = pd.DataFrame({"html": [chart.unwrap()]})
+        frames["story_shape_hc_dendrogram.html"] = pd.DataFrame({"html": [chart.unwrap()]})
     return _named_shapes(
         Result.success(frames, *prepared.diagnostics, *clustered.diagnostics, *chart.diagnostics), ctx.table
     )
 
 
-def _adapt_shape_svd(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_story_shape_svd(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.shape_reduction import svd_reduce
     from core.viz.shape_reduction import components_html
 
-    prepared = _shape_frames(ctx, params, "shape_svd")
+    prepared = _shape_frames(ctx, params, "story_shape_svd")
     if prepared.value is None:
         return Result.failure(*prepared.diagnostics)
     shape, matrix_table = prepared.unwrap()
@@ -1880,11 +1887,11 @@ def _adapt_shape_svd(ctx: BatchContext, params: dict[str, object]) -> Result[dic
     )
 
 
-def _adapt_shape_nmf(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+def _adapt_story_shape_nmf(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
     from core.analysis.shape_reduction import nmf_reduce
     from core.viz.shape_reduction import components_html
 
-    prepared = _shape_frames(ctx, params, "shape_nmf")
+    prepared = _shape_frames(ctx, params, "story_shape_nmf")
     if prepared.value is None:
         return Result.failure(*prepared.diagnostics)
     shape, matrix_table = prepared.unwrap()
@@ -1911,16 +1918,18 @@ def _reduction_frames(
     if reduced.value is None:
         return Result.failure(*prior, *reduced.diagnostics)
     result = reduced.unwrap()
+    # Named as the registry and the CLI name them (story_shape_<method>_...);
+    # the tool rename left these on the old "shape_" prefix.
     frames: dict[str, pd.DataFrame] = {
         "shape_matrix.csv": matrix_table,
-        f"shape_{method}_scores.csv": result.scores,
-        f"shape_{method}_loadings.csv": result.loadings,
-        f"shape_{method}_explained.csv": result.explained,
+        f"story_shape_{method}_scores.csv": result.scores,
+        f"story_shape_{method}_loadings.csv": result.loadings,
+        f"story_shape_{method}_explained.csv": result.explained,
     }
     heading = "Story shapes: SVD components" if method == "svd" else "Story shapes: NMF parts"
     chart = components_html(result, title=heading)
     if chart.value is not None:
-        frames[f"shape_{method}_components.html"] = pd.DataFrame({"html": [chart.unwrap()]})
+        frames[f"story_shape_{method}_components.html"] = pd.DataFrame({"html": [chart.unwrap()]})
     return Result.success(frames, *prior, *reduced.diagnostics, *chart.diagnostics)
 
 
@@ -1939,7 +1948,7 @@ def _adapt_geocode(ctx: BatchContext, params: dict[str, object]) -> Result[dict[
     if geocoded.value is None:
         return Result.failure(*found.diagnostics, *geocoded.diagnostics)
     return Result.success(
-        {"locations.csv": locations, "geocoded.csv": geocoded.unwrap()},
+        {"locations.csv": locations, "geocoded.csv": geocoded.unwrap().merge(locations, on="Place", how="left")},
         *found.diagnostics,
         *geocoded.diagnostics,
     )
@@ -1986,12 +1995,13 @@ def _adapt_svo_map(ctx: BatchContext, params: dict[str, object]) -> Result[dict[
     if summary.value is None:
         return Result.failure(*mapped.diagnostics, *summary.diagnostics)
     geo = summary.unwrap()
-    from core.gis.mapping import kml
+    from core.gis.mapping import heatmap_html, kml
     from core.gis.pins import pinmap_html
 
     frames: dict[str, pd.DataFrame] = {
         "svo_locations.csv": locations,
         "svo_geocoded.csv": geo,
+        "svo_mapped.csv": table,
     }
     diags: list[Diagnostic] = [
         *svos.diagnostics,
@@ -2000,10 +2010,14 @@ def _adapt_svo_map(ctx: BatchContext, params: dict[str, object]) -> Result[dict[
         *mapped.diagnostics,
         *summary.diagnostics,
     ]
-    plot = pinmap_html(geo, weight_col="SVO rows", title="Where narrative events happen")
+    plot = pinmap_html(geo, weight_col="SVO rows", title="Places associated with narrative triples")
     diags.extend(plot.diagnostics)
     if plot.value is not None:
         frames["svo_map.html"] = pd.DataFrame({"html": [plot.unwrap()]})
+    heat = heatmap_html(geo, weight_col="SVO rows", title="Narrative triple concentration")
+    diags.extend(heat.diagnostics)
+    if heat.value is not None:
+        frames["svo_heatmap.html"] = pd.DataFrame({"html": [heat.unwrap()]})
     document = kml(geo, name_col="Place")
     diags.extend(document.diagnostics)
     if document.value is not None:
@@ -2071,8 +2085,8 @@ def _periods(ctx: BatchContext) -> dict[str, str]:
     return axis.periods()
 
 
-def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
-    from core.analysis.word2vec_bert import (
+def _adapt_word_vectors_bert(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+    from core.analysis.word_vectors_bert import (
         neighbours as bert_neighbours,
         project_tsne as bert_tsne,
         train_bert,
@@ -2080,7 +2094,7 @@ def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result
     )
 
     if ctx.table is None:
-        return _missing_input("word2vec_bert", "table")
+        return _missing_input("word_vectors_bert", "table")
     field = _str(params, "field", "lemma")
     trained = train_bert(
         ctx.table,
@@ -2101,7 +2115,7 @@ def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result
     diags.extend(projected.diagnostics)
     if projected.value is not None and not projected.unwrap().empty:
         frames["tsne.csv"] = _tsne_with_counts(projected.unwrap(), frames["vectors.csv"])
-        # Same scatter contract as word2vec_gensim so HW2 compares like with like.
+        # Same scatter contract as word_vectors_gensim so HW2 compares like with like.
         from core.viz.embeddings import tsne_html
 
         plot = tsne_html(projected.unwrap(), title="t-SNE BERT type vectors")
@@ -2142,11 +2156,11 @@ def _adapt_word2vec_bert(ctx: BatchContext, params: dict[str, object]) -> Result
     return Result.success(frames, *diags)
 
 
-def _adapt_doc_embeddings(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
-    from core.analysis.doc_embeddings import DEFAULT_MODEL, embed_corpus, semantic_search
+def _adapt_document_embeddings(ctx: BatchContext, params: dict[str, object]) -> Result[dict[str, pd.DataFrame]]:
+    from core.analysis.document_embeddings import DEFAULT_MODEL, embed_corpus, semantic_search
 
     if ctx.table is None:
-        return _missing_input("doc_embeddings", "table")
+        return _missing_input("document_embeddings", "table")
     model = _str(params, "model", DEFAULT_MODEL)
     shas = {str(doc.doc_id): str(doc.sha256) for doc in ctx.corpus.docs} if ctx.corpus is not None else None
     embedded = embed_corpus(
@@ -2186,15 +2200,17 @@ ADAPTERS: dict[str, Adapter] = {
     "sentence_complexity": _adapt_sentence_complexity,
     "lda_gensim": _adapt_lda_gensim,
     "lda_stability": _adapt_lda_stability,
-    "word2vec_gensim": _adapt_word_embeddings,
-    "sentiment_vader_anew": _adapt_sentiment_vader_anew,
-    "sentiment_swn_hedono": _adapt_sentiment_swn_hedono,
-    "nrc": _adapt_nrc,
+    "word_vectors_gensim": _adapt_word_embeddings,
+    "polarity_vader": _adapt_polarity_vader,
+    "valence_anew": _adapt_valence_anew,
+    "polarity_sentiwordnet": _adapt_polarity_sentiwordnet,
+    "happiness_hedonometer": _adapt_happiness_hedonometer,
+    "emotion_nrc": _adapt_nrc,
     "nominalization": _adapt_nominalization,
     "style": _adapt_style,
     "coreference": _adapt_coreference,
-    "narrative": _adapt_narrative,
-    "word_sense_induction": _adapt_contextual,
+    "narrative_arc": _adapt_narrative_arc,
+    "word_senses_bert": _adapt_contextual,
     "clause_svo": _adapt_clause_svo,
     "ner": _adapt_ner,
     "bert_extract": _adapt_bert_extract,
@@ -2208,7 +2224,7 @@ ADAPTERS: dict[str, Adapter] = {
     "svo_compare": _adapt_svo_compare,
     "text_statistics": _adapt_text_statistics,
     "table_search": _adapt_table_search,
-    "semantic": _adapt_semantic,
+    "semantic_classes": _adapt_semantic_classes,
     "knowledge_graph": _adapt_knowledge_graph,
     "shapes": _adapt_shapes,
     "kwic": _adapt_kwic,
@@ -2217,24 +2233,24 @@ ADAPTERS: dict[str, Adapter] = {
     "collocations": _adapt_collocations,
     "keyness": _adapt_keyness,
     "lexicon_series": _adapt_lexicon_series,
-    "bert_topics": _adapt_bert_topics,
+    "topic_clusters_bert": _adapt_topic_clusters_bert,
     "gender_annotator": _adapt_gender_annotator,
     "date_annotator": _adapt_date_annotator,
     "quote_annotator": _adapt_quote_annotator,
     "gender_guess": _adapt_gender_guess,
     "verb_analysis": _adapt_verb_analysis,
     "ngram_viewer": _adapt_ngram_viewer,
-    "sentiment_neural_bert": _adapt_sentiment_neural_bert,
-    "sentiment_neural_spacy": _adapt_sentiment_neural_spacy,
-    "sentiment_neural_stanza": _adapt_sentiment_neural_stanza,
-    "sentiment_neural_corenlp": _adapt_sentiment_neural_corenlp,
-    "shape_hc": _adapt_shape_hc,
-    "shape_svd": _adapt_shape_svd,
-    "shape_nmf": _adapt_shape_nmf,
+    "polarity_distilbert_sst2": _adapt_polarity_distilbert_sst2,
+    "polarity_spacy": _adapt_polarity_spacy,
+    "polarity_stanza": _adapt_polarity_stanza,
+    "polarity_corenlp": _adapt_polarity_corenlp,
+    "story_shape_hc": _adapt_story_shape_hc,
+    "story_shape_svd": _adapt_story_shape_svd,
+    "story_shape_nmf": _adapt_story_shape_nmf,
     "geocode": _adapt_geocode,
     "svo_map": _adapt_svo_map,
-    "word2vec_bert": _adapt_word2vec_bert,
-    "doc_embeddings": _adapt_doc_embeddings,
+    "word_vectors_bert": _adapt_word_vectors_bert,
+    "document_embeddings": _adapt_document_embeddings,
 }
 
 ADAPTER_NEEDS: dict[str, Needs] = {
@@ -2247,15 +2263,17 @@ ADAPTER_NEEDS: dict[str, Needs] = {
     "sentence_complexity": frozenset({"table"}),
     "lda_gensim": frozenset({"table"}),
     "lda_stability": frozenset({"table"}),
-    "word2vec_gensim": frozenset({"table"}),
-    "sentiment_vader_anew": frozenset({"table"}),
-    "sentiment_swn_hedono": frozenset({"table"}),
-    "nrc": frozenset({"table"}),
+    "word_vectors_gensim": frozenset({"table"}),
+    "polarity_vader": frozenset({"table"}),
+    "valence_anew": frozenset({"table"}),
+    "polarity_sentiwordnet": frozenset({"table"}),
+    "happiness_hedonometer": frozenset({"table"}),
+    "emotion_nrc": frozenset({"table"}),
     "nominalization": frozenset({"table"}),
     "style": frozenset({"table"}),
     "coreference": frozenset({"table"}),
-    "narrative": frozenset({"table"}),
-    "word_sense_induction": frozenset({"table"}),
+    "narrative_arc": frozenset({"table"}),
+    "word_senses_bert": frozenset({"table"}),
     "clause_svo": frozenset({"table"}),
     "ner": frozenset({"table"}),
     "bert_extract": frozenset({"table"}),
@@ -2269,7 +2287,7 @@ ADAPTER_NEEDS: dict[str, Needs] = {
     "svo_compare": frozenset({"table"}),
     "text_statistics": frozenset({"table"}),
     "table_search": frozenset({"table"}),
-    "semantic": frozenset({"table"}),
+    "semantic_classes": frozenset({"table"}),
     "knowledge_graph": frozenset({"table"}),
     "shapes": frozenset({"table"}),
     "kwic": frozenset({"table"}),
@@ -2278,23 +2296,23 @@ ADAPTER_NEEDS: dict[str, Needs] = {
     "collocations": frozenset({"table"}),
     "keyness": frozenset({"table"}),
     "lexicon_series": frozenset({"table", "corpus"}),
-    "bert_topics": frozenset({"table"}),
+    "topic_clusters_bert": frozenset({"table"}),
     "gender_annotator": frozenset({"table"}),
     "date_annotator": frozenset({"corpus"}),
     "quote_annotator": frozenset({"table"}),
     "gender_guess": frozenset({"table"}),
     "verb_analysis": frozenset({"table"}),
     "ngram_viewer": frozenset({"table", "corpus"}),
-    "sentiment_neural_bert": frozenset({"table"}),
-    "sentiment_neural_spacy": frozenset({"table"}),
-    "sentiment_neural_stanza": frozenset({"table"}),
-    "sentiment_neural_corenlp": frozenset({"corpus"}),
-    "shape_hc": frozenset({"table"}),
-    "shape_svd": frozenset({"table"}),
-    "shape_nmf": frozenset({"table"}),
+    "polarity_distilbert_sst2": frozenset({"table"}),
+    "polarity_spacy": frozenset({"table"}),
+    "polarity_stanza": frozenset({"table"}),
+    "polarity_corenlp": frozenset({"corpus"}),
+    "story_shape_hc": frozenset({"table"}),
+    "story_shape_svd": frozenset({"table"}),
+    "story_shape_nmf": frozenset({"table"}),
     "geocode": frozenset({"table"}),
     "svo_map": frozenset({"table"}),
-    "word2vec_bert": frozenset({"table"}),
+    "word_vectors_bert": frozenset({"table"}),
 }
 
 

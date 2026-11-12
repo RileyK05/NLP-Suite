@@ -41,12 +41,9 @@ TABLE_FIRST: dict[str, str] = {
     "kwic": "A concordance is read line by line; each line is one occurrence in its context.",
     "doc_duplicates": "Duplicate groups are a list to act on: which copies to keep and which to drop.",
     "spellcheck": "Findings are a list to review word by word before any are corrected.",
-    "geocode": "Geocoding results are a status list (matched or not) until the offline map is built.",
-    "gis_map": "The map is written as a KML/HTML file; the table lists what was placed and what was not.",
-    "svo_map": "Mapped events are listed with their places until the offline map is built.",
     "knowledge_graph": "Entity relations are listed as triples when the graph has too few edges to draw.",
     "coreference": "Mention chains are read as text, so each resolved mention can be checked against its sentence.",
-    "word_sense_induction": "The sense split is a baseline (a median split on one vector component, as the module "
+    "word_senses_bert": "The sense split is a baseline (a median split on one vector component, as the module "
     "says), not a clustering; drawn as a map it would look like senses the model found. Read the rows.",
     "csv_stats": "Descriptive statistics are a table of numbers per column, and the correlation is one coefficient "
     "for one pair; to see a column's distribution, chart it with the chart builder.",

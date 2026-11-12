@@ -121,6 +121,13 @@ outputs turned up problems in the *tables*, which no figure can fix:
 
 ### 4d-6. Figure quality and publication figures (2026-09-23)
 
+Built 2026-11-11: the workbench now draws **all fifteen** chart kinds live
+(pie, sunburst, treemap, violin, radar, waffle, calendar and Sankey included),
+with auto-horizontal rankings, every box observation drawn over its box,
+consistent tick precision, and a **Visualizations** page that inventories
+every kind and every panel shape from the live registry. The workbench's
+kind buttons also stopped losing the new kind to a parallel selection clear.
+
 The plan and its progress are in `docs/internal/FIGURE_RECIPES.md` (Part 2). Still owed,
 and new ideas that came out of the work:
 
@@ -167,14 +174,14 @@ and new ideas that came out of the work:
   a word). Still open: per lemma, its uses as points (PCA of the vectors)
   coloured by sense, and each sense's share by decade ("does the second sense
   belong to particular years?", the question the guide asks).
-- **Embeddings over time.** `doc_embeddings` knows each document's vector;
+- **Embeddings over time.** `document_embeddings` knows each document's vector;
   "which way did the corpus move" is the drift of the decade centroids, drawn
   as arrows on the map.
 - **Search on the Interactive page.** Semantic search is a tool parameter;
   on the bench it could be a text box that re-ranks without re-embedding (the
   sentence vectors are the expensive part and do not change with the query).
 - **Cache sentence vectors.** Like the parse cache: keyed by corpus
-  fingerprint + model id, so a second embeddings run, a search, and bert_topics
+  fingerprint + model id, so a second embeddings run, a search, and topic_clusters_bert
   on the same corpus reuse them.
 - **3-class sentiment.** SST-2 has no neutral. A 3-class model (a RoBERTa
   sentiment model) needs a licence check before it can ship.
@@ -323,8 +330,8 @@ walking every formerly figure-less tool over them:
 
 Riley wants the reference figures made in the app, and figures of that
 quality for as many tools as can support one: the general plan (a figure kit
-for scripts, showcase figures per tool, project events) is
-[`SHOWCASE_FIGURES_PLAN.md`](SHOWCASE_FIGURES_PLAN.md). Reference implementations
+for scripts, showcase figures per tool, project events) is built and described
+in [`docs/viz-panels.md`](../viz-panels.md); what is left is 4d-14. Reference implementations
 (standalone matplotlib over suite output + MALLET CLI) are in
 `%USERPROFILE%\Downloads\LDA`: `lda_lambda_figure.py`, `mallet_what_it_does.py`,
 `gensim_vs_mallet.py`, `mallet_events.py`, `lda_tiles.py`,
@@ -415,6 +422,26 @@ documents, runs and projects were built on 2026-09-22):
   ever wanted, it needs a contract amendment and the same
   single-flight/lost-request handling the explicit path has.
 
+### 4d-14. Showcase figures still to build (2026-09-30)
+
+The kit and eleven showcases are built and described in
+[`docs/viz-panels.md`](../viz-panels.md) (showcase figures and the figure kit).
+Left: one showcase for each tool below, one per pass. The hand-drawn
+reference figures are in `%USERPROFILE%\Downloads\LDA`
+(`mallet_what_it_does.py` is the model).
+
+| Tool | Title question | A (corpus) | B (close up) | C (the method) |
+|---|---|---|---|---|
+| word_vectors_gensim / _bert | What words mean in this corpus | anchor words on a meaning axis (war-peace) | neighbours of 4-6 anchor words, cosine bars | frequency against neighbour stability; small-vocabulary warning |
+| word_senses_bert | Does a word have two meanings, and when | each sense's share by decade | example sentences per sense | uses as points (PCA) coloured by sense; needs the sense per use kept in the output |
+| shape tools / narrative | What shapes the documents take | cluster arcs as small multiples | which documents fall in which cluster over time | a representative arc per cluster |
+| document_embeddings | Where the corpus moved | meaning map by decade | decade centroid drift arrows (4d-7) | nearest documents across eras |
+
+Also open: the `lda_gensim` lambda-sweep as a second figure, and a person
+looking at the built showcases' PNGs (the linter is clean on the 87-speech
+corpus and the render tests measure text overlap, but nobody has recorded
+looking).
+
 ### 4e. Observed, not investigated
 
 Each desktop job showed "Parsing English documents" for minutes even with the
@@ -477,6 +504,43 @@ runs, the bench and notebook kernels one parse cache: two identical
 - **Never create `tests/conftest.py`.** It shadows the ROOT `conftest.py` for
   `from conftest import …` inside tests, and the root one holds shared
   fixtures (`HashEmbeddingBackend`). Put shared test config in the root one.
+
+### 4d-15. Expanded visualization panels across tools (2026-11)
+
+Added panels and publication showcases across tools previously lacking or having thin visual coverage:
+- **`spellcheck`**: `spellcheck_top_errors` (`ranked_bars`), `spellcheck_document_counts` (`ranked_bars`), `spellcheck_confidence_scatter` (`scatter_labelled`), plus `spellcheck_showcase`.
+- **`k_sentences`**: `k_sentences_top_repetitions` (`ranked_bars`), `k_sentences_section_density` (`distribution`).
+- **`bert_extract`**: `bert_extract_sentence_positions` (`positions`).
+- **`table_search`**: `table_search_hits_by_document` (`ranked_bars`), `table_search_hit_positions` (`positions`).
+- **`emotion_nrc`**: `nrc_emotion_profile` (`ranked_bars`), `nrc_emotion_over_time` (`line_series`), `nrc_emotion_distribution` (`distribution`), plus `emotion_nrc_showcase`.
+- **`keyness`**: `keyness_top_distinctive` (`ranked_bars`).
+- **`document_measures` / `readability`**: `readability_grade_comparison` (`distribution`).
+- **`gender_annotator`**: `gender_annotator_top_names` (`ranked_bars`), `gender_annotator_corpus_breakdown` (`ranked_bars`).
+- **`coreference`**: `coreference_top_clusters` (`ranked_bars`).
+- **`dispersion`**: `dispersion_top_adjusted_terms` (`ranked_bars`).
+- **`ngrams`**: `ngrams_heatmap` (`heatmap`), plus `ngrams_showcase`.
+- **`doc_duplicates`**: `doc_duplicates_cluster_sizes` (`ranked_bars`).
+- **`knowledge_graph`**: `knowledge_graph_predicates` (`ranked_bars`).
+- **`showcase.py`**: Added multi-panel showcases for `lexical_diversity`, `sentence_complexity`, `emotion_nrc`, `collocations`, `spellcheck`, and `ngrams`.
+
+Pre-publish check (2026-11-12): every panel-owning tool run on twelve SOTU
+speeches through `nlp.run`, each table round-tripped through CSV, every
+offered panel prepared, serialised and rendered (136 drew). Fixed:
+`nrc_emotion_over_time` crashed on any dated corpus (its fixture had no
+dates); `doc_similarity_neighbours` read the usually-empty `duplicates.csv`
+instead of `doc_pairs.csv`. Still open:
+
+- **The offline geocoder knows almost no places.** On the twelve speeches it
+  resolved 1 of 200 names: "Paris" yes; "China", "Iran", "United States",
+  "Europe" no. The geography figures now say so honestly (coverage bars), but
+  with the default provider the maps are close to empty on any real corpus.
+  A countries-and-regions gazetteer (Natural Earth admin-0 names fit the
+  basemap already bundled) would make the default useful.
+- **`gender_annotator` figures have no real example.** The NLTK `names`
+  corpus was not installed on the audit machine; they are in `NO_EXAMPLE`.
+- **`test_background_cli_records_completion_after_submitter_exits` is
+  load-sensitive.** It failed once in a full run beside model jobs and
+  passed three times alone.
 
 ---
 

@@ -23,6 +23,7 @@ Three deliberate departures from the legacy suite:
 
 from __future__ import annotations
 
+import codecs
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -212,6 +213,26 @@ def strip_nul_bytes(text: str) -> tuple[str, bool]:
     return text.replace("\x00", ""), True
 
 
+def _bom_encoding(source: Path) -> tuple[str] | None:
+    """The UTF-16/32 encoding a byte-order mark announces, if the file starts with one.
+
+    Without this a Notepad "Unicode" file fails UTF-8 and then *succeeds* as
+    cp1252 -- every byte decodes there -- so the corpus gets "ÿþ" and mojibake
+    with nothing worse than a fallback warning. UTF-32 is checked first: its
+    little-endian mark begins with UTF-16's.
+    """
+    try:
+        with source.open("rb") as handle:
+            head = handle.read(4)
+    except OSError:
+        return None  # the read below reports it
+    if head.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return ("utf-32",)
+    if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return ("utf-16",)
+    return None
+
+
 def read_text(path: Path, encoding: str | None = None) -> Result[str]:
     """Read a text file, falling back through `ENCODING_CHAIN`.
 
@@ -224,7 +245,7 @@ def read_text(path: Path, encoding: str | None = None) -> Result[str]:
     if not source.is_file():
         return Result.failure(Diagnostic.error("FILE_NOT_FOUND", f"{source} is not a file", path=str(source)))
 
-    candidates = (encoding,) if encoding else ENCODING_CHAIN
+    candidates = (encoding,) if encoding else (_bom_encoding(source) or ENCODING_CHAIN)
     attempted: list[str] = []
 
     for index, candidate in enumerate(candidates):

@@ -9,8 +9,7 @@ no timeout, 0% CPU. Every shallow check passed, because they asked "is
 ``core.analysis.lda`` imported?" and it was; the cold thing was the *third
 party package behind it*.
 
-``tests/test_live_analysis.py`` holds the incident's own probe (live path
-only). This file is the contract: it walks *every* adapter-reachable module —
+This file holds the shared cold-start probe: it walks *every* adapter-reachable module —
 the batch executor, the live bench, the table workflows and the job runner —
 for third-party imports inside function bodies, and requires each one to be
 named in ``desktop_backend.server.LAZY_BACKENDS`` and warm after
@@ -20,6 +19,9 @@ rather than wedging a student's laptop.
 
 from __future__ import annotations
 
+import ast
+from functools import cache
+from pathlib import Path
 import subprocess
 import sys
 
@@ -42,12 +44,24 @@ ADAPTER_SOURCES = (
 EXCLUDED = ("torch", "transformers", "numpy", "pandas", "pyarrow")
 
 PROBE_TEMPLATE = """
-import ast, importlib.util, sys
+import ast, importlib.util, inspect, sys, textwrap
 from pathlib import Path
 from desktop_backend.server import preload_engine, LAZY_BACKENDS
+from desktop_backend.live import Bench
 
 SOURCES = %r
 EXCLUDED = set(%r)
+
+# Preserve the original live-analysis wrapper check in this same interpreter.
+live_wrappers = set()
+for live, source in (
+    (True, textwrap.dedent(inspect.getsource(Bench.analyse))),
+    (False, Path('core/profiler/executor.py').read_text(encoding='utf-8')),
+):
+    for node in ast.walk(ast.parse(source)):
+        if (isinstance(node, ast.ImportFrom) and node.module and node.module.startswith('core.')
+                and (live or node.module.startswith('core.analysis'))):
+            live_wrappers.add(node.module)
 
 wanted = set()
 for path_text in SOURCES:
@@ -113,6 +127,8 @@ def installed(name):
         return False
 
 print({
+    "live_wrappers": sorted(live_wrappers),
+    "missing_wrappers": sorted(module for module in live_wrappers if module not in sys.modules),
     "backends": sorted(backends),
     "cold": sorted(b for b in backends if installed(b) and b.split(".")[0] not in sys.modules),
     "unlisted": sorted(b for b in backends if b not in LAZY_BACKENDS),
@@ -121,18 +137,20 @@ print({
 PROBE = PROBE_TEMPLATE % (ADAPTER_SOURCES, EXCLUDED)
 
 
+@cache
 def _probe() -> dict[str, list[str]]:
     """Run the AST walk + preload in a clean interpreter and read its report."""
     done = subprocess.run(  # noqa: S603
         [sys.executable, "-c", PROBE],
         capture_output=True,
         text=True,
+        cwd=Path(__file__).resolve().parents[1],
         timeout=300,
         check=False,
     )
     assert done.returncode == 0, f"probe crashed:\n{done.stderr}"
     line = done.stdout.strip().splitlines()[-1]
-    return eval(line)  # noqa: S307 -- output of the probe above, not user input
+    return ast.literal_eval(line)
 
 
 def test_every_lazy_backend_is_preloaded_and_listed() -> None:
@@ -143,6 +161,8 @@ def test_every_lazy_backend_is_preloaded_and_listed() -> None:
       moment someone adds another lazy import.
     """
     report = _probe()
+    assert report["live_wrappers"], "the probe found no live wrappers; it needs rewriting"
+    assert report["missing_wrappers"] == [], f"live wrappers left cold: {report['missing_wrappers']}"
     assert report["backends"], "the probe found no backends; it needs rewriting"
     assert report["cold"] == [], (
         f"preload_engine() leaves {report['cold']} for a request thread to import. "

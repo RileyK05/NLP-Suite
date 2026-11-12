@@ -1,6 +1,6 @@
 """Model figures: dendrogram, eras, components, topic words, stability matches.
 
-Fixtures mirror the real tables (shape_hc_merges.csv is scipy linkage in
+Fixtures mirror the real tables (story_shape_hc_merges.csv is scipy linkage in
 table form; the shape features are "<Measure> <slice>"). What these pin:
 
 * the dendrogram reads the linkage ids correctly (below n a document, n and
@@ -58,37 +58,37 @@ def merges() -> pd.DataFrame:
 
 class TestDendrogram:
     def test_every_document_is_a_named_leaf_once(self) -> None:
-        panel = ok("shape_hc_dendrogram", merges())
+        panel = ok("story_shape_hc_dendrogram", merges())
         leaves = [m for m in panel.marks if m.group == "Document"]
         assert sorted(m.label for m in leaves) == ["1934 Roosevelt", "1962 Kennedy", "1985 Reagan", "2024 Biden"]
         assert all(m.x == 0.0 for m in leaves)
 
     def test_merges_sit_at_their_height(self) -> None:
-        panel = ok("shape_hc_dendrogram", merges())
+        panel = ok("story_shape_hc_dendrogram", merges())
         heights = {m.key: m.x for m in panel.marks if m.group == "Merge"}
         assert heights == {"merge:1": pytest.approx(0.2), "merge:2": pytest.approx(0.4), "merge:3": 1.0}
 
     def test_leaves_run_down_the_page_in_tree_order(self) -> None:
-        panel = ok("shape_hc_dendrogram", merges())
+        panel = ok("story_shape_hc_dendrogram", merges())
         leaves = sorted((m for m in panel.marks if m.group == "Document"), key=lambda m: m.y)
         assert [m.label for m in leaves] == ["1934 Roosevelt", "1962 Kennedy", "1985 Reagan", "2024 Biden"]
         merge_one = next(m for m in panel.marks if m.key == "merge:1")
         assert merge_one.y == pytest.approx((leaves[0].y + leaves[1].y) / 2), "a merge sits between its children"
 
     def test_links_join_each_merge_to_its_two_children_as_elbows(self) -> None:
-        panel = ok("shape_hc_dendrogram", merges())
+        panel = ok("story_shape_hc_dendrogram", merges())
         assert panel.edge_style == "elbow"
         assert len(panel.edges) == 6
         assert {e.target for e in panel.edges if e.source == "merge:3"} == {"merge:1", "merge:2"}
 
     def test_evidence_resolves_to_one_node_row(self) -> None:
-        panel = ok("shape_hc_dendrogram", merges())
+        panel = ok("story_shape_hc_dendrogram", merges())
         for mark in panel.marks:
             ((column, value),) = mark.evidence.filters
             assert (panel.data[column] == value).sum() == 1
 
     def test_too_few_documents_is_refused(self) -> None:
-        assert not build("shape_hc_dendrogram", merges().head(1)).ok
+        assert not build("story_shape_hc_dendrogram", merges().head(1)).ok
 
 
 class TestEras:
@@ -105,7 +105,7 @@ class TestEras:
         )
 
     def test_every_document_sits_at_its_year_in_its_clusters_row(self) -> None:
-        panel = ok("shape_hc_eras", self.assignments())
+        panel = ok("story_shape_hc_eras", self.assignments())
         assert panel.y_categories == ("Cluster 1", "Cluster 2")
         biden = next(m for m in panel.marks if m.label == "2024 Biden")
         assert biden.y == 0.0 and biden.x == pytest.approx(2024.18, abs=0.01)
@@ -126,7 +126,7 @@ class TestComponents:
         return pd.DataFrame(rows)
 
     def test_loadings_are_drawn_along_the_speech_per_measure(self) -> None:
-        panel = ok("shape_svd_loadings", self.loadings())
+        panel = ok("story_shape_svd_loadings", self.loadings())
         assert panel.facets == ("Tokens", "Noun Ratio")
         assert panel.groups == ("Component 1", "Component 2")
         tokens = sorted((m for m in panel.marks if m.facet == "Tokens" and m.group == "Component 1"), key=lambda m: m.x)
@@ -134,11 +134,11 @@ class TestComponents:
 
     def test_the_notes_say_the_features_are_standardized(self) -> None:
         """D7 (Riley, 2026-09-25): the note used to warn that length drove the components."""
-        assert any("standardized" in note for note in BY_NAME["shape_svd_loadings"].notes)
+        assert any("standardized" in note for note in BY_NAME["story_shape_svd_loadings"].notes)
 
     def test_explained_labels_components_as_integers(self) -> None:
         frame = pd.DataFrame({"Component": [1.0, 2.0], "Explained variance": [0.54, 0.46], "Cumulative": [0.54, 1.0]})
-        panel = ok("shape_svd_explained", frame)
+        panel = ok("story_shape_svd_explained", frame)
         assert [m.label for m in panel.marks] == ["Component 1", "Component 2"]
 
 

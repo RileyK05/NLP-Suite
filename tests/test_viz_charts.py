@@ -948,6 +948,7 @@ class TestContract:
             "calendar",
             "bubble",
             "sankey",
+            "ecdf",
         )
         assert AGG_FUNCS == ("sum", "mean", "median", "count")
 

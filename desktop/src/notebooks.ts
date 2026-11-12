@@ -418,7 +418,25 @@ export function matplotlibCode(
   const agg = ["sum", "mean", "median", "count"].includes(chart.agg)
     ? chart.agg
     : "";
-  if (chart.kind === "histogram") {
+  if (chart.kind === "ecdf") {
+    lines.push(
+      "fig, ax = plt.subplots(figsize=(8, 4.5))",
+      chart.group
+        ? `groups = table.groupby(${py(chart.group)})`
+        : 'groups = [("", table)]',
+      `all_values = pd.to_numeric(table[${y}], errors="coerce").dropna()`,
+      "for name, part in groups:",
+      `    counts = pd.to_numeric(part[${y}], errors="coerce").dropna().value_counts().sort_index()`,
+      "    if not counts.empty:",
+      "        x = [all_values.min(), *counts.index, all_values.max()]",
+      "        percent = [0, *(counts.cumsum() / counts.sum() * 100), 100]",
+      '        ax.step(x, percent, where="post", label=str(name))',
+      `ax.set_xlabel(${y})`,
+      'ax.set_ylabel("At or below (%)")',
+      "ax.set_ylim(0, 103)",
+    );
+    if (chart.group) lines.push("ax.legend(frameon=False)");
+  } else if (chart.kind === "histogram") {
     lines.push(
       "fig, ax = plt.subplots(figsize=(8, 4.5))",
       `ax.hist(table[${y}].dropna(), bins=12, color="#0072B2")`,

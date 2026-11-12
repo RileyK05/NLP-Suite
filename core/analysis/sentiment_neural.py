@@ -42,6 +42,7 @@ __all__ = [
     "corenlp_sentences",
     "sentence_rows",
     "spacy_sentences",
+    "sentiment_bucket",
     "stanza_sentences",
     "summarize_neural",
 ]
@@ -73,7 +74,7 @@ _CORENLP_VALUE = {
 }
 
 
-def _bucket(label: str) -> str:
+def sentiment_bucket(label: str) -> str:
     """Map any backend's label words onto positive / negative / neutral."""
     low = str(label).strip().lower()
     if "neg" in low:
@@ -88,7 +89,7 @@ def _compound(label: str, score: float) -> float:
 
     A hard-class backend passes score=1.0 and so lands on -1 / 0 / +1.
     """
-    bucket = _bucket(label)
+    bucket = sentiment_bucket(label)
     if bucket == "positive":
         return round(abs(score), 4)
     if bucket == "negative":
@@ -175,7 +176,7 @@ def summarize_neural(annotated: pd.DataFrame) -> Result[pd.DataFrame]:
             return Result.failure(Diagnostic.error("SENTIMENT_NN_MISSING_COLUMN", f"missing {column!r}"))
     rows: list[dict[str, object]] = []
     for (doc_id, name), group in annotated.groupby(["Document ID", "Document"], sort=False):
-        buckets = group["Label"].map(_bucket)
+        buckets = group["Label"].map(sentiment_bucket)
         rows.append(
             {
                 "Document ID": doc_id,

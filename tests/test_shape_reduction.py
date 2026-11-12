@@ -10,6 +10,7 @@ scipy/sklearn stack but only on tiny in-memory matrices.
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from core.analysis.shape_reduction import (
     build_shape_matrix,
@@ -228,3 +229,20 @@ class TestCharts:
         result = nmf_reduce(matrix, n_components=2, seed=7).unwrap()
         html = components_html(result).unwrap()
         assert "shifted" in html
+
+
+@pytest.mark.parametrize("method", ["svd", "nmf"])
+def test_batch_artifacts_carry_the_names_the_registry_declares(method: str) -> None:
+    """The desktop, nlp.run and nlp.describe address these tables by the registry's names."""
+    from types import SimpleNamespace
+
+    from core.profiler.executor import _reduction_frames
+    from core.profiler.registry import get_tool
+    from core.result import Result
+
+    frame = pd.DataFrame({"x": [1.0]})
+    reduced = Result.success(SimpleNamespace(scores=frame, loadings=frame, explained=frame))
+    built = _reduction_frames((), frame, reduced, method, lambda result, title: Result.success("<html></html>"))  # type: ignore[arg-type]
+    spec = get_tool(f"story_shape_{method}")
+    assert spec is not None
+    assert set(built.unwrap()) == set(spec.outputs)

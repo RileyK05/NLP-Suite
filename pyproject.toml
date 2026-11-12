@@ -9,7 +9,7 @@ name = "nlp-suite-ng"
 # tauri.conf.json and src-tauri/Cargo.toml. test_desktop_release_versions_stay_in_sync
 # enforces it -- this file drifted to 0.1.0 while the desktop moved to 0.3.0
 # because the test did not cover it.
-version = "0.5.1"
+version = "0.5.2"
 description = "Ground-up rebuild of the NLP Suite: headless corpus NLP toolkit"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

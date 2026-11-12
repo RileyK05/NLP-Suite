@@ -39,7 +39,7 @@ class TestFormBuilders:
     def test_none_default_allowed(self) -> None:
         from app import forms as forms_mod
 
-        (query,) = [w for w in forms_mod.widgets_for("word2vec_gensim") if w.key == "query"]
+        (query,) = [w for w in forms_mod.widgets_for("word_vectors_gensim") if w.key == "query"]
         assert query.default is None and query.required is False
 
     def test_required_path(self) -> None:

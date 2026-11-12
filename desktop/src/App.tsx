@@ -35,6 +35,7 @@ import type {
   SourcePassage,
 } from "./phrase";
 import { VisualizeDialog, type ChartSeed } from "./VisualizeDialog";
+import { Visualizations } from "./Visualizations";
 import { ArtifactViewer, viewableArtifact } from "./ArtifactViewer";
 import { InsightPanel } from "./InsightPanel";
 import { PanelSection } from "./PanelSection";
@@ -134,6 +135,7 @@ type Page =
   | "models"
   | "scripts"
   | "compare"
+  | "visualizations"
   | "learn"
   | "setup";
 
@@ -204,6 +206,13 @@ const navigation = [
     icon: GitCompareArrows,
     section: "WORKSHOP",
     hint: "Two collections side by side",
+  },
+  {
+    key: "visualizations",
+    label: "Visualizations",
+    icon: ChartColumnBig,
+    section: "REFERENCE",
+    hint: "Every chart and figure the suite draws",
   },
   {
     key: "learn",
@@ -1673,7 +1682,7 @@ export default function App() {
               <span />
               Local workspace <ShieldCheck size={14} />
             </div>
-            <small>Desktop beta · 0.5.1</small>
+            <small>Desktop beta · 0.5.2</small>
           </div>
         </aside>
         <div className="main-shell">
@@ -2364,6 +2373,14 @@ export default function App() {
                       </p>
                     </section>
                   ))}
+                {page === "visualizations" && (
+                  <Visualizations
+                    onExplore={() => setPage("interactive")}
+                    onRuns={() => setPage("runs")}
+                    tools={tools}
+                    onAnalysis={openAnalysis}
+                  />
+                )}
                 {page === "learn" && (
                   <Learn
                     tools={tools}

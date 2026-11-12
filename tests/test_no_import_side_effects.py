@@ -34,7 +34,24 @@ CORE_MODULES = _core_modules()
 def test_core_imports_without_network_and_with_changed_cwd(tmp_path: Path) -> None:
     """Import every core module in a subprocess with a different cwd."""
     root = Path(__file__).resolve().parents[1]
-    imports = "; ".join(f"import {mod}" for mod in CORE_MODULES)
+    imports = "\n".join(
+        [
+            "import importlib, socket",
+            "from pathlib import Path",
+            "attempts = []",
+            "def no_network(*args, **kwargs):",
+            "    attempts.append(args)",
+            "    raise AssertionError('network access during import')",
+            "socket.socket.connect = no_network",
+            "socket.socket.connect_ex = no_network",
+            "socket.create_connection = no_network",
+            "before = Path.cwd().resolve()",
+            f"for module in {CORE_MODULES!r}:",
+            "    importlib.import_module(module)",
+            "    assert Path.cwd().resolve() == before, module",
+            "assert not attempts, 'imports attempted network access'",
+        ]
+    )
     env = os.environ.copy()
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
     result = subprocess.run(  # noqa: S603
@@ -47,12 +64,4 @@ def test_core_imports_without_network_and_with_changed_cwd(tmp_path: Path) -> No
         env=env,
     )
     assert result.returncode == 0, f"import failed:\n{result.stderr}"
-    assert not list((tmp_path).rglob("*.csv"))
-    assert not list((tmp_path).rglob("*.json"))
-
-
-def test_import_does_not_change_cwd() -> None:
-    before = Path.cwd().resolve()
-    for mod in CORE_MODULES:
-        __import__(mod)
-    assert Path.cwd().resolve() == before
+    assert not list(tmp_path.iterdir()), "imports wrote files into the working directory"

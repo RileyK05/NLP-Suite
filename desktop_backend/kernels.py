@@ -57,6 +57,14 @@ def kernel_command(root: Path, project_id: str, session_dir: Path, parser: str) 
     return [sys.executable, "-m", "desktop_backend.server", *args]
 
 
+def _run_order(path: Path) -> tuple[int, int, str]:
+    """``0003_1000_x.csv`` after ``0003_999_y.csv``: numeric, not by spelling."""
+    found = re.match(r"^(\d+)_(\d+)_", path.name)
+    if found is None:
+        return (sys.maxsize, sys.maxsize, path.name)
+    return (int(found[1]), int(found[2]), path.name)
+
+
 @dataclass
 class Kernel:
     """One running kernel and everything it has said."""
@@ -64,6 +72,9 @@ class Kernel:
     key: tuple[str, str]
     process: subprocess.Popen[str]
     directory: Path
+    #: The parser the kernel's notebook session reads the corpus with. A kernel
+    #: lives across cells, so a parser changed on the page must restart it.
+    parser: str = "spacy"
     events: list[dict[str, Any]] = field(default_factory=list)
     first_seq: int = 0
     next_exec: int = 1
@@ -120,7 +131,7 @@ class KernelManager:
             )
         finally:
             log.close()
-        kernel = Kernel(key, process, directory)
+        kernel = Kernel(key, process, directory, parser=parser)
         threading.Thread(target=self._read, args=(kernel,), daemon=True, name="kernel-reader").start()
         return kernel
 
@@ -164,9 +175,15 @@ class KernelManager:
             if self._closing:
                 raise ValueError("The app is closing.")
             found = self._kernels.get(key)
-            if found is not None and found.alive:
+            if found is not None and found.alive and found.parser == parser:
                 found.last_used = time.monotonic()
                 return found
+            if found is not None and found.alive and found.busy is not None:
+                raise ValueError(
+                    f"A cell is still running with {found.parser}. Wait for it, or stop it, before switching parser."
+                )
+            # Ended, or asked for with another parser: the cells that follow must
+            # read the corpus the way "Run and save" will, not the old way.
             if found is not None:
                 self._stop(found)
                 del self._kernels[key]
@@ -273,15 +290,18 @@ class KernelManager:
         buffer = io.BytesIO()
         used: set[str] = set()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(directory.glob("*.csv")):
+            for path in sorted(directory.glob("*.csv"), key=_run_order):
                 # Strip the kernel's "0031_002_" prefix; a name the kernel did
                 # not give (a file the notebook wrote itself) is kept as is.
-                stem = re.sub(r"^\d{4}_\d{3}_", "", path.stem) or path.stem
+                # At least 4 and 3 digits: the counts keep growing past 9999 / 999.
+                stem = re.sub(r"^\d{4,}_\d{3,}_", "", path.stem) or path.stem
                 target = f"{stem}.csv"
                 counter = 2
-                while target in used:
+                # Compared casefolded: "Data.csv" and "data.csv" are one file
+                # once the zip is unpacked on Windows or macOS.
+                while target.casefold() in used:
                     target = f"{stem}_{counter}.csv"
                     counter += 1
-                used.add(target)
+                used.add(target.casefold())
                 archive.write(path, target)
         return buffer.getvalue()

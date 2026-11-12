@@ -32,7 +32,9 @@ FIGURE_FORMATS: tuple[str, ...] = ("png", "svg")
 #: A tool with more panels than this publishes the first ones; the rest are
 #: a click away in the app.
 MAX_FIGURES = 6
-_SKIP = {"input_files.csv"}
+# Must equal desktop_backend.runner.INPUT_MANIFEST (source); core must not
+# import desktop_backend, so the literal is spelled here and checked by tests.
+_SKIP = {"desktop_inputs.csv"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +149,7 @@ def _showcase_figures(  # noqa: PLR0913 - the run's accumulators, threaded throu
     notices: list[Diagnostic],
     index: list[str],
 ) -> None:
-    """The tool's showcase figure, when it can support one (SHOWCASE_FIGURES_PLAN)."""
+    """The tool's showcase figure, when it can support one (docs/viz-panels.md)."""
     for showcase in showcases_for(tool):
         present = {name: frames[name] for name in showcase.tables if name in frames and not frames[name].empty}
         if not present:

@@ -455,7 +455,7 @@ def _heading_candidates(text: str, start: int, end: int) -> tuple[list[_Heading]
     return _drop_contents(text, _markdown_lines(text, start, end))
 
 
-def detect_sections(
+def detect_sections(  # noqa: PLR0915 - one branch per rule, then the checks a reader needs
     text: str,
     *,
     rule: str = "auto",
@@ -529,6 +529,16 @@ def detect_sections(
                 "SECTIONS_NOT_CHAPTERS",
                 f"These are blocks of {block_words:,} words, not the author's chapters: no headings were found. "
                 "Each is titled by its words so no block is read as a chapter.",
+            )
+        )
+    if not sections:
+        # Only a licence header or footer and nothing between them: every rule
+        # comes back empty once the front and back matter are set aside.
+        return Result.failure(
+            Diagnostic.error(
+                "SECTIONS_EMPTY_BODY",
+                "Nothing is left to split once the Project Gutenberg header and footer are set aside. "
+                "Untick “Leave out the Project Gutenberg header and footer” to split them too.",
             )
         )
 

@@ -146,7 +146,7 @@ class TestEveryParameterIsNamed:
 
     def test_opaque_flags_are_actually_explained(self) -> None:
         """The abbreviations that started this: none of them may survive."""
-        for tool, flag in (("word2vec_gensim", "sg"), ("table_search", "op"), ("table_charts", "agg")):
+        for tool, flag in (("word_vectors_gensim", "sg"), ("table_search", "op"), ("table_charts", "agg")):
             label = param_label(tool, flag)
             assert len(label) > len(flag) + 3, f"{tool}.{flag} -> {label!r} is still an abbreviation"
 
@@ -170,7 +170,7 @@ class TestEveryToolIsDescribedToItsReader:
 
     def test_the_three_specs_that_say_more_keep_their_own_wording(self) -> None:
         """desktop_spec changes these alongside their parameters; do not clobber."""
-        for name in ("sentiment_vader_anew", "search", "spellcheck"):
+        for name in ("valence_anew", "search", "spellcheck"):
             assert name not in TOOL_DESCRIPTIONS, (
                 f"{name} is described inside desktop_spec, next to the parameter "
                 "changes that make the description true; a second copy here would drift"
@@ -258,10 +258,12 @@ class TestTheNamingStandard:
             "Gender",
             "Geography",
             "Grammar",
+            "Happiness",
             "Intake",
             "Keywords",
             "Lexicons",
             "N-grams",
+            "Polarity",
             "Quotes",
             "Readability",
             "Search",
@@ -271,6 +273,7 @@ class TestTheNamingStandard:
             "Story shape",
             "Summary",
             "Topics",
+            "Valence",
             "Vocabulary",
             "Word norms",
         }
@@ -287,7 +290,18 @@ class TestTheNamingStandard:
         by_task: dict[str, set[str]] = {}
         for name, label in TOOL_LABELS.items():
             by_task.setdefault(label.partition(": ")[0], set()).add(name)
-        assert {"sentiment_neural_bert", "sentiment_vader_anew", "sentiment_neural_spacy"} <= by_task["Sentiment"]
-        assert {"word2vec_bert", "word2vec_gensim", "word_sense_induction", "doc_embeddings"} <= by_task["Embeddings"]
+        assert {
+            "polarity_distilbert_sst2",
+            "polarity_vader",
+            "polarity_spacy",
+            "polarity_stanza",
+            "polarity_corenlp",
+            "polarity_sentiwordnet",
+        } <= by_task["Polarity"]
+        assert {"valence_anew"} <= by_task["Valence"]
+        assert {"happiness_hedonometer"} <= by_task["Happiness"]
+        assert {"word_vectors_bert", "word_vectors_gensim", "word_senses_bert", "document_embeddings"} <= by_task[
+            "Embeddings"
+        ]
         assert {"collocations", "ngram_cooccurrence"} <= by_task["Collocations"]
         assert {"geocode", "gis_map", "svo_map"} <= by_task["Geography"]

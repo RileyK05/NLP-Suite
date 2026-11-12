@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 import pandas as pd
 
 from core.contrast.sides import side_of
-from core.io.reader import Corpus
+from core.io.reader import Corpus, display_names
 from core.result import Diagnostic, Result
 
 __all__ = ["topic_prevalence"]
@@ -37,8 +37,13 @@ def topic_prevalence(
     words = frames.get("topics.csv")
     if flow is None or words is None or flow.empty:
         return Result.failure(Diagnostic.error("CONTRAST_NO_TOPICS", "the topic model produced no paragraph table"))
-    owner = {str(doc.doc_id): side_of(doc) for doc in corpus.docs}
-    flow = flow.assign(Side=flow["Document ID"].astype(str).map(owner))
+    # By the document's name, not its "Document ID": the flow table numbers
+    # the documents the model kept (1, 2, ...), and a document with no kept
+    # words (a title page of stopwords) is not among them, so its number is
+    # not the corpus's and every later document would land on the wrong side.
+    names = display_names(corpus.docs)
+    owner = {names[doc.doc_id]: side_of(doc) for doc in corpus.docs}
+    flow = flow.assign(Side=flow["Document"].astype(str).map(owner))
     flow = flow[flow["Side"].isin(sides)]
     tokens = pd.to_numeric(flow["Tokens"], errors="coerce").fillna(0)
     flow = flow.assign(Tokens=tokens)

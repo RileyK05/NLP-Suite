@@ -1,6 +1,6 @@
 """``nlp.viz``: the figure kit a script draws with, built on :mod:`core.viz.kit`.
 
-The pieces are the plan's (``docs/internal/SHOWCASE_FIGURES_PLAN.md`` section 3). They
+The pieces are described in ``docs/viz-panels.md`` (showcase figures and the figure kit). They
 draw onto an axis the caller made, take plain tables, and keep the suite's
 figure rules (the title is the finding, direct labels over legends, values
 where they are read, a background group in grey). A script uses them for the

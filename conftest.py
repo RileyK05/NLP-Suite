@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Sequence
+from functools import cache
 import hashlib
 import math
 import os
@@ -64,6 +65,7 @@ def pytest_configure(config: pytest.Config) -> None:
         config.addinivalue_line("filterwarnings", "ignore:invalid value encountered in dot:RuntimeWarning")
 
 
+@cache
 def has_spacy_model() -> bool:
     """Whether the default spaCy model is actually loadable.
 
@@ -78,6 +80,26 @@ def has_spacy_model() -> bool:
         return True
     except Exception:
         return False
+
+
+@pytest.fixture(scope="session")
+def require_spacy_model() -> None:
+    """Probe once, only when a selected integration test actually runs."""
+    if not has_spacy_model():
+        pytest.skip(f"needs spaCy model: python -m spacy download {spacy_model_name('en')}")
+
+
+@pytest.fixture
+def without_spacy_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise missing-model diagnostics on every machine, without loading NLP."""
+    from types import SimpleNamespace
+
+    from core.pipelines import spacy_backend
+
+    def missing_model(name: str) -> None:
+        raise OSError(f"test model unavailable: {name}")
+
+    monkeypatch.setattr(spacy_backend, "import_optional", lambda name: SimpleNamespace(load=missing_model))
 
 
 #: The corpus the desktop is actually developed against: 87 State of the Union

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import datetime, timedelta
 import html as html_lib
 import math
 
 import pandas as pd
 
 from core.result import Diagnostic, Result
+from core.viz.panel_maps import LAND_FILL, cell_center, cell_color, svg_world
 
 __all__ = ["heatmap_html", "kml", "tour_kml"]
 
@@ -16,6 +19,10 @@ __all__ = ["heatmap_html", "kml", "tour_kml"]
 # both writers skip such rows rather than emit them.
 _MAX_LAT = 90.0
 _MAX_LON = 180.0
+_CELL_LABEL_LIMIT = 6
+_UNRESOLVED = frozenset({"UNKNOWN", "UNAVAILABLE"})
+#: Where a tour's clock starts; each stop is one second after the last.
+_TOUR_START = datetime(2026, 1, 1)
 
 
 def _finite(value: object) -> float | None:
@@ -34,11 +41,18 @@ def _coords(row: pd.Series, lat_col: str, lon_col: str) -> tuple[float, float] |
     too. ``kml`` previously checked only for NaN, so an out-of-range latitude
     reached the document while ``tour_kml`` dropped it.
     """
+    if "Status" in row and str(row["Status"]).strip().upper() in _UNRESOLVED:
+        return None
     lat = _finite(row[lat_col])
     lon = _finite(row[lon_col])
     if lat is None or lon is None or abs(lat) > _MAX_LAT or abs(lon) > _MAX_LON:
         return None
     return lat, lon
+
+
+def _weight(value: object) -> float:
+    number = _finite(value)
+    return max(0.0, number) if number is not None else 1.0
 
 
 def kml(frame: pd.DataFrame, lat_col: str = "Lat", lon_col: str = "Lon", name_col: str = "Place") -> Result[str]:
@@ -73,7 +87,7 @@ def kml(frame: pd.DataFrame, lat_col: str = "Lat", lon_col: str = "Lon", name_co
         diags = (
             Diagnostic.warning(
                 "KML_SKIPPED_ROWS",
-                f"{skipped} row(s) had missing or out-of-range coordinates and were skipped",
+                f"{skipped} row(s) were unresolved or had invalid coordinates and were skipped",
                 count=skipped,
             ),
         )
@@ -124,7 +138,10 @@ def tour_kml(  # noqa: PLR0913 -- column names plus grouping/title, all keyword-
                 skipped += 1
                 continue
             lat, lon = pair
-            whens.append(f"          <when>2026-01-01T00:{idx // 60:02d}:{idx % 60:02d}Z</when>")
+            # One second per stop from a fixed start; timedelta rolls minutes
+            # into hours (and days), where "00:60:00" would be invalid KML.
+            when = (_TOUR_START + timedelta(seconds=idx)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            whens.append(f"          <when>{when}</when>")
             coords.append(f"          {lon},{lat},0")
             name = html_lib.escape(str(row[name_col])) if name_col in frame.columns else f"{lat},{lon}"
             placemarks.append(
@@ -163,50 +180,70 @@ def tour_kml(  # noqa: PLR0913 -- column names plus grouping/title, all keyword-
         diags = (
             Diagnostic.warning(
                 "TOUR_SKIPPED_ROWS",
-                f"{skipped} row(s) had missing or out-of-range coordinates and were skipped",
+                f"{skipped} row(s) were unresolved or had invalid coordinates and were skipped",
             ),
         )
     return Result.success(doc, *diags)
 
 
-def heatmap_html(
+def heatmap_html(  # noqa: PLR0913 -- optional columns and grid size
     frame: pd.DataFrame,
     lat_col: str = "Lat",
     lon_col: str = "Lon",
     weight_col: str | None = None,
     title: str = "",
+    *,
+    name_col: str = "Place",
+    cell_degrees: int = 10,
 ) -> Result[str]:
-    """Simple heatmap as an HTML table with intensity bars.
-
-    If leaflet is desired, the caller can enhance the HTML; this stub is
-    dependency-free and offline.
-    """
+    """Self-contained geographic grid, with counts and coordinates on hover."""
     if frame.empty:
         return Result.failure(Diagnostic.error("HEATMAP_EMPTY", "frame is empty"))
     if lat_col not in frame.columns or lon_col not in frame.columns:
         return Result.failure(
             Diagnostic.error("HEATMAP_MISSING_COLUMN", f"columns {lat_col!r}, {lon_col!r} must be in frame")
         )
-    title_html = f"<h3>{html_lib.escape(title)}</h3>" if title else ""
-    # Weight for intensity
-    if weight_col and weight_col in frame.columns:
-        vals = pd.to_numeric(frame[weight_col], errors="coerce").fillna(1).tolist()
-    else:
-        vals = [1.0] * len(frame)
-    max_v = max(vals) if vals else 1
-    rows_html = ""
-    for (_, row), w in zip(frame.iterrows(), vals, strict=True):
-        lat = html_lib.escape(str(row[lat_col]))
-        lon = html_lib.escape(str(row[lon_col]))
-        pct = (float(w) / max_v * 100) if max_v else 0
-        rows_html += (
-            f"<tr><td>{lat}</td><td>{lon}</td>"
-            f"<td><div style='background:#FF4500;height:12px;width:{pct:.1f}%'></div></td>"
-            f"<td>{w}</td></tr>"
+    if cell_degrees < 1 or 180 % cell_degrees:
+        return Result.failure(Diagnostic.error("HEATMAP_BAD_GRID", "grid width must be a positive divisor of 180"))
+    totals: dict[tuple[float, float], float] = defaultdict(float)
+    labels: dict[tuple[float, float], list[str]] = defaultdict(list)
+    skipped = 0
+    for _, row in frame.iterrows():
+        pair = _coords(row, lat_col, lon_col)
+        if pair is None:
+            skipped += 1
+            continue
+        lat, lon = pair
+        center = cell_center(lon, lat, cell_degrees)
+        totals[center] += _weight(row.get(weight_col, 1) if weight_col else 1)
+        labels[center].append(f"{row.get(name_col, 'Place')} ({lat:g}°, {lon:g}°)")
+    if not totals:
+        return Result.failure(Diagnostic.error("HEATMAP_NO_COORDS", "no valid coordinates"))
+    maximum = max(totals.values())
+    half = cell_degrees / 2
+    cells = []
+    for (x, y), value in totals.items():
+        if value <= 0:
+            continue
+        names = labels[x, y]
+        sample = ", ".join(names[:_CELL_LABEL_LIMIT])
+        more = len(names) - _CELL_LABEL_LIMIT
+        rest = f" and {more} more" if more > 0 else ""
+        caption = html_lib.escape(f"Total {value:,g} from {len(names)} rows · {sample}{rest}", quote=True)
+        cells.append(
+            f'<rect x="{x - half:g}" y="{-y - half:g}" width="{cell_degrees}" height="{cell_degrees}" '
+            f'fill="{cell_color(value, maximum)}" stroke="{LAND_FILL}" stroke-width="0.4" '
+            f'tabindex="0" aria-label="{caption}"><title>{caption}</title></rect>'
         )
-    html_str = (
-        f"{title_html}<table border='1' cellpadding='4' style='border-collapse:collapse;width:100%'>"
-        f"<tr><th>Lat</th><th>Lon</th><th>Heat</th><th>Weight</th></tr>"
-        f"{rows_html}</table>"
+    safe_title = html_lib.escape(title or "Place concentration")
+    measure = f"{html_lib.escape(weight_col)} total" if weight_col and weight_col in frame else "Rows"
+    caption = f"{measure} per {cell_degrees}° cell · Maximum {maximum:,g} · Natural Earth land"
+    diagnostics = (
+        (Diagnostic.warning("HEATMAP_SKIPPED_ROWS", f"{skipped} unresolved or invalid rows skipped", count=skipped),)
+        if skipped
+        else ()
     )
-    return Result.success(html_str)
+    return Result.success(
+        f"<h3>{safe_title}</h3>{svg_world(''.join(cells), safe_title)}<p>{caption}</p>",
+        *diagnostics,
+    )

@@ -30,8 +30,12 @@ coursework material are excluded by `MANIFEST.in`, and `tests/test_distribution.
 enforces that boundary.
 
 - Original code (this suite), no third-party source copied in.
+- `core/viz/world_land.py`: Natural Earth 1:110m land outlines (v5.1.2),
+  public domain, the basemap of the geography figures. Credited in the file
+  and in every map's caption; no license text is required.
 - `tests/fixtures/`: hand-built mini lexicons/corpora (a few rows each,
-  invented values) — no oracle bytes.
+  invented values) — no oracle bytes. `tests/fixtures/figures/` holds suite
+  outputs over twelve State of the Union addresses (public domain).
 - `corpus/`: NOT shipped. It is gitignored and absent from both the sdist and
   the installer. Local copies are POTUS State of the Union addresses (public
   domain, U.S. federal government work), kept for the owner's own research.

@@ -150,6 +150,12 @@ class TestLocationsByDocument:
 
 
 class TestNominatimGeocoder:
+    def test_a_blank_place_is_unknown_not_an_outage(self) -> None:
+        geocoder = NominatimGeocoder(request_fn=lambda *_args: list(NOMINATIM_OK))
+        table = geocoder.geocode_many(["Paris", "  "])
+        assert list(table.unwrap()["Status"]) == ["OK", "UNKNOWN"]
+        assert all(d.severity.name != "ERROR" for d in table.diagnostics)
+
     def test_parses_coordinates_and_sends_the_suite_user_agent(self) -> None:
         seen: list[tuple[str, dict[str, str]]] = []
 
@@ -274,7 +280,7 @@ class TestPinmapHtml:
         assert any(d.code == "PINS_PLOTLY_UNAVAILABLE" for d in result.diagnostics)
         assert html.count("<circle") == 2
         assert "r='10.0'" in html
-        assert "r='3.7'" in html
+        assert "r='3.2'" in html
 
     def test_all_rows_invalid_is_a_failure(self) -> None:
         frame = pd.DataFrame({"Lat": [float("nan")], "Lon": [0.0], "Place": ["Nowhere"]})
@@ -468,3 +474,12 @@ class TestCliArguments:
         result = geocode_cli.geocode_places("offline", [])
         assert result.ok
         assert list(result.unwrap().columns) == ["Place", "Lat", "Lon", "Status"]
+
+
+def test_a_blank_weight_does_not_make_every_pin_radius_nan(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "plotly.graph_objects", None)  # the SVG fallback writes the radii
+    frame = pd.DataFrame({"Lat": [48.85, 51.5], "Lon": [2.35, -0.12], "Place": ["Paris", "London"], "Count": [None, 3]})
+    html = pinmap_html(frame, weight_col="Count").unwrap()
+    assert "nan" not in html.lower()

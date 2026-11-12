@@ -126,12 +126,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     summary_frame = summary.unwrap()
 
-    from core.gis.mapping import kml
+    from core.gis.mapping import heatmap_html, kml
     from core.gis.pins import pinmap_html
 
     artifacts: list[tuple[str, object, str, str]] = [
         (locations, "svo_locations.csv", "places per document", "table"),
         (summary_frame, "svo_geocoded.csv", "SVO rows per geocoded place", "table"),
+        (mapped.unwrap(), "svo_mapped.csv", "Subject-verb-object triples by place", "table"),
     ]
     # No geocoded place means no map exists to draw; the tables still report
     # that finding, and the envelope says why the map artifacts are absent.
@@ -154,6 +155,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         artifacts.append((pin.unwrap(), "svo_map.html", "SVO pin map", "chart"))
         artifacts.append((marks.unwrap(), "svo_map.kml", "SVO KML placemarks", "map"))
+        heat = heatmap_html(summary_frame, weight_col="SVO rows", title="Narrative triple concentration")
+        extra_diags.extend(heat.diagnostics)
+        if heat.value is not None:
+            artifacts.append((heat.unwrap(), "svo_heatmap.html", "SVO concentration map", "chart"))
 
     writer = make_writer(args, corpus, tool="svo_map", params=vars(args))
     for payload, name, description, kind in artifacts:

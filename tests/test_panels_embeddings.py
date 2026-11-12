@@ -55,7 +55,7 @@ def test_top_n_is_applied_after_score_ordering_and_bad_scores_are_reported() -> 
     result = WORD2VEC_GENSIM_NEIGHBOURS.build(
         frame,
         WORD2VEC_GENSIM_NEIGHBOURS.defaults() | {"top-n": 1},
-        Provenance(tool="word2vec_gensim", panel=WORD2VEC_GENSIM_NEIGHBOURS.name),
+        Provenance(tool="word_vectors_gensim", panel=WORD2VEC_GENSIM_NEIGHBOURS.name),
     )
     prepared = result.unwrap()
 
@@ -110,7 +110,7 @@ def test_tsne_projection_drops_bad_coordinates_and_rejects_ambiguous_source_rows
     result = WORD2VEC_GENSIM_TSNE.build(
         frame,
         WORD2VEC_GENSIM_TSNE.defaults(),
-        Provenance(tool="word2vec_gensim", panel=WORD2VEC_GENSIM_TSNE.name),
+        Provenance(tool="word_vectors_gensim", panel=WORD2VEC_GENSIM_TSNE.name),
     )
     assert [mark.label for mark in result.unwrap().marks] == ["valid"]
     assert "PANEL_BAD_NUMERIC" in [diagnostic.code for diagnostic in result.diagnostics]
@@ -119,7 +119,7 @@ def test_tsne_projection_drops_bad_coordinates_and_rejects_ambiguous_source_rows
     ambiguous = WORD2VEC_BERT_TSNE.build(
         duplicate,
         WORD2VEC_BERT_TSNE.defaults(),
-        Provenance(tool="word2vec_bert", panel=WORD2VEC_BERT_TSNE.name),
+        Provenance(tool="word_vectors_bert", panel=WORD2VEC_BERT_TSNE.name),
     )
     assert [diagnostic.code for diagnostic in ambiguous.diagnostics] == ["PANEL_AMBIGUOUS_EVIDENCE"]
 
@@ -166,7 +166,7 @@ def test_saved_vector_query_reports_missing_words_and_bad_rows() -> None:
     missing = WORD2VEC_GENSIM_VECTOR_QUERY.build(
         frame,
         WORD2VEC_GENSIM_VECTOR_QUERY.defaults() | {"query": "absent"},
-        Provenance(tool="word2vec_gensim", panel=WORD2VEC_GENSIM_VECTOR_QUERY.name),
+        Provenance(tool="word_vectors_gensim", panel=WORD2VEC_GENSIM_VECTOR_QUERY.name),
     )
     assert missing.value is None
     assert missing.diagnostics[0].code == "PANEL_QUERY_NOT_FOUND"
@@ -174,7 +174,7 @@ def test_saved_vector_query_reports_missing_words_and_bad_rows() -> None:
     found = WORD2VEC_GENSIM_VECTOR_QUERY.build(
         frame,
         WORD2VEC_GENSIM_VECTOR_QUERY.defaults() | {"query": "known"},
-        Provenance(tool="word2vec_gensim", panel=WORD2VEC_GENSIM_VECTOR_QUERY.name),
+        Provenance(tool="word_vectors_gensim", panel=WORD2VEC_GENSIM_VECTOR_QUERY.name),
     )
     assert found.unwrap().marks[0].label == "other"
     assert [diagnostic.code for diagnostic in found.diagnostics] == ["PANEL_BAD_VECTORS"]
@@ -190,7 +190,7 @@ def test_blank_saved_vector_query_starts_with_most_frequent_usable_word() -> Non
     result = WORD2VEC_GENSIM_VECTOR_QUERY.build(
         frame,
         WORD2VEC_GENSIM_VECTOR_QUERY.defaults(),
-        Provenance(tool="word2vec_gensim", panel=WORD2VEC_GENSIM_VECTOR_QUERY.name),
+        Provenance(tool="word_vectors_gensim", panel=WORD2VEC_GENSIM_VECTOR_QUERY.name),
     )
     prepared = result.unwrap()
     assert prepared.title == "Words nearest to government"
@@ -205,7 +205,7 @@ def test_tsne_maps_the_most_frequent_content_words_when_counts_are_present() -> 
     result = WORD2VEC_GENSIM_TSNE.build(
         pd.DataFrame(rows),
         WORD2VEC_GENSIM_TSNE.defaults() | {"words": 20, "label-count": 5},
-        Provenance(tool="word2vec_gensim", panel=WORD2VEC_GENSIM_TSNE.name),
+        Provenance(tool="word_vectors_gensim", panel=WORD2VEC_GENSIM_TSNE.name),
     )
     prepared = result.unwrap()
     assert "the" not in [mark.label for mark in prepared.marks], "function words are hidden by default"

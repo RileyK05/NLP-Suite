@@ -20,7 +20,7 @@ FIELDS = ("what", "how", "formula", "question", "interpretation", "limits", "set
 
 
 def test_every_guide_has_every_section() -> None:
-    assert len(GUIDES) == 61
+    assert len(GUIDES) == 62
     for name, guide in GUIDES.items():
         assert list(guide) == list(FIELDS), name
         for field, text in guide.items():

@@ -84,19 +84,19 @@ _ANEW_NOTES = (
     "Annual views require a Year column attached to dated document rows. Undated documents remain in the score table and are omitted from annual means.",
 )
 _NEURAL_LIMITS = {
-    "sentiment_neural_bert": (
+    "polarity_distilbert_sst2": (
         "Compound is the signed winning-class confidence in [-1, +1] from the selected Hugging Face classifier. Confidence is model-specific and not necessarily calibrated.",
         "The model classifies sentence text as a whole; it is not a word-level explanation. Different model checkpoints can produce different scores.",
     ),
-    "sentiment_neural_spacy": (
+    "polarity_spacy": (
         "Compound is the signed confidence from the loaded spaCy textcat head in [-1, +1]. The pipeline must contain a trained sentiment head; vanilla en_core_web_sm has none.",
         "The score reflects this textcat model and is not calibrated against the other sentiment backends.",
     ),
-    "sentiment_neural_stanza": (
+    "polarity_stanza": (
         "Stanza emits a hard negative, neutral, or positive class. Compound is therefore only -1, 0, or +1; Score is not a graded confidence.",
         "This three-way output is coarser than confidence-based classifiers and should not be read as equally detailed evidence.",
     ),
-    "sentiment_neural_corenlp": (
+    "polarity_corenlp": (
         "CoreNLP's RNTN five-class sentiment is mapped to Compound values from -1 to +1 in half-step increments.",
         "The score is specific to the CoreNLP model and server version; it is not calibrated against the other sentiment backends.",
     ),
@@ -446,7 +446,7 @@ def _builder(  # noqa: PLR0913 - declaration maps each public table schema to a 
 
 SENTIMENT_VADER_SENTENCES = _builder(
     name="sentiment_vader_sentences",
-    tool="sentiment_vader_anew",
+    tool="polarity_vader",
     title="VADER sentence sentiment",
     question="Which sentences does VADER score as the most positive and the most negative?",
     score_column=COMPOUND,
@@ -458,7 +458,7 @@ SENTIMENT_VADER_SENTENCES = _builder(
 )
 SENTIMENT_VADER_DOCUMENTS = _builder(
     name="sentiment_vader_documents",
-    tool="sentiment_vader_anew",
+    tool="polarity_vader",
     title="VADER document sentiment",
     question="Which documents does VADER score as the most positive and the most negative overall?",
     score_column=COMPOUND,
@@ -470,7 +470,7 @@ SENTIMENT_VADER_DOCUMENTS = _builder(
 )
 SENTIMENT_ANEW_VALENCE = _builder(
     name="sentiment_anew_valence",
-    tool="sentiment_vader_anew",
+    tool="valence_anew",
     title="ANEW document valence",
     question="Which documents use the most pleasant and the most unpleasant words, by ANEW's ratings?",
     score_column=VALENCE,
@@ -546,45 +546,45 @@ def _annual_builder(tool: str, title: str, score_column: str, unit: str, notes: 
     return definition
 
 
-SENTIMENT_BERT_SENTENCES, SENTIMENT_BERT_DOCUMENTS = _neural("sentiment_neural_bert", "BERT")
-SENTIMENT_SPACY_SENTENCES, SENTIMENT_SPACY_DOCUMENTS = _neural("sentiment_neural_spacy", "spaCy")
-SENTIMENT_STANZA_SENTENCES, SENTIMENT_STANZA_DOCUMENTS = _neural("sentiment_neural_stanza", "Stanza")
-SENTIMENT_CORENLP_SENTENCES, SENTIMENT_CORENLP_DOCUMENTS = _neural("sentiment_neural_corenlp", "CoreNLP")
+SENTIMENT_BERT_SENTENCES, SENTIMENT_BERT_DOCUMENTS = _neural("polarity_distilbert_sst2", "BERT")
+SENTIMENT_SPACY_SENTENCES, SENTIMENT_SPACY_DOCUMENTS = _neural("polarity_spacy", "spaCy")
+SENTIMENT_STANZA_SENTENCES, SENTIMENT_STANZA_DOCUMENTS = _neural("polarity_stanza", "Stanza")
+SENTIMENT_CORENLP_SENTENCES, SENTIMENT_CORENLP_DOCUMENTS = _neural("polarity_corenlp", "CoreNLP")
 
 SENTIMENT_VADER_OVER_TIME = _annual_builder(
-    "sentiment_vader_anew",
+    "polarity_vader",
     "VADER document sentiment over time",
     COMPOUND,
     "VADER compound, [-1, +1]",
     _VADER_NOTES,
 )
 SENTIMENT_BERT_OVER_TIME = _annual_builder(
-    "sentiment_neural_bert",
+    "polarity_distilbert_sst2",
     "BERT document sentiment over time",
     MEAN_COMPOUND,
     "signed Compound, [-1, +1]",
-    _NEURAL_LIMITS["sentiment_neural_bert"],
+    _NEURAL_LIMITS["polarity_distilbert_sst2"],
 )
 SENTIMENT_SPACY_OVER_TIME = _annual_builder(
-    "sentiment_neural_spacy",
+    "polarity_spacy",
     "spaCy document sentiment over time",
     MEAN_COMPOUND,
     "signed Compound, [-1, +1]",
-    _NEURAL_LIMITS["sentiment_neural_spacy"],
+    _NEURAL_LIMITS["polarity_spacy"],
 )
 SENTIMENT_STANZA_OVER_TIME = _annual_builder(
-    "sentiment_neural_stanza",
+    "polarity_stanza",
     "Stanza document sentiment over time",
     MEAN_COMPOUND,
     "signed Compound, [-1, +1]",
-    _NEURAL_LIMITS["sentiment_neural_stanza"],
+    _NEURAL_LIMITS["polarity_stanza"],
 )
 SENTIMENT_CORENLP_OVER_TIME = _annual_builder(
-    "sentiment_neural_corenlp",
+    "polarity_corenlp",
     "CoreNLP document sentiment over time",
     MEAN_COMPOUND,
     "signed Compound, [-1, +1]",
-    _NEURAL_LIMITS["sentiment_neural_corenlp"],
+    _NEURAL_LIMITS["polarity_corenlp"],
 )
 
 ANNUAL_SENTIMENT_PANELS = (

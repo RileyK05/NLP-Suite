@@ -54,9 +54,7 @@ MEASURES: tuple[Measure, ...] = (
         "lexical_diversity", "lexical_diversity.csv", "MTLD", "vocabulary diversity (MTLD)", "more varied vocabulary"
     ),
 )
-TONE = Measure(
-    "sentiment_vader_anew", "vader.csv", "Compound", "tone (VADER compound, -1 to 1)", "a more positive tone"
-)
+TONE = Measure("polarity_vader", "vader.csv", "Compound", "tone (VADER compound, -1 to 1)", "a more positive tone")
 
 
 def measure_table(

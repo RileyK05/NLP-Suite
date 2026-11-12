@@ -37,6 +37,7 @@ from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
 from core.analysis.postags import NOUN_TAGS
 from core.conll.schema import Col
+from core.deps import OptionalDependencyError, import_optional
 from core.result import Diagnostic, Result
 
 __all__ = [
@@ -541,13 +542,16 @@ def fit_lda(
         )
 
     try:
-        from gensim.corpora import Dictionary
-        from gensim.models.ldamodel import LdaModel
-    except ImportError:
+        Dictionary = import_optional("gensim.corpora", attr="Dictionary")
+        LdaModel = import_optional("gensim.models.ldamodel", attr="LdaModel")
+    except OptionalDependencyError as exc:
+        # A version gate or ABI failure at import time is a broken install, not
+        # an absent one; exc says which, so the diagnostic can differ.
+        detail = "not installed" if exc.missing else f"installed but broken ({exc.reason})"
         return Result.failure(
             Diagnostic.error(
                 "TOPIC_BACKEND_MISSING",
-                "Gensim is not installed; topic modeling needs the optional 'topics' extra",
+                f"Gensim is {detail}; topic modeling needs the optional 'topics' extra",
                 fix="python -m pip install nlp-suite-ng[topics]",
             )
         )

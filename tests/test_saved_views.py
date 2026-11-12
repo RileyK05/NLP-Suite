@@ -235,14 +235,27 @@ def test_a_view_of_a_non_csv_artifact_is_refused(
 
 
 def test_an_unknown_chart_kind_is_refused_at_the_boundary(client: TestClient, project: dict[str, Any]) -> None:
-    """The engine draws more kinds than the workbench does. A view is reopened
-    *in* the workbench, so a kind it cannot draw would save and never open."""
+    """A view is reopened *in* the workbench, so a kind it cannot draw would
+    save and never open. The workbench now draws every engine kind, so the
+    refusal is about a name that is not a kind at all."""
     table = a_table(client, project["id"])
     refused = client.post(
         f"/api/projects/{project['id']}/views",
-        json=body(table, settings={"kind": "sunburst"}),
+        json=body(table, settings={"kind": "spiral"}),
     )
     assert refused.status_code == 422
+
+
+def test_a_sunburst_view_is_accepted_now_that_the_workbench_draws_it(
+    client: TestClient, project: dict[str, Any]
+) -> None:
+    table = a_table(client, project["id"])
+    saved = client.post(
+        f"/api/projects/{project['id']}/views",
+        json=body(table, settings={"kind": "sunburst", "group": "group"}),
+    )
+    assert saved.status_code == 200
+    assert saved.json()["settings"]["kind"] == "sunburst"
 
 
 def test_an_unknown_setting_is_refused_rather_than_stored(client: TestClient, project: dict[str, Any]) -> None:
@@ -522,7 +535,7 @@ def test_a_restored_view_with_impossible_settings_is_refused(
             data = source.read(item.filename)
             if item.filename == "project.json":
                 manifest = _json.loads(data)
-                manifest["views"][0]["settings"]["kind"] = "sunburst"
+                manifest["views"][0]["settings"]["kind"] = "spiral"
                 data = _json.dumps(manifest, ensure_ascii=False).encode("utf-8")
             target.writestr(item.filename, data)
 

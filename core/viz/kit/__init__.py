@@ -1,6 +1,6 @@
 """The figure kit: the drawing pieces a script (and a showcase figure) builds on.
 
-``docs/internal/SHOWCASE_FIGURES_PLAN.md`` section 3 names the pieces. They sit on
+``docs/viz-panels.md`` (showcase figures and the figure kit) names the pieces. They sit on
 :mod:`core.viz.static` (house style, measured labels, the overlap linter,
 number formatting), which already draws the app's publication panels, so a
 kit figure and a panel figure are the same look with the same colours.

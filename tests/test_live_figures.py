@@ -24,6 +24,9 @@ from desktop_backend.live import LiveResult, Session
 from desktop_backend.live_panels import draw_live_panel, live_panel, live_panels_offered
 from desktop_backend.server import reading_of
 
+#: Every figure a keyness table can feed, in registration order.
+KEYNESS_FIGURES = ["keyness_volcano", "keyness_top_distinctive"]
+
 
 def keyness_frame() -> pd.DataFrame:
     """The first rows of the real keyness table (1930s-60s against the rest)."""
@@ -78,7 +81,7 @@ class TestLiveFigures:
     def test_every_figure_the_frames_can_feed_is_offered(self) -> None:
         result = LiveResult(tool="keyness", ok=True, frames={"keyness.csv": keyness_frame()})
         offered = live_panels_offered(result)
-        assert [info["name"] for info in offered] == ["keyness_volcano"]
+        assert [info["name"] for info in offered] == KEYNESS_FIGURES
         assert offered[0]["question"]
 
     def test_a_figure_is_found_in_whichever_table_feeds_it(self) -> None:
@@ -88,7 +91,7 @@ class TestLiveFigures:
             ok=True,
             frames={"summary.csv": pd.DataFrame({"x": [1]}), "keyness.csv": keyness_frame()},
         )
-        assert [info["name"] for info in live_panels_offered(result)] == ["keyness_volcano"]
+        assert [info["name"] for info in live_panels_offered(result)] == KEYNESS_FIGURES
         first = live_panel(result, {})
         assert first is not None and first["ok"] is True
 
@@ -109,7 +112,7 @@ class TestReadings:
     def test_a_tool_with_figures_gets_no_generic_charts(self) -> None:
         reading = reading_of(keyness_frame(), "keyness")
         assert reading["recommended_charts"] == []
-        assert [figure["panel"] for figure in reading["figures"]] == ["keyness_volcano"]
+        assert [figure["panel"] for figure in reading["figures"]] == KEYNESS_FIGURES
 
     def test_a_table_first_tool_says_why(self) -> None:
         frame = pd.DataFrame({"Left": ["a"], "Keyword": ["freedom"], "Right": ["b"], "Document": ["d.txt"]})

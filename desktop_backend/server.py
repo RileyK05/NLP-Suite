@@ -29,6 +29,7 @@ from starlette.concurrency import run_in_threadpool
 from core.file_ops.converter import supported_suffixes
 from core.profiler.labels import param_label, tool_label
 from core.result import Diagnostic, Result
+from core.script.session import SuiteError
 from desktop_backend.archives import MAX_ARCHIVE_BYTES, backup, restore
 from desktop_backend.catalog import desktop_spec
 from desktop_backend.environment import availability, components, inventory
@@ -349,7 +350,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     async def authorize(request: Request) -> None:
         supplied = request.headers.get("Authorization", "").removeprefix("Bearer ")
-        if not secrets.compare_digest(supplied, token):
+        if not secrets.compare_digest(supplied.encode(), token.encode()):
             raise HTTPException(401, "This workspace connection has expired. Reopen NLP Suite.")
         origin = request.headers.get("origin")
         if origin and origin not in [*origins, str(request.base_url).rstrip("/")]:
@@ -388,6 +389,13 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
     async def value_error(request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
+    @app.exception_handler(SuiteError)
+    async def suite_error(request: Request, exc: SuiteError) -> JSONResponse:
+        """The notebook library's own refusal, already said in words (a changed
+        or missing corpus file, say). Not a ValueError, so without this the
+        Scripts page got a bare 500 where every other page shows the reason."""
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
     @app.exception_handler(KeyError)
     async def missing(request: Request, exc: KeyError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=404)
@@ -405,7 +413,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.get("/api/health", dependencies=secured)
     def health() -> dict[str, Any]:
-        return {"ok": True, "version": "0.5.1", "workspace": str(workspace.root)}
+        return {"ok": True, "version": "0.5.2", "workspace": str(workspace.root)}
 
     @app.get("/api/setup", dependencies=secured)
     def setup() -> dict[str, Any]:
@@ -800,7 +808,9 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         # R-C4: a question about documents that are no longer loaded is
         # refused (409), never silently answered against the wrong corpus.
         snapshot = held.resolved(body.snapshot_id) if body.snapshot_id else held.resolved()
-        result = await run_in_threadpool(held.analyse, body.tool, body.params, project_axis(workspace, project_id))
+        result = await run_in_threadpool(
+            held.analyse, body.tool, body.params, project_axis(workspace, project_id), snapshot=snapshot
+        )
         # R-C8: abandoned mid-flight. The fit ran; its answer is discarded
         # rather than delivered to a question that is gone.
         if held.analysis_cancelled(body.request_id):
@@ -1476,7 +1486,10 @@ _ANALYSIS_WRAPPERS = (
     "core.analysis.lda",
     # Paragraph segmentation for the topic-flow table, imported inside the LDA adapter.
     "core.analysis.topic_flow",
-    "core.analysis.sentiment_vader_anew",
+    "core.analysis.polarity_vader",
+    "core.analysis.valence_anew",
+    "core.analysis.polarity_sentiwordnet",
+    "core.analysis.happiness_hedonometer",
     "core.analysis.date_annotator",
     "core.analysis.gender_annotator",
     "core.analysis.gender_guess",
@@ -1487,8 +1500,8 @@ _ANALYSIS_WRAPPERS = (
     "core.analysis.shape_reduction",
     "core.analysis.svo_map",
     "core.analysis.verb_analysis",
-    "core.analysis.word2vec_bert",
-    "core.analysis.doc_embeddings",
+    "core.analysis.word_vectors_bert",
+    "core.analysis.document_embeddings",
     # The model runtime every BERT-family tool reaches through default_backend.
     "core.models.onnx_backend",
 )

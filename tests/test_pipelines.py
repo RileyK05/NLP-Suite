@@ -13,11 +13,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-try:
-    import spacy
-except ImportError:
-    spacy = None  # type: ignore[assignment]
-
 from core.config import NLPConfig
 from core.io.reader import Corpus, Document, hash_text
 from core.pipelines.cache import PipelineCache
@@ -125,33 +120,24 @@ class TestCache:
         assert result.errors[0].code == "PIPELINE_NO_BUILDER"
 
 
-def _has_spacy_model() -> bool:
-    try:
-        spacy.load(spacy_model_name("en"))
-        return True
-    except Exception:
-        return False
-
-
 _requires_model = pytest.mark.model_integration
-_model_skip = pytest.mark.skipif(not _has_spacy_model(), reason="spaCy model not installed on this machine")
+_model_skip = pytest.mark.usefixtures("require_spacy_model")
 
 
 class TestSpacyBackend:
+    @pytest.mark.usefixtures("without_spacy_models")
     def test_missing_model_is_a_hard_failure_with_fix_command(self) -> None:
         # The no-silent-degradation contract: without a trained model the
         # build fails with PIPELINE_MODEL_MISSING and the exact fix. A blank
         # pipeline would strip POS/lemma/deps from every analysis while the
         # run still exited green — the worst class of failure this suite bans.
         result = build_spacy_pipeline("en", frozenset())
-        if result.ok:
-            # Model IS installed here: the contract is vacuously satisfied;
-            # the doctor test covers the missing-model path directly.
-            pytest.skip("model installed; hard-failure path not reachable")
+        assert not result.ok
         assert result.errors[0].code == "PIPELINE_MODEL_MISSING"
         fix = result.errors[0].context["fix"]
         assert "python -m spacy download" in fix
         assert spacy_model_name("en") in fix
+        assert "silently" in result.errors[0].message
 
     @_requires_model
     @_model_skip

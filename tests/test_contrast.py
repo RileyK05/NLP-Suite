@@ -182,7 +182,7 @@ def test_carried_over_passages_use_cached_vectors_and_keep_source_context(
             )
 
     backend = Backend()
-    monkeypatch.setattr("core.analysis.doc_embeddings.text_backend", lambda _model: Result.success(backend))
+    monkeypatch.setattr("core.analysis.document_embeddings.text_backend", lambda _model: Result.success(backend))
     alignment = align(corpus, ("Before", "After"), "field:Speaker")
     cache = VectorCache(tmp_path / "workspace")
     carry_spec = CarryoverSpec(("Before", "After"), {"family": ["families", "protect"]})
@@ -416,3 +416,168 @@ class TestPeriodsOnAnOrderAxis:
         found = align(Corpus((*self._two_books().docs, loose), "sha"), ["A", "B"], "period")
         assert found.unplaced == ("loose.txt",)
         assert "no period" in found.coverage("period")
+
+
+def test_a_blank_comparison_name_is_refused(two_projects: tuple[Workspace, str, str]) -> None:
+    """A blank name would be saved as "" and then refused on restore, failing the whole backup."""
+    from pydantic import ValidationError
+
+    from desktop_backend.comparisons import ComparisonBody
+
+    _workspace, addresses, inaugurals = two_projects
+    definition = _definition(addresses, inaugurals).model_dump()
+    with pytest.raises(ValidationError, match="Name the comparison"):
+        ComparisonBody(name="   ", definition=definition)
+    assert ComparisonBody(name="  Speeches ", definition=definition).name == "Speeches"
+
+
+def test_restoring_a_blank_comparison_name_generates_a_name(
+    two_projects: tuple[Workspace, str, str], tmp_path: Path
+) -> None:
+    """A backup made before blank names were refused still restores, under a generated name."""
+    import io
+    import json
+    import zipfile
+
+    from desktop_backend.archives import backup, restore
+    from desktop_backend.comparisons import ComparisonBody, comparisons, save_comparison
+
+    workspace, addresses, inaugurals = two_projects
+    save_comparison(
+        workspace, addresses, ComparisonBody(name="Speeches", definition=_definition(addresses, inaugurals))
+    )
+    archive = tmp_path / "blank-name.nlpsuite"
+    backup(workspace, addresses, archive)
+    with zipfile.ZipFile(archive) as incoming:
+        members = {name: incoming.read(name) for name in incoming.namelist()}
+    manifest = json.loads(members["project.json"])
+    assert len(manifest["comparisons"]) == 1
+    manifest["comparisons"][0]["name"] = ""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as outgoing:
+        for name, payload in members.items():
+            outgoing.writestr(name, json.dumps(manifest) if name == "project.json" else payload)
+    archive.write_bytes(buffer.getvalue())
+
+    restored = restore(workspace, archive)
+    saved = comparisons(workspace, restored["id"])
+    assert len(saved) == 1
+    assert saved[0]["name"]
+
+
+def test_a_field_alignment_is_stored_without_surrounding_space(two_projects: tuple[Workspace, str, str]) -> None:
+    _workspace, addresses, inaugurals = two_projects
+    assert _definition(addresses, inaugurals, alignment="field:  Speaker ").alignment == "field:Speaker"
+
+
+def test_the_preview_lines_up_a_detail_whatever_the_case_of_its_name(
+    two_projects: tuple[Workspace, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The engine reads "speaker" for field:Speaker, so the preview must offer it."""
+    from desktop_backend import comparison_routes
+
+    workspace, addresses, inaugurals = two_projects
+    held = {
+        addresses: [{"fields": {"Speaker": "Ada", "side": "x"}, "words": 1}],
+        inaugurals: [{"fields": {"speaker": " Ada "}, "words": 1}],
+    }
+    monkeypatch.setattr(comparison_routes, "resolve_side", lambda _ws, side: (None, held[side.project_id]))
+    found = preview(workspace, _definition(addresses, inaugurals))
+    assert found["alignments"] == [{"name": "Speaker", "shared_values": 1, "examples": ["Ada"]}]
+    assert set(found["sides"][1]["details"]) == {"speaker"}
+
+
+def test_a_queued_comparison_freezes_each_sides_text_cleaning(
+    two_projects: tuple[Workspace, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Like an ordinary run, a comparison reads the cleaning it was submitted with, not a later one."""
+    import json
+
+    workspace, addresses, inaugurals = two_projects
+    runner = Runner(workspace)
+    monkeypatch.setattr(runner.pool, "submit", lambda *args: None)
+    try:
+        job = runner.submit_contrast(addresses, _definition(addresses, inaugurals), "spacy", name="Frozen")
+    finally:
+        runner.close()
+    [stored] = [j for j in workspace.jobs(addresses) if j["id"] == job["id"]]
+    request = json.loads(stored["request"]) if isinstance(stored["request"], str) else stored["request"]
+    assert set(request["text_cleaning"]) == {addresses, inaugurals}
+
+
+def test_topic_shares_follow_each_document_even_when_the_model_skipped_one() -> None:
+    """The flow table numbers only the documents the model kept; sides come from names."""
+    from core.contrast.topics import topic_prevalence
+    from core.io.reader import Corpus, Document
+
+    docs = tuple(
+        Document(doc_id=i, path=Path(f"{name}.txt"), text="x", sha256=str(i), fields=(("Side", side),))
+        for i, name, side in ((1, "title", "A"), (2, "essay", "A"), (3, "reply", "B"))
+    )
+    corpus = Corpus(docs=docs, sha256="c")
+    # "title.txt" was only stopwords: the model never saw it, so "reply.txt" is its document 2.
+    flow = pd.DataFrame(
+        {
+            "Document ID": [1, 2],
+            "Document": ["essay.txt", "reply.txt"],
+            "Tokens": [10, 10],
+            "Dominant topic": [0, 1],
+        }
+    )
+    words = pd.DataFrame({"Topic": [0, 1], "Word": ["budget", "liberty"]})
+    _topics, prevalence = topic_prevalence({"topic_flow.csv": flow, "topics.csv": words}, corpus, ["A", "B"]).unwrap()
+    by_topic = prevalence.set_index("Topic")
+    assert by_topic.loc[0, "Leans towards"] == "A"
+    assert by_topic.loc[1, "Leans towards"] == "B"
+    assert by_topic.loc[1, "B share"] == 1.0
+
+
+def test_distinctive_words_reads_sides_whose_files_share_a_name(tmp_path: Path) -> None:
+    """Two projects that each hold a "speech.txt": the parser names them by path, and both still count."""
+    from core.conll.schema import Col
+    from core.contrast.words import distinctive_words
+    from core.io.reader import Corpus, Document, display_names
+
+    docs = (
+        Document(doc_id=1, path=tmp_path / "a" / "speech.txt", text="x", sha256="1", fields=(("Side", "A"),)),
+        Document(doc_id=2, path=tmp_path / "b" / "speech.txt", text="x", sha256="2", fields=(("Side", "B"),)),
+    )
+    corpus = Corpus(docs=docs, sha256="c")
+    shown = display_names(docs)
+    assert shown[1] != shown[2], "the parser's names are paths here, not the shared basename"
+    words = {1: ["budget"] * 30 + ["border"] * 2, 2: ["liberty"] * 30 + ["border"] * 2}
+    table = pd.DataFrame(
+        [
+            {
+                Col.DOCUMENT_ID.value: doc_id,
+                Col.DOCUMENT.value: shown[doc_id],
+                Col.SENTENCE_ID.value: 1,
+                Col.ID.value: position,
+                Col.FORM.value: w,
+                Col.LEMMA.value: w,
+                Col.POS.value: "NN",
+                Col.NER.value: "O",
+                Col.HEAD.value: 0,
+                Col.DEPREL.value: "dep",
+            }
+            for doc_id, ws in words.items()
+            for position, w in enumerate(ws, 1)
+        ]
+    )
+    found = distinctive_words(table, corpus, ["A", "B"]).unwrap()
+    tops = found.groupby("Side")["Word"].first().to_dict()
+    assert tops == {"A": "budget", "B": "liberty"}
+
+    from core.contrast.run import _compared_rows
+    from core.contrast.sides import Alignment
+
+    both = Alignment(groups={1: "all", 2: "all"}, shared=("all",), only={}, unplaced=())
+    assert len(_compared_rows(table, corpus, both)) == len(table), "keyness reads both sides' rows"
+
+
+def test_a_period_on_an_ordered_corpus_is_not_called_a_decade() -> None:
+    from core.contrast.run import _unit
+
+    assert _unit("period") == "decades"
+    assert _unit("period", "period") == "periods"
+    assert _unit("field:Speaker", "period") == "Speaker groups"

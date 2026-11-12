@@ -67,7 +67,7 @@ jobs:
       - name: Offline tests only (no model downloads, no cached models)
         run: |
           mkdir -p out/ci-pytest
-          python -m pytest -m "not model_integration" -p no:cacheprovider --basetemp=out/ci-pytest/offline
+          python -m pytest -m "not model_integration" --durations=20 -p no:cacheprovider --basetemp=out/ci-pytest/offline
       - name: Release-candidate consistency audit (registry/ledger/docs drift)
         run: python scripts/rc_audit.py
 
@@ -142,4 +142,4 @@ jobs:
       - name: Model-backed tests (explicit marker)
         run: |
           mkdir -p out/ci-pytest
-          python -m pytest -m model_integration -p no:cacheprovider --basetemp=out/ci-pytest/models
+          python -m pytest -m model_integration --durations=20 -p no:cacheprovider --basetemp=out/ci-pytest/models

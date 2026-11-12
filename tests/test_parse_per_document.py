@@ -19,10 +19,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from conftest import has_spacy_model
 from core.io.reader import Corpus, Document, corpus_fingerprint, hash_text
 from core.pipelines.cache import PipelineCache
-from core.pipelines.spacy_backend import build_spacy_pipeline, spacy_model_name
+from core.pipelines.spacy_backend import build_spacy_pipeline
+
+pytestmark = [pytest.mark.model_integration, pytest.mark.usefixtures("require_spacy_model")]
 
 _TEXTS = {
     "a.txt": "The bank raised rates. The nation faces hard times. We will put people to work.",
@@ -46,8 +47,6 @@ def _corpus(texts: dict[str, str], start: int = 1) -> Corpus:
 
 
 def _parse(corpus: Corpus) -> pd.DataFrame:
-    if not has_spacy_model():
-        pytest.skip(f"spaCy model not installed — run: python -m spacy download {spacy_model_name('en')}")
     cache = PipelineCache()
     cache.register("spacy", build_spacy_pipeline)  # type: ignore[arg-type]
     return cache.get("spacy", "en").unwrap().parse(corpus).unwrap()

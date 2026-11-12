@@ -1,11 +1,28 @@
 # Charts — user guide (FR-6.5)
 
 The `charts` tool renders publication-ready charts from an analyst CSV/TSV:
-`bar`, `line`, `scatter`, `histogram`, `box`, `heatmap`, plus the
+`bar`, `line`, `scatter`, `bubble`, `histogram`, `ecdf`, `box`, `heatmap`, plus the
 legacy-parity kinds `pie`, `sunburst`, `treemap`, `violin`, `radar`,
-`waffle`, and `calendar` (calendar heatmap). It runs offline
+`waffle`, `calendar` (calendar heatmap) and `sankey`. It runs offline
 (self-contained HTML by default), writes everything through the run envelope,
 and records full provenance (input hash, effective parameters, prepared data).
+
+## Live previews: every kind, without a job
+
+The desktop workbench draws the same sixteen kinds itself, from the page of
+the table already on screen. This is not a separate or reduced list: pressing
+**Pie**, **Treemap**, **Sunburst**, **Violin**, **Radar**, **Waffle**,
+**Calendar** or **Sankey** redraws in place, with clickable marks that filter
+the table beneath the figure. A long ranking turns on its side automatically
+when its labels would become a wall of rotated text, and every kind keeps the
+same engine palette. Publishing still hands the arrangement to `table_charts`,
+which draws the complete file and records it; the workbench says when the two
+will differ (ordering, or the 500-row preview page).
+
+Open **Visualizations** to try each chart on example data. Select a mark to
+inspect its rows, or download the figure as SVG or PNG with its title and
+legend. The **Analysis figures** tab lets you search the engine's figure
+directory by question, analysis, or shape.
 
 ## Quickstart
 
@@ -40,6 +57,9 @@ python -m tools.charts matrix.csv out/ --kind heatmap --x doc --y hits \
 # Histogram (common bin edges across groups; explicit bin count)
 python -m tools.charts lengths.csv out/ --kind histogram --x doc --y length --bins 12
 
+# Cumulative distribution: percentage of each genre at or below a sentence length
+python -m tools.charts lengths.csv out/ --kind ecdf --x length --y length --group genre
+
 # Pie: one level of slices (no --group; that is what sunburst is for)
 python -m tools.charts counts.csv out/ --kind pie --x cat --y n --agg sum
 
@@ -48,6 +68,10 @@ python -m tools.charts hierarchy.csv out/ --kind sunburst --x topic --y n \
     --group subtopic --agg sum --top-n 10
 python -m tools.charts hierarchy.csv out/ --kind treemap --x topic --y n \
     --group subtopic --agg sum
+
+# Sankey: x = source, --group = target, y = flow weight
+python -m tools.charts flows.csv out/ --kind sankey --x from --y n \
+    --group to --agg sum
 
 # Violin: full distribution per category (box + density, observations kept)
 python -m tools.charts lengths.csv out/ --kind violin --x doc --y length
@@ -59,7 +83,7 @@ python -m tools.charts profiles.csv out/ --kind radar --x metric --y score \
 # Waffle: category shares as a 10x10 grid of 100 squares
 python -m tools.charts counts.csv out/ --kind waffle --x cat --y n --agg sum
 
-# Calendar heatmap: x = date column, one row per month, weekday columns
+# Calendar heatmap: x = date column, one row per month, one column per day
 python -m tools.charts daily.csv out/ --kind calendar --x date --y count
 
 # TSV / encodings
@@ -84,6 +108,8 @@ python -m tools.charts cp1252.csv out/ --kind bar --x cat --y n --encoding cp125
 | Negative slices (pie/sunburst/treemap/waffle) | FAIL (`CHART_NEGATIVE_SLICE`) — slices encode magnitude |
 | Calendar x not a date column | FAIL (`CHART_NOT_DATETIME`) |
 | `--agg` with histogram | FAIL (`CHART_UNSUPPORTED`) — bins count directly |
+| Cumulative distribution | Each group reaches 100%. Ties share a step. The prepared CSV includes exact-value frequencies and cumulative counts. |
+| Calendar grid | Each observed date has its own cell. Dates without data are blank. An observed zero has a colored cell. |
 | `--top-n` on non-slice kinds | FAIL (`CHART_UNSUPPORTED`) |
 | `--horizontal` on non bar | FAIL (`CHART_UNSUPPORTED`) |
 | `--rate-per` without `--denominator-column` (or `--agg` != sum) | FAIL |

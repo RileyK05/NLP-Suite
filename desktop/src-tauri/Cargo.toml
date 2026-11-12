@@ -1,6 +1,6 @@
 [package]
 name = "nlp-suite-desktop"
-version = "0.5.1"
+version = "0.5.2"
 description = "Local-first NLP research workspace"
 edition = "2021"
 

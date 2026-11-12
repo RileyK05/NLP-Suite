@@ -1,4 +1,4 @@
-"""doc_embeddings: vectors, pairs in doc_similarity's shape, neighbours, map, search.
+"""document_embeddings: vectors, pairs in doc_similarity's shape, neighbours, map, search.
 
 Runs through the real ONNX runtime on the tiny fixture models (the vectors
 mean nothing; the shapes, contracts and plumbing are what is checked).
@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.analysis.doc_embeddings import embed_corpus, semantic_search
+from core.analysis.document_embeddings import embed_corpus, semantic_search
 
 pytest.importorskip("onnxruntime")
 
@@ -86,7 +86,7 @@ class TestEmbedCorpus:
         from core.viz.panels import prepare_panel
 
         tables = embed_corpus(frame()).unwrap()
-        built = prepare_panel("doc_embeddings_heatmap", tables.pairs)
+        built = prepare_panel("document_embeddings_heatmap", tables.pairs)
         assert built.value is not None, built.diagnostics
         prepared = built.unwrap()
         assert prepared.title == "Documents by meaning"
@@ -135,7 +135,7 @@ class TestAdapter:
         from core.profiler.executor import ADAPTERS, BatchContext
 
         ctx = BatchContext(corpus=None, table=frame())
-        result = ADAPTERS["doc_embeddings"](
+        result = ADAPTERS["document_embeddings"](
             ctx, {"model": "granite-embedding-english-r2", "unit": "document", "top-n": 3, "query": "jobs", "seed": 1}
         )
         assert result.ok, result.diagnostics
@@ -155,7 +155,7 @@ class TestVectorCache:
         return {str(i): f"sha-{i}" for i in range(1, 6)}
 
     def test_a_second_run_reads_the_cache(self, granite: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from core.analysis import doc_embeddings as mod
+        from core.analysis import document_embeddings as mod
         from core.models.vector_cache import VectorCache
 
         cache = VectorCache(tmp_path)
@@ -178,7 +178,7 @@ class TestVectorCache:
     def test_a_changed_document_is_recomputed_while_the_rest_are_not(
         self, granite: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from core.analysis import doc_embeddings as mod
+        from core.analysis import document_embeddings as mod
         from core.models.vector_cache import VectorCache
 
         cache = VectorCache(tmp_path)

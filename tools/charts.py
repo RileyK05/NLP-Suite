@@ -41,7 +41,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="charts",
         description=(
-            "Publication-ready charts over a CSV: bar/line/scatter/histogram/box/heatmap plus "
+            "Publication-ready charts over a CSV: bar/line/scatter/histogram/ecdf/box/heatmap plus "
             "pie/sunburst/treemap/violin/radar/waffle/calendar"
         ),
     )

@@ -21,7 +21,7 @@ import pandas as pd
 from core.analysis.keyness import keyness
 from core.conll.schema import Col
 from core.contrast.sides import side_of
-from core.io.reader import Corpus
+from core.io.reader import Corpus, display_names
 from core.result import Diagnostic, Result
 
 __all__ = ["distinctive_words"]
@@ -42,8 +42,12 @@ def distinctive_words(
     table: pd.DataFrame, corpus: Corpus, sides: Sequence[str], *, field: Col = Col.LEMMA, top_n: int = 60
 ) -> Result[pd.DataFrame]:
     """``Side, Compared with, Word, Count, Per 10k, Other count, Other per 10k, Log Ratio, G2, p-value``."""
+    # The parser names each document with display_names, which is the path
+    # (not the basename) when two sides both hold a "speech.txt".
+    shown = display_names(corpus.docs)
     by_label = {doc.path.name: side_of(doc) for doc in corpus.docs}
     by_label.update({doc.name: side_of(doc) for doc in corpus.docs})
+    by_label.update({shown[doc.doc_id]: side_of(doc) for doc in corpus.docs})
     names = {str(name): by_label.get(str(name), "") for name in table[Col.DOCUMENT.value].astype(str).unique()}
     totals = _totals(table, names, field)
     frames = []

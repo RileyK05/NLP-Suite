@@ -127,7 +127,8 @@ export function missingCompareColumns(
   const needed = [settings.y];
   // A histogram bins its measure; the x column is an ignored selector there,
   // so its absence in the other table says nothing about the comparison.
-  if (settings.kind !== "histogram") needed.push(settings.x);
+  if (settings.kind !== "histogram" && settings.kind !== "ecdf")
+    needed.push(settings.x);
   if (settings.group) needed.push(settings.group);
   return needed.filter(
     (column): column is string => !!column && !columns.includes(column),
@@ -461,7 +462,7 @@ export function Explore({
     const start = initialSettings(table);
     return {
       settings: open ? fromViewSettings(open.settings, start) : start,
-      mark: open ? selectionFor(open.settings, open.filters) : null,
+      mark: open ? selectionFor(open.settings, open.filters, table.rows) : null,
     };
   }, [table, open]);
 
@@ -471,8 +472,8 @@ export function Explore({
   const settings = live?.settings ?? null;
   const mark = live?.mark ?? null;
 
-  const setSettings = (next: Settings) => {
-    setEdit({ key: stateKey, settings: next, mark });
+  const setSettings = (next: Settings, clearMark = false) => {
+    setEdit({ key: stateKey, settings: next, mark: clearMark ? null : mark });
     setComparisonMark(null);
   };
   const setMark = (next: Selection) => {
@@ -751,6 +752,13 @@ export function Explore({
                 />
               )}
 
+              {mark && (mark.rowIndices || settings.kind === "ecdf") && (
+                <p className="muted">
+                  Saved views keep the chart settings. This selection applies to
+                  the rows currently loaded.
+                </p>
+              )}
+
               {projectId && !selected.manifest ? (
                 <PanelSection
                   key={`${projectId}:${sourceKey(selected)}`}
@@ -855,10 +863,7 @@ export function Explore({
                           table={compare}
                           artifactPath={compareSource.path}
                           settings={settings}
-                          onSettings={(next) => {
-                            setSettings(next);
-                            setComparisonMark(null);
-                          }}
+                          onSettings={setSettings}
                           selected={comparisonMark}
                           onSelect={setComparisonMark}
                           canPublish={canPublish}

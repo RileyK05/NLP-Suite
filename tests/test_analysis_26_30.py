@@ -10,11 +10,13 @@ import pytest
 from conftest import has_spacy_model
 from core.analysis import (
     csv_stats as csv_mod,
+    happiness_hedonometer as hedo_mod,
     movement as movement_mod,
     ner as ner_mod,
-    sentiment_swn_hedono as swn_mod,
-    sentiment_vader_anew as va_mod,
+    polarity_sentiwordnet as swn_mod,
+    polarity_vader as va_mod,
     svo_compare as svc_mod,
+    valence_anew as anew_mod,
 )
 from core.conll.schema import Col
 from core.io.reader import read_corpus
@@ -132,8 +134,8 @@ def test_vader_anew_on_mini_corpus() -> None:
     assert len(vdf) == 3
     assert set(vdf.columns) == {"Document ID", "Document", "Sentences", "Neg", "Neu", "Pos", "Compound"}
 
-    lex = va_mod.load_anew_lexicon(Path(__file__).parent / "fixtures" / "sentiment" / "anew_mini.csv")
-    a = va_mod.anew(frame, field=Col.LEMMA, lexicon=lex)
+    lex = anew_mod.load_anew_lexicon(Path(__file__).parent / "fixtures" / "sentiment" / "anew_mini.csv")
+    a = anew_mod.anew(frame, field=Col.LEMMA, lexicon=lex)
     assert a.ok, a.diagnostics
     adf = a.unwrap()
     assert len(adf) == 3
@@ -157,7 +159,7 @@ def test_vader_anew_on_mini_corpus() -> None:
         ]
     )
     assert va_mod.vader(empty).ok
-    assert va_mod.anew(empty).ok
+    assert anew_mod.anew(empty).ok
 
 
 def test_vader_negation() -> None:
@@ -232,10 +234,10 @@ def test_swn_hedono() -> None:
     s = swn_mod.sentiwordnet(frame, resolver=fake_resolver)
     assert s.ok, s.diagnostics
     assert len(s.unwrap()) == 3
-    hedo_lex = swn_mod.load_hedonometer_lexicon(
+    hedo_lex = hedo_mod.load_hedonometer_lexicon(
         Path(__file__).parent / "fixtures" / "sentiment" / "hedonometer_mini.json"
     )
-    h = swn_mod.hedonometer(frame, lexicon=hedo_lex)
+    h = hedo_mod.hedonometer(frame, lexicon=hedo_lex)
     assert h.ok, h.diagnostics
     assert len(h.unwrap()) == 3
 
@@ -267,8 +269,8 @@ def test_swn_hedono() -> None:
     assert ps["Pos"].iloc[0] > ns["Pos"].iloc[0]
     assert ps["Net"].iloc[0] > ns["Net"].iloc[0]
 
-    ph = swn_mod.hedonometer(pos, lexicon=hedo_lex).unwrap()
-    nh = swn_mod.hedonometer(neg, lexicon=hedo_lex).unwrap()
+    ph = hedo_mod.hedonometer(pos, lexicon=hedo_lex).unwrap()
+    nh = hedo_mod.hedonometer(neg, lexicon=hedo_lex).unwrap()
     assert ph["Happiness"].iloc[0] > nh["Happiness"].iloc[0]
 
 

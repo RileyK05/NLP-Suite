@@ -67,7 +67,7 @@ def test_panel_marks_rank_and_map_back_to_one_source_row(definition) -> None:
         assert len(prepared.marks) == 1
         mark = prepared.marks[0]
         matches = frame[frame["Year"].astype(str) == mark.evidence.filters[0][1]]
-        score_column = COMPOUND if definition.name == "sentiment_vader_anew_over_time" else MEAN_COMPOUND
+        score_column = COMPOUND if definition.name == "polarity_vader_over_time" else MEAN_COMPOUND
         assert mark.x == 2024
         assert mark.y == pytest.approx(matches[score_column].astype(float).mean())
         assert mark.evidence.count == len(matches) == 2
@@ -101,8 +101,10 @@ def test_panel_marks_rank_and_map_back_to_one_source_row(definition) -> None:
 def test_backend_notes_explain_score_meaning_and_date_prerequisite() -> None:
     by_name = {definition.name: definition for definition in SENTIMENT_PANELS}
     assert "not a calibrated probability" in " ".join(by_name["sentiment_vader_sentences"].notes)
-    assert "-1, 0, or +1" in " ".join(by_name["sentiment_neural_stanza_sentences"].notes)
-    assert "Year column attached to dated document rows" in " ".join(by_name["sentiment_neural_bert_documents"].notes)
+    assert "-1, 0, or +1" in " ".join(by_name["polarity_stanza_sentences"].notes)
+    assert "Year column attached to dated document rows" in " ".join(
+        by_name["polarity_distilbert_sst2_documents"].notes
+    )
 
 
 def test_annual_means_keep_one_document_year_and_report_undated_rows() -> None:

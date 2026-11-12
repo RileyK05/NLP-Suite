@@ -1,7 +1,7 @@
 """Sentence and document vectors, cached across runs (plan 5.4).
 
 Comparisons, scripts and repeated runs embed the same sentences again and
-again: a second ``doc_embeddings`` over the same corpus cost the same as the
+again: a second ``document_embeddings`` over the same corpus cost the same as the
 first (backlog 4d-7). This is the shared store -- parquet files under
 ``<data>/vectors/``, one per key -- read through by the embedding analyses.
 

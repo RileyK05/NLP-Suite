@@ -547,10 +547,10 @@ def _is_finite(value: Any) -> bool:
 
 
 WORD2VEC_GENSIM_NEIGHBOURS = PanelDefinition(
-    name="word2vec_gensim_neighbours",
+    name="word_vectors_gensim_neighbours",
     title="Word2Vec nearest neighbours (Gensim)",
     question="Which words does the model place closest to this one?",
-    tool="word2vec_gensim",
+    tool="word_vectors_gensim",
     shape="ranked_bars",
     summary="Words nearest to the query, ranked by the model's original-space cosine similarity.",
     requires=(WORD, NEIGHBOR, COSINE),
@@ -560,10 +560,10 @@ WORD2VEC_GENSIM_NEIGHBOURS = PanelDefinition(
 )
 
 WORD2VEC_BERT_NEIGHBOURS = PanelDefinition(
-    name="word2vec_bert_neighbours",
+    name="word_vectors_bert_neighbours",
     title="Word2Vec nearest neighbours (BERT)",
     question="Which words does the model place closest to this one?",
-    tool="word2vec_bert",
+    tool="word_vectors_bert",
     shape="ranked_bars",
     summary="Words nearest to the query, ranked by the model's original-space cosine similarity.",
     requires=(WORD, NEIGHBOR, COSINE),
@@ -573,10 +573,10 @@ WORD2VEC_BERT_NEIGHBOURS = PanelDefinition(
 )
 
 WORD2VEC_GENSIM_VECTOR_QUERY = PanelDefinition(
-    name="word2vec_gensim_saved_vectors",
+    name="word_vectors_gensim_saved_vectors",
     title="Explore saved Word2Vec vectors (Gensim)",
     question="Which words are nearest to a word I choose, without retraining?",
-    tool="word2vec_gensim",
+    tool="word_vectors_gensim",
     shape="ranked_bars",
     summary="Recalculate a query word's nearest neighbours from this run's saved vectors.csv values.",
     requires=(WORD, "Count", "Vector"),
@@ -591,10 +591,10 @@ WORD2VEC_GENSIM_VECTOR_QUERY = PanelDefinition(
 )
 
 WORD2VEC_BERT_VECTOR_QUERY = PanelDefinition(
-    name="word2vec_bert_saved_vectors",
+    name="word_vectors_bert_saved_vectors",
     title="Explore saved BERT word vectors",
     question="Which words are nearest to a word I choose, without rerunning BERT?",
-    tool="word2vec_bert",
+    tool="word_vectors_bert",
     shape="ranked_bars",
     summary="Recalculate a query word's nearest neighbours from this run's saved vectors.csv values.",
     requires=(WORD, "Count", "Vector"),
@@ -609,10 +609,10 @@ WORD2VEC_BERT_VECTOR_QUERY = PanelDefinition(
 )
 
 WORD2VEC_GENSIM_TSNE = PanelDefinition(
-    name="word2vec_gensim_tsne",
+    name="word_vectors_gensim_tsne",
     title="Word-vector t-SNE projection (Gensim)",
     question="Which words does the model treat as neighbours overall?",
-    tool="word2vec_gensim",
+    tool="word_vectors_gensim",
     shape="scatter_labelled",
     summary="Exploratory 2-D t-SNE map of the corpus's most frequent words (Gensim vectors).",
     requires=(WORD, "X", "Y"),
@@ -622,10 +622,10 @@ WORD2VEC_GENSIM_TSNE = PanelDefinition(
 )
 
 WORD2VEC_BERT_TSNE = PanelDefinition(
-    name="word2vec_bert_tsne",
+    name="word_vectors_bert_tsne",
     title="Word-vector t-SNE projection (BERT)",
     question="Which words does the model treat as neighbours overall?",
-    tool="word2vec_bert",
+    tool="word_vectors_bert",
     shape="scatter_labelled",
     summary="Exploratory 2-D t-SNE map of the corpus's most frequent words (BERT vectors).",
     requires=(WORD, "X", "Y"),

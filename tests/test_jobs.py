@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 from pathlib import Path
 import time
 
@@ -56,14 +58,19 @@ class TestJobs:
         assert res.diagnostics[0].code == "JOBS_UNKNOWN_ID"
 
     def test_list_newest_first(self, tmp_path: Path) -> None:
-        root = str(tmp_path / "jobs")
-        first = submit("doctor", ["--help"], jobs_root=root).unwrap()
-        time.sleep(1.1)  # job ids sort by second-precision timestamp
-        second = submit("doctor", ["--help"], jobs_root=root).unwrap()
-        listed = list_jobs(jobs_root=root).unwrap()
+        # Listing reads persisted statuses; submitting real jobs and waiting
+        # for the clock to tick only repeats the process tests above.
+        statuses = [
+            JobStatus(id="20260101-000001-aaaaaaaa", tool="doctor", state="DONE", exit_code=0),
+            JobStatus(id="20260101-000002-bbbbbbbb", tool="doctor", state="FAILED", exit_code=1),
+        ]
+        for status in statuses:
+            directory = tmp_path / status.id
+            directory.mkdir()
+            (directory / "status.json").write_text(json.dumps(asdict(status)), encoding="utf-8")
+        listed = list_jobs(jobs_root=str(tmp_path)).unwrap()
         ids = [s.id for s in listed]
-        assert ids == sorted(ids, reverse=True)
-        assert {first.status.id, second.status.id} <= set(ids)
+        assert ids == [statuses[1].id, statuses[0].id]
 
     def test_list_empty_root(self, tmp_path: Path) -> None:
         assert list_jobs(jobs_root=str(tmp_path / "nothing")).unwrap() == []

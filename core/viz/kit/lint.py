@@ -1,6 +1,6 @@
 """The overlap linter, returned as readable problems.
 
-``docs/internal/SHOWCASE_FIGURES_PLAN.md`` section 1.8: the reference figure's first
+``docs/viz-panels.md`` (showcase figures and the figure kit): the reference figure's first
 render had a clipped label, a label on a stopline and a title running into an
 axis; the linter catches some of it and a look at the image catches the rest.
 This is the linter as a script calls it -- ``viz.lint(fig)`` -- over the

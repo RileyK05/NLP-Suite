@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   applyEvents,
   endUnfinished,
@@ -140,7 +140,7 @@ describe("shownChartSettings", () => {
   it("refuses a kind the canvas does not draw instead of substituting one", () => {
     expect(
       shownChartSettings({
-        kind: "sankey",
+        kind: "spiral",
         x: "a",
         y: "b",
         group: "",
@@ -148,6 +148,19 @@ describe("shownChartSettings", () => {
         top_n: 0,
       }),
     ).toBeNull();
+  });
+
+  it("draws the kinds that used to be engine-only, such as a Sankey", () => {
+    expect(
+      shownChartSettings({
+        kind: "sankey",
+        x: "a",
+        y: "b",
+        group: "c",
+        agg: "sum",
+        top_n: 0,
+      }),
+    ).not.toBeNull();
   });
 });
 
@@ -210,7 +223,7 @@ describe("matplotlibCode", () => {
 // only test that needs a subprocess.
 const node = (name: string) => import(/* @vite-ignore */ name);
 const { execFileSync } = await node("node:child_process");
-const { existsSync, mkdtempSync, rmSync, writeFileSync } =
+const { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } =
   await node("node:fs");
 const { tmpdir } = await node("node:os");
 const { join } = await node("node:path");
@@ -221,9 +234,11 @@ function python(): string | null {
     try {
       execFileSync(command, ["-c", "import pandas, matplotlib"], {
         stdio: "ignore",
+        timeout: 15_000,
       });
       return command;
-    } catch {
+    } catch (error) {
+      if ((error as { code?: string }).code === "ETIMEDOUT") throw error;
       // try the next name
     }
   }
@@ -269,30 +284,56 @@ describe.skipIf(!PYTHON)("the copied matplotlib code runs", () => {
       prepare: { count: { by: "Year", name: "Passages" } },
     },
   ];
+  let folder: string;
+  beforeAll(() => {
+    folder = mkdtempSync(join(tmpdir(), "mpl-"));
+    writeFileSync(join(folder, "t.csv"), csv);
+    // Keep each copied snippet executable as-is, but pay for Python, pandas
+    // and matplotlib startup once. Separate globals and close figures so one
+    // snippet cannot supply a variable or drawing to the next.
+    const snippets = charts.map((chart) =>
+      matplotlibCode({ ...chart, top_n: 0 }, "t.csv", "A title"),
+    );
+    writeFileSync(join(folder, "snippets.json"), JSON.stringify(snippets));
+    writeFileSync(
+      join(folder, "draw.py"),
+      "import json, os, traceback\n" +
+        "import matplotlib\nmatplotlib.use('Agg')\n" +
+        "import matplotlib.pyplot as plt\n" +
+        "from pathlib import Path\n" +
+        "for index, snippet in enumerate(json.loads(Path('snippets.json').read_text())):\n" +
+        "    plt.rcdefaults()\n" +
+        "    Path('t.png').unlink(missing_ok=True)\n" +
+        "    try:\n" +
+        "        exec(compile(snippet, f'<chart {index}>', 'exec'), {})\n" +
+        "        os.replace('t.png', f'chart-{index}.png')\n" +
+        "    except Exception:\n" +
+        "        Path(f'chart-{index}.error').write_text(traceback.format_exc())\n" +
+        "    finally:\n" +
+        "        plt.close('all')\n",
+    );
+    execFileSync(PYTHON!, ["draw.py"], {
+      cwd: folder,
+      stdio: "pipe",
+      timeout: 30_000,
+    });
+  }, 35_000);
+  afterAll(() => {
+    if (folder) rmSync(folder, { recursive: true, force: true });
+  });
   it.each(
-    charts.map((c) => [
+    charts.map((c, index) => [
       `${c.kind}${c.group ? " by group" : ""}${c.agg ? ` (${c.agg})` : ""}${"prepare" in c ? ` after ${Object.keys(c.prepare!)[0]}` : ""}`,
-      c,
+      index,
     ]),
-  )(
-    "%s",
-    (_label, chart) => {
-      const folder = mkdtempSync(join(tmpdir(), "mpl-"));
-      try {
-        writeFileSync(join(folder, "t.csv"), csv);
-        writeFileSync(
-          join(folder, "draw.py"),
-          "import matplotlib\nmatplotlib.use('Agg')\n" +
-            matplotlibCode({ ...chart, top_n: 0 }, "t.csv", "A title"),
-        );
-        execFileSync(PYTHON!, ["draw.py"], { cwd: folder, stdio: "pipe" });
-        expect(existsSync(join(folder, "t.png"))).toBe(true);
-      } finally {
-        rmSync(folder, { recursive: true, force: true });
-      }
-    },
-    60_000,
-  );
+  )("%s", (_label, index) => {
+    const error = join(folder, `chart-${index}.error`);
+    expect(existsSync(error) ? readFileSync(error, "utf8") : "").toBe("");
+    expect(existsSync(join(folder, `chart-${index}.png`))).toBe(true);
+    expect([
+      ...readFileSync(join(folder, `chart-${index}.png`)).subarray(0, 8),
+    ]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  });
 });
 
 describe("cells and files", () => {

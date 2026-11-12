@@ -42,9 +42,9 @@ MAX_VIEWS_PER_PROJECT = 500
 # columns cannot narrow anything further and is a sign of a generated request.
 MAX_FILTERS = 32
 
-# The kinds the workbench draws live. The engine knows more (sunburst, treemap,
-# violin, radar, waffle, calendar, pie), but a view is saved *from* the
-# workbench, so a view can only hold a kind the workbench can reopen it in.
+# The kinds the workbench draws live. This is the engine's whole vocabulary:
+# a view is saved *from* the workbench, so a kind the workbench cannot reopen
+# would turn a saved arrangement into a refusal.
 # Checked against desktop/src/chartLayout.ts by tests/test_view_parity.py.
 LIVE_KINDS: tuple[str, ...] = (
     "bar",
@@ -54,16 +54,54 @@ LIVE_KINDS: tuple[str, ...] = (
     "histogram",
     "box",
     "heatmap",
+    "pie",
+    "sunburst",
+    "treemap",
+    "violin",
+    "radar",
+    "waffle",
+    "calendar",
+    "sankey",
+    "ecdf",
 )
 
-LiveKind = Literal["bar", "line", "scatter", "bubble", "histogram", "box", "heatmap"]
+LiveKind = Literal[
+    "bar",
+    "line",
+    "scatter",
+    "bubble",
+    "histogram",
+    "box",
+    "heatmap",
+    "pie",
+    "sunburst",
+    "treemap",
+    "violin",
+    "radar",
+    "waffle",
+    "calendar",
+    "sankey",
+    "ecdf",
+]
 Agg = Literal["", "sum", "mean", "median", "count"]
 SortOrder = Literal["table", "high", "low"]
 
 # Kinds where the drawn order of x is the reader's choice rather than the
 # data's. For the others -- a scatter, a histogram -- x is a number line and
 # "largest first" means nothing, so no ordering promise is broken by publishing.
-ORDERED_KINDS: frozenset[str] = frozenset({"bar", "line", "box", "heatmap"})
+ORDERED_KINDS: frozenset[str] = frozenset(
+    {
+        "bar",
+        "line",
+        "box",
+        "heatmap",
+        "pie",
+        "sunburst",
+        "treemap",
+        "violin",
+        "waffle",
+    }
+)
 
 
 class RowFilter(BaseModel):

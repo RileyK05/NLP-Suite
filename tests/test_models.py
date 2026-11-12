@@ -312,8 +312,8 @@ class TestAnalysesRunOnOnnx:
         # Content words get senses; function words ("be", "the") have none to find.
         assert senses.ok and set(senses.unwrap()["Lemma"]) == {"bank", "river"}
 
-    def test_word2vec_bert_reads_forms_for_lemmas_and_any_layer(self, tiny_models: Any) -> None:
-        from core.analysis.word2vec_bert import train_bert
+    def test_word_vectors_bert_reads_forms_for_lemmas_and_any_layer(self, tiny_models: Any) -> None:
+        from core.analysis.word_vectors_bert import train_bert
 
         tiny_models("bert-base-uncased")
         last = train_bert(self.FRAME, field="lemma", min_count=1)
@@ -346,13 +346,13 @@ class TestAnalysesRunOnOnnx:
     @pytest.mark.parametrize("model", ["bert-base-uncased", "granite-embedding-english-r2"])
     def test_topics_and_summaries_take_token_or_sentence_models(self, tiny_models: Any, model: str) -> None:
         from core.analysis.bert_extract import summarize
-        from core.analysis.bert_topics import bert_topics
+        from core.analysis.topic_clusters_bert import topic_clusters_bert
 
         tiny_models(model)
         summary = summarize(self.FRAME, sentences=1, model=model)
         assert summary.ok, summary.diagnostics
         assert len(summary.unwrap()) == 2
-        topics = bert_topics(self.FRAME, n_topics=2, model=model)
+        topics = topic_clusters_bert(self.FRAME, n_topics=2, model=model)
         assert topics.ok, topics.diagnostics
         assert set(topics.unwrap()[1]["Topic"]) <= {0, 1}
 
@@ -368,7 +368,13 @@ class TestAnalysesRunOnOnnx:
 class TestAvailability:
     """What the tool list tells the app about the BERT tools."""
 
-    BERT_TOOLS = ("word_sense_induction", "bert_extract", "bert_topics", "sentiment_neural_bert", "word2vec_bert")
+    BERT_TOOLS = (
+        "word_senses_bert",
+        "bert_extract",
+        "topic_clusters_bert",
+        "polarity_distilbert_sst2",
+        "word_vectors_bert",
+    )
     #: A frozen app: a parser and the model runtime, no torch or transformers.
     FROZEN: ClassVar[dict[str, bool]] = {"spacy": True, "en_core_web_sm": True, "onnxruntime": True, "tokenizers": True}
 
@@ -388,19 +394,19 @@ class TestAvailability:
             assert self.state(tool, self.FROZEN)["state"] == "available", tool
 
     def test_a_missing_model_is_a_download_not_a_dead_end(self) -> None:
-        answer = self.state("bert_topics", self.FROZEN)
+        answer = self.state("topic_clusters_bert", self.FROZEN)
         assert answer["state"] == "needs_model"
         assert answer["model_id"] == "bert-base-uncased"
         assert "Download it from Models" in answer["message"]
 
     def test_a_missing_runtime_is_setup(self) -> None:
-        answer = self.state("bert_topics", {"spacy": True, "en_core_web_sm": True})
+        answer = self.state("topic_clusters_bert", {"spacy": True, "en_core_web_sm": True})
         assert answer["state"] == "needs_setup"
         assert set(answer["missing"]) == {"onnxruntime", "tokenizers"}
 
     def test_a_source_checkout_with_transformers_needs_nothing_more(self) -> None:
         found = {"spacy": True, "en_core_web_sm": True, "torch": True, "transformers": True}
-        assert self.state("bert_topics", found)["state"] == "available"
+        assert self.state("topic_clusters_bert", found)["state"] == "available"
 
     def test_the_bert_tools_are_published_on_the_desktop(self) -> None:
         from desktop_backend.catalog import INTERNAL_TOOLS
@@ -413,7 +419,7 @@ class TestAvailability:
         from core.profiler.plan import validate_parameters
         from core.profiler.registry import get_tool
 
-        spec = get_tool("sentiment_neural_bert")
+        spec = get_tool("polarity_distilbert_sst2")
         assert spec is not None
         filled = validate_parameters(spec, {"model": "distilbert-base-uncased-finetuned-sst-2-english"})
         assert filled.unwrap()["model"] == "distilbert-sst2"
@@ -429,12 +435,12 @@ class TestLiveBudget:
     def test_a_small_selection_runs_live(self) -> None:
         from desktop_backend.live import LIVE_MODEL_SENTENCES, model_budget
 
-        assert model_budget("bert_topics", self.sentences(LIVE_MODEL_SENTENCES)) is None
+        assert model_budget("topic_clusters_bert", self.sentences(LIVE_MODEL_SENTENCES)) is None
 
     def test_a_whole_corpus_is_sent_to_a_background_run(self) -> None:
         from desktop_backend.live import LIVE_MODEL_SENTENCES, model_budget
 
-        refused = model_budget("sentiment_neural_bert", self.sentences(LIVE_MODEL_SENTENCES + 1))
+        refused = model_budget("polarity_distilbert_sst2", self.sentences(LIVE_MODEL_SENTENCES + 1))
         assert refused is not None and refused.code == "LIVE_MODEL_TOO_LARGE"
         assert "Analyze & visualize" in refused.message
 

@@ -4,6 +4,38 @@ A **panel** is a figure that belongs to one analysis and knows that analysis's
 result shape. It is the second road beside `ChartSpec`, not a replacement for
 it.
 
+## Figures by analysis
+
+In the desktop, open **Visualizations → Analysis figures** and choose an
+**Analysis tool** to see its figures. Open a completed run to draw them over
+its data. Select a mark to see the rows that contributed to it.
+
+| Analysis | Figures |
+|---|---|
+| Geocoding | A pin map weighted by corpus mentions, a concentration map with adjustable grid cells, and a coverage chart for attempted lookups. Older runs without mention counts map each resolved name once. |
+| Narrative geography | Pin and concentration maps of triple-place associations, plus a place-by-verb matrix for runs that saved the mapped triples. One triple can count at several places mentioned in its document. |
+| Coordinate CSV | The standalone GIS tool writes an offline pin map, a geographic grid, the mapped inputs, and KML. Use `--cell-size` to choose the grid width in degrees. |
+| VADER, DistilBERT, spaCy, Stanza, CoreNLP | Sentence-label shares, tone across relative sections of a document, and the spread of individual sentence scores. The figures work without document dates. |
+| NRC Emotion | Corpus emotion profile (Plutchik 8 emotions), emotion trajectories across documents or time, and document emotion distributions. |
+| ANEW, SentiWordNet, Hedonometer | A scatterplot of document score against the percentage of words rated by the lexicon. |
+| Keyness | Log-ratio effect size vs G2 evidence volcano, and top distinctive keywords ranked by effect size. |
+| Spellcheck | Top misspelled/unknown words, spelling errors per document, and suggestion confidence vs log frequency scatter. |
+| K-Sentences | Bookend word repetitions between opening and closing sentences, and section content word density. |
+| BERT Extract | Extractive centroid sentence positions across documents. |
+| Table search | Search matches per document, and sentence hit positions. |
+| Lexical dispersion | Frequency against Gries DP concentration scatter, and true core vocabulary ranked by Juilland's Adjusted Frequency. |
+| Gender annotation | Most frequently mentioned names grouped by predicted gender, corpus-wide gender category breakdown, and mentions timeline. |
+| Coreference | Largest coreference chains across the corpus, and sentence positions of individual mention chains. |
+| N-grams | Corpus frequency heatmap across documents, and ranked n-grams with function word filter. |
+| Document duplicates & Knowledge graph | Duplicate cluster size rankings, near-duplicate document network, knowledge graph triples network, and relationship predicate frequencies. |
+| Readability & Sentence complexity | Readability grade formula comparisons, clause distribution, and sentence length distributions. |
+| Named entities, topics, concordance | Place mentions by document, dominant-topic share for Gensim LDA, cluster-center distance for BERT topics, and the words most often immediately before or after a KWIC hit. |
+
+The maps use a bundled Natural Earth 1:110m land outline. Grid cells show
+counts or total weight within latitude and longitude bounds. Because cells
+cover different areas at different latitudes, the totals cannot be read as
+counts per square kilometer.
+
 ## When to write a panel instead of a chart
 
 `core/viz/chartspec.py` draws any tidy table: name a kind, map x, y and group
@@ -37,6 +69,7 @@ desktop/src/panelLayout.ts   panel geometry for the app, pure and tested.
 desktop/src/PanelCanvas.tsx  the app's own SVG drawing of a prepared panel.
 desktop/src/PanelSection.tsx controls built from the declarations, on Past runs.
 desktop/src/PanelPassages.tsx a clicked mark, read in the text it came from.
+desktop/src/Visualizations.tsx the inventory: every shape, every panel, with previews.
 ```
 
 The dependency runs one way: builders know `panelspec`; only `panels.py`
@@ -251,6 +284,45 @@ significance line, because that almost always means the keyness run was
 already cut with `--top-n` — so the plot shows the top of the distribution
 rather than all of it, and "294 of 294 significant" would read as a finding
 about the corpus when it is a fact about the input.
+
+## Showcase figures and the figure kit
+
+A panel draws one table. A *showcase* is a multi-panel publication figure for a
+tool whose output has structure beyond one ranking (mixtures, model internals,
+several tables). Each is drawn in `core/viz/showcase.py`, sealed into the run's
+`figures/` by `core/viz/run_figures.py` (hashed and listed in the envelope), and
+refuses with a reason when the run cannot support it. Table-first tools (kwic,
+convert, search) get no showcase; scripts cover them.
+
+Showcases are written with the public kit (`core/viz/kit/`, exposed to Scripts as
+`nlp.viz`), never with private helpers, so each one is also a worked example
+and the kit is exercised by real figures. Every piece takes plain DataFrames:
+`canvas` (title, subtitle, provenance footer from a run's envelope, `.rows()` /
+`.cols()`), `palette`, `time_axis`, `events`, `stream`, `mixture_bars`, `bars`,
+`dots`, `word_grid`, `tiles` and `lint`. `tests/test_figure_kit.py` covers them.
+
+What makes a showcase read well:
+
+1. **The title is the finding or the question**, not the tool's name.
+2. **Three zoom levels in one figure:** the whole corpus, a few documents close
+   up, and what the method itself learned (a model's alpha, its share of words).
+3. **The world is on the axis.** The project's dated events (edited on the Corpus
+   page, frozen into each run) are drawn as stoplines on every time figure, which
+   turns a description into a test the reader can check.
+4. **One colour per thing across every panel**, one panel serving as the key,
+   direct labels instead of legends, and a gray background topic.
+5. **Model internals are shown, not hidden.**
+6. **Numbers where they are read**, not only on an axis.
+7. **Provenance in the footer:** tool, version, every setting that matters.
+8. **Checked by eye after drawing.** The overlap linter (`core/viz/static/lint.py`,
+   `viz.lint(fig)`) catches some clipped labels and labels on stoplines; a look at
+   the image catches the rest.
+
+A new showcase is done when it is drawn from real output on two corpora of
+different kinds (a dated one and a book), the image has been looked at as well
+as linted, it falls back to document order through the corpus axis on an
+undated corpus, its colours match the app's panels for the run, and a Scripts
+template reproduces it.
 
 ## Using it
 

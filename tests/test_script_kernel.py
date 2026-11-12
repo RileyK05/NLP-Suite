@@ -200,3 +200,83 @@ def test_stop_ends_a_runaway_cell_quickly(kernel: Any) -> None:
     events = _wait(manager, key, again["exec"], again["after"])
     assert [e["text"] for e in events if e.get("kind") == "text"] == ["False"]
     assert started["exec"] == again["exec"]  # numbering restarts with the kernel
+
+
+def test_a_changed_parser_restarts_the_kernel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A kernel started under spaCy must not keep answering once the page asks for Stanza."""
+    from types import SimpleNamespace
+
+    from desktop_backend.kernels import Kernel
+
+    workspace = Workspace(tmp_path / "ws")
+    manager = KernelManager(workspace)
+    started: list[Kernel] = []
+    stopped: list[Kernel] = []
+
+    def start(key: tuple[str, str], parser: str) -> Kernel:
+        kernel = Kernel(key, SimpleNamespace(poll=lambda: None), tmp_path, parser=parser)  # type: ignore[arg-type]
+        started.append(kernel)
+        return kernel
+
+    monkeypatch.setattr(manager, "_start", start)
+    monkeypatch.setattr(manager, "_stop", stopped.append)
+    try:
+        first = manager.kernel("p", "n", "spacy")
+        assert manager.kernel("p", "n", "spacy") is first
+        first.busy = 3
+        with pytest.raises(ValueError, match="still running with spacy"):
+            manager.kernel("p", "n", "stanza")
+        first.busy = None
+        second = manager.kernel("p", "n", "stanza")
+        assert second is not first and second.parser == "stanza"
+        assert stopped == [first]
+    finally:
+        monkeypatch.setattr(manager, "_kernels", {})
+        manager.close()
+
+
+def test_save_all_csvs_keeps_every_table_under_its_own_name(tmp_path: Path) -> None:
+    """Past output 999 the prefix still comes off, in run order; names differing only by case stay apart."""
+    import io
+    import zipfile
+
+    from desktop_backend.kernels import Kernel
+
+    workspace = Workspace(tmp_path / "ws")
+    manager = KernelManager(workspace)
+    directory = tmp_path / "scratch"
+    directory.mkdir()
+    for name in ("0003_999_early.csv", "0003_1000_late.csv", "0004_001_Data.csv", "0005_001_data.csv"):
+        (directory / name).write_text(name, encoding="utf-8")
+    manager._kernels[("p", "n")] = Kernel(("p", "n"), None, directory)  # type: ignore[arg-type]
+    try:
+        names = zipfile.ZipFile(io.BytesIO(manager.tables_archive("p", "n"))).namelist()
+    finally:
+        manager._kernels.clear()
+        manager.close()
+    assert names == ["early.csv", "late.csv", "Data.csv", "data_2.csv"]
+
+
+def test_a_table_appears_only_once_it_is_completely_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Save all CSVs globs *.csv while cells run; a table mid-write must not be one of them."""
+    import pandas as pd
+
+    from core.script.session import TableOutput
+    from desktop_backend.kernel import OutputSink
+
+    seen_during_write: list[list[str]] = []
+    real_to_csv = pd.DataFrame.to_csv
+
+    def watching(self: pd.DataFrame, path: Any, *args: Any, **kwargs: Any) -> Any:
+        # The last moment of the write: everything is on disk but the sink
+        # has not yet said the table is done.
+        result = real_to_csv(self, path, *args, **kwargs)
+        seen_during_write.append(sorted(p.name for p in tmp_path.glob("*.csv")))
+        return result
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", watching)
+    out = OutputSink(tmp_path, lambda event: None)
+    out.exec_id = 1
+    out(TableOutput("rates", pd.DataFrame({"a": [1]}), saved=False))
+    assert seen_during_write == [[]]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["0001_001_rates.csv"]

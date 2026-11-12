@@ -58,7 +58,7 @@ function chart() {
       title="Counts"
     />,
   );
-  const svg = container.querySelector("svg[role=img]") as SVGSVGElement;
+  const svg = container.querySelector(".chart-plot > svg") as SVGSVGElement;
   const capture = vi.fn();
   svg.setPointerCapture = capture;
   svg.getBoundingClientRect = () => ({
@@ -112,22 +112,33 @@ describe("chart gestures", () => {
       "alpha",
     );
   });
-  it("lets the page scroll over axis labels and zooms only inside the plot", () => {
+  it("preserves ordinary scrolling and zooms with a modifier inside the plot", () => {
     const { svg, container } = chart();
     const axis = new WheelEvent("wheel", {
       bubbles: true,
       cancelable: true,
       clientX: 200,
-      clientY: 350,
+      clientY: 405,
+      ctrlKey: true,
       deltaY: -100,
     });
     act(() => svg.dispatchEvent(axis));
     expect(axis.defaultPrevented).toBe(false);
+    const scroll = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 200,
+      clientY: 100,
+      deltaY: -100,
+    });
+    act(() => svg.dispatchEvent(scroll));
+    expect(scroll.defaultPrevented).toBe(false);
     const plot = new WheelEvent("wheel", {
       bubbles: true,
       cancelable: true,
       clientX: 200,
       clientY: 100,
+      ctrlKey: true,
       deltaY: -100,
     });
     act(() => svg.dispatchEvent(plot));
@@ -188,9 +199,9 @@ describe("finished result comparison", () => {
     });
     expect(choose).toHaveBeenCalledWith(second);
     rerender(exploration({ compareSource: second, compare: table }));
-    expect(container.querySelectorAll('svg[role="img"]')).toHaveLength(2);
+    expect(container.querySelectorAll(".chart-plot > svg")).toHaveLength(2);
     rerender(exploration());
-    expect(container.querySelectorAll('svg[role="img"]')).toHaveLength(1);
+    expect(container.querySelectorAll(".chart-plot > svg")).toHaveLength(1);
   });
   it("explains incompatible columns rather than drawing an empty comparison", () => {
     const { container } = render(
@@ -200,7 +211,7 @@ describe("finished result comparison", () => {
       }),
     );
     expect(container.textContent).toContain("missing columns");
-    expect(container.querySelectorAll('svg[role="img"]')).toHaveLength(1);
+    expect(container.querySelectorAll(".chart-plot > svg")).toHaveLength(1);
   });
   it("shows loading and failed fetch states", () => {
     const { container, rerender } = render(

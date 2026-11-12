@@ -66,6 +66,7 @@ IMPLEMENTED_SHAPES: tuple[str, ...] = (
     "distribution",
     "network",
     "positions",
+    "geographic",
 )
 
 _FALLBACK_FIX = 'pip install "nlp-suite-ng[plotly]"'
@@ -578,7 +579,7 @@ def _heatmap(prepared: PreparedPanel) -> Figure:
         z[int(mark.y)][int(mark.x)] = value
         hover[int(mark.y)][int(mark.x)] = mark.evidence.describe
         values.append(value)
-    low, high = _heat_domain(values, prepared.color_scale)
+    low, high = prepared.value_domain or _heat_domain(values, prepared.color_scale)
     if high == low:
         # One value everywhere: centre it, as _heat_color does.
         low, high = low - 1, high + 1
@@ -595,7 +596,7 @@ def _heatmap(prepared: PreparedPanel) -> Figure:
             hoverongaps=False,
             xgap=1,
             ygap=1,
-            colorbar={"thickness": 12, "len": 0.6},
+            colorbar={"thickness": 12, "len": 0.6, "title": prepared.value_label},
         )
     )
     fig.update_xaxes(
@@ -901,10 +902,71 @@ def build_panel_figure(prepared: PreparedPanel) -> Result[Figure]:
         "heatmap": _heatmap,
         "distribution": _distribution,
         "positions": _positions,
+        "geographic": _geographic,
         "network": _network,
         "small_multiples": _small_multiples,
     }
     return Result.success(renderers[prepared.shape](prepared))
+
+
+def _geographic(prepared: PreparedPanel) -> Figure:
+    import plotly.graph_objects as go
+
+    from core.viz.panel_maps import LAND_FILL, PIN, add_plotly_land, cell_color, pin_radius
+
+    fig = go.Figure()
+    add_plotly_land(fig)
+    half = prepared.map_cell_degrees / 2
+    if half:
+        maximum = max(mark.value or 0 for mark in prepared.marks)
+        for mark in prepared.marks:
+            fig.add_trace(
+                go.Scatter(
+                    x=[mark.x - half, mark.x + half, mark.x + half, mark.x - half, mark.x - half],
+                    y=[mark.y - half, mark.y - half, mark.y + half, mark.y + half, mark.y - half],
+                    fill="toself",
+                    fillcolor=cell_color(mark.value or 0, maximum),
+                    mode="lines",
+                    line={"color": LAND_FILL, "width": 0.8},
+                    opacity=0.86,
+                    showlegend=False,
+                    name=mark.evidence.describe,
+                    hoveron="fills",
+                    hoverinfo="name",
+                )
+            )
+    else:
+        maximum = max(mark.size or 0 for mark in prepared.marks)
+        fig.add_trace(
+            go.Scatter(
+                x=[mark.x for mark in prepared.marks],
+                y=[mark.y for mark in prepared.marks],
+                mode="markers",
+                marker={
+                    "size": [2 * pin_radius(mark.size or 0, maximum) for mark in prepared.marks],
+                    "color": PIN,
+                    "opacity": 0.83,
+                    "line": {"color": "white", "width": 1},
+                },
+                text=[mark.evidence.describe for mark in prepared.marks],
+                hovertemplate="%{text}<extra></extra>",
+                showlegend=False,
+            )
+        )
+    _style(fig, prepared)
+    fig.update_layout(margin={"t": 90, "b": 84, "l": 36, "r": 36})
+    fig.add_annotation(
+        x=1,
+        y=-0.1,
+        xref="paper",
+        yref="paper",
+        xanchor="right",
+        yanchor="top",
+        text=f"Natural Earth land · Maximum {maximum:,g} {prepared.value_label}",
+        showarrow=False,
+        font={"size": 11, "color": "#52646a"},
+    )
+    return fig
 
 
 def panel_html(prepared: PreparedPanel, *, offline: bool = True) -> Result[str]:
@@ -1036,7 +1098,7 @@ def _kaleido_bytes(fig: Any, prepared: PreparedPanel, fmt: str, browser_path: st
     nonexistent executable rather than silently falling back. No global
     configuration is touched.
     """
-    import kaleido  # type: ignore[import-not-found]  # optional [plotly-image] extra
+    import kaleido  # type: ignore[import-not-found,import-untyped,unused-ignore]  # optional [plotly-image] extra
 
     kopts: dict[str, Any] = {}
     if browser_path:

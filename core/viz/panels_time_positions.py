@@ -64,10 +64,14 @@ from core.viz.panelspec import (
 
 __all__ = [
     "COREFERENCE_CHAIN_POSITIONS",
+    "COREF_TOP_CLUSTERS",
     "DATE_ANNOTATOR_TIMELINE",
     "DATE_ANNOTATOR_TYPE_COUNTS",
     "DISPERSION_FREQUENCY_VS_CONCENTRATION",
+    "DISPERSION_TOP_ADJUSTED_TERMS",
+    "GENDER_ANNOTATOR_CORPUS_BREAKDOWN",
     "GENDER_ANNOTATOR_MENTIONS_OVER_TIME",
+    "GENDER_ANNOTATOR_TOP_NAMES",
     "KWIC_HIT_POSITIONS",
     "LEXICON_SERIES_HEATMAP",
     "LEXICON_SERIES_RATE",
@@ -78,10 +82,14 @@ __all__ = [
     "SHAPES_STORY_ARC",
     "TIME_POSITIONS_PANELS",
     "coreference_chain_positions",
+    "coreference_top_clusters",
     "date_annotator_timeline",
     "date_annotator_type_counts",
     "dispersion_frequency_vs_concentration",
+    "dispersion_top_adjusted_terms",
+    "gender_annotator_corpus_breakdown",
     "gender_annotator_mentions_over_time",
+    "gender_annotator_top_names",
     "kwic_hit_positions",
     "lexicon_series_heatmap",
     "lexicon_series_rate",
@@ -722,6 +730,176 @@ GENDER_ANNOTATOR_MENTIONS_OVER_TIME = PanelDefinition(
 )
 
 
+def gender_annotator_top_names(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Ranked bars of the most frequently mentioned names, colored by predicted gender."""
+    top_n = int(params.get("top-n", 25))
+    working = frame.copy()
+    working[NAME] = working[NAME].astype(str).str.strip()
+    working[MENTIONS] = pd.to_numeric(working[MENTIONS], errors="coerce").fillna(0)
+    working[GENDER] = working[GENDER].astype(str).str.lower()
+    working[GENDER] = working[GENDER].where(working[GENDER].isin(_GENDER_ORDER), "unknown")
+    working = working[working[MENTIONS] > 0]
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no name mentions found to plot"))
+
+    # Aggregate by Name: total mentions and first gender category
+    grouped = (
+        working.groupby(NAME, sort=False)
+        .agg(
+            TotalMentions=(MENTIONS, "sum"),
+            Gender=(GENDER, "first"),
+        )
+        .reset_index()
+    )
+    grouped = grouped.sort_values(["TotalMentions", NAME], ascending=[False, True], kind="stable").head(top_n)
+
+    marks: list[PanelMark] = []
+    for rank, (_, row) in enumerate(grouped.iterrows()):
+        name = str(row[NAME])
+        mentions = int(row["TotalMentions"])
+        gender = str(row["Gender"])
+        marks.append(
+            PanelMark(
+                key=name,
+                label=name,
+                x=float(mentions),
+                y=float(rank),
+                group=gender.capitalize(),
+                evidence=Evidence(
+                    scope="rows",
+                    filters=((NAME, name),),
+                    count=mentions,
+                    describe=f"{name}: {mentions} mention(s) (predicted gender: {gender})",
+                ),
+            )
+        )
+
+    groups = tuple(dict.fromkeys(m.group for m in marks if m.group))
+    prepared = PreparedPanel(
+        panel=GENDER_ANNOTATOR_TOP_NAMES.name,
+        shape="ranked_bars",
+        title=GENDER_ANNOTATOR_TOP_NAMES.title,
+        subtitle=f"Top {len(marks)} mentioned names colored by dictionary prediction",
+        marks=tuple(marks),
+        x_label="Total Mentions",
+        y_label="",
+        provenance=provenance,
+        data=grouped,
+        groups=groups,
+        notes=GENDER_ANNOTATOR_TOP_NAMES.notes,
+    )
+    return Result.success(prepared)
+
+
+GENDER_ANNOTATOR_TOP_NAMES = PanelDefinition(
+    name="gender_annotator_top_names",
+    title="Most mentioned names by predicted gender",
+    question="Which individual names are mentioned most often in the corpus, and what gender does the dictionary predict for them?",
+    tool="gender_annotator",
+    shape="ranked_bars",
+    summary="Ranked bars of the most frequently mentioned names, colored by predicted gender category.",
+    requires=(NAME, GENDER, MENTIONS),
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=25,
+            minimum=5,
+            maximum=100,
+            label="Names to show",
+            help="Number of most-frequent names to display.",
+        ),
+    ),
+    build=gender_annotator_top_names,
+    notes=(
+        "Predicted gender reflects the dictionary lookup (census, NLTK, etc.), not verified ground truth.",
+        "'both' indicates the name appears in both male and female dictionary lists.",
+    ),
+)
+
+
+def gender_annotator_corpus_breakdown(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Corpus-wide aggregate breakdown of mentions across predicted gender categories."""
+    _ = params
+    working = frame.copy()
+    working[MENTIONS] = pd.to_numeric(working[MENTIONS], errors="coerce").fillna(0)
+    working[GENDER] = working[GENDER].astype(str).str.lower()
+    working[GENDER] = working[GENDER].where(working[GENDER].isin(_GENDER_ORDER), "unknown")
+    working = working[working[MENTIONS] > 0]
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no name mentions found to plot"))
+
+    grouped = working.groupby(GENDER, sort=False)[MENTIONS].sum().reset_index()
+    total = float(grouped[MENTIONS].sum())
+    grouped["Percentage"] = (grouped[MENTIONS] / total) * 100.0 if total > 0 else 0.0
+
+    # Ensure consistent order: male, female, both, unknown (only if present)
+    grouped["_order"] = grouped[GENDER].map(lambda g: _GENDER_ORDER.index(g) if g in _GENDER_ORDER else 99)
+    grouped = grouped.sort_values("_order", kind="stable").reset_index(drop=True)
+
+    marks: list[PanelMark] = []
+    for rank, (_, row) in enumerate(grouped.iterrows()):
+        gender = str(row[GENDER])
+        cnt = int(row[MENTIONS])
+        pct = float(row["Percentage"])
+        marks.append(
+            PanelMark(
+                key=gender,
+                label=gender.capitalize(),
+                x=pct,
+                y=float(rank),
+                group=gender.capitalize(),
+                evidence=Evidence(
+                    scope="rows",
+                    filters=((GENDER, gender),),
+                    count=cnt,
+                    describe=f"{gender.capitalize()}: {cnt:,} mention(s) ({pct:.1f}% of classified mentions)",
+                ),
+            )
+        )
+
+    groups = tuple(dict.fromkeys(m.group for m in marks if m.group))
+    prepared = PreparedPanel(
+        panel=GENDER_ANNOTATOR_CORPUS_BREAKDOWN.name,
+        shape="ranked_bars",
+        title=GENDER_ANNOTATOR_CORPUS_BREAKDOWN.title,
+        subtitle=f"Distribution across {len(marks)} gender categories ({int(total):,} total name mentions)",
+        marks=tuple(marks),
+        x_label="Share of Total Mentions (%)",
+        y_label="",
+        provenance=provenance,
+        data=grouped[[GENDER, MENTIONS, "Percentage"]],
+        groups=groups,
+        notes=GENDER_ANNOTATOR_CORPUS_BREAKDOWN.notes,
+    )
+    return Result.success(prepared)
+
+
+GENDER_ANNOTATOR_CORPUS_BREAKDOWN = PanelDefinition(
+    name="gender_annotator_corpus_breakdown",
+    title="Corpus name mentions by predicted gender",
+    question="What proportion of named mentions fall into each predicted gender category across the corpus?",
+    tool="gender_annotator",
+    shape="ranked_bars",
+    summary="Corpus-wide aggregate shares across male, female, both, and unknown name mentions.",
+    requires=(GENDER, MENTIONS),
+    params=(),
+    build=gender_annotator_corpus_breakdown,
+    notes=(
+        "Calculated over all name mentions in the corpus.",
+        "'unknown' names are those not found in the selected name dictionary.",
+    ),
+)
+
+
 # =====================================================================
 # narrative -- emotion across relative position in the document
 # shapes    -- normalised story-shape lines, same binning approach
@@ -1095,7 +1273,7 @@ NARRATIVE_EMOTION_ARC = PanelDefinition(
     name="narrative_emotion_arc",
     title="Sentiment across the speech, by relative position",
     question="Does a speech's tone follow a shape -- does it open one way and close another?",
-    tool="narrative",
+    tool="narrative_arc",
     shape="line_series",
     summary="Binned mean sentiment over relative sentence position, one line per chosen document, plus a corpus median.",
     requires=(DOCUMENT_ID, SENTENCE_ID, "Compound"),
@@ -1219,7 +1397,7 @@ NARRATIVE_CHARACTER_POSITIONS = PanelDefinition(
     name="narrative_character_positions",
     title="Named characters, by document",
     question="Which named figures recur across the corpus, and in which speeches?",
-    tool="narrative",
+    tool="narrative_arc",
     shape="positions",
     summary="Top characters by total mentions, one row each, ticked at the dates of the documents they appear in.",
     requires=NARRATIVE_CHARACTER_POSITIONS_REQUIRES,
@@ -1346,7 +1524,7 @@ NARRATIVE_CHARACTERS_BY_ORDER = PanelDefinition(
     name="narrative_characters_by_order",
     title="Named characters, in each chapter",
     question="Who is in which chapter (or which speech)?",
-    tool="narrative",
+    tool="narrative_arc",
     shape="heatmap",
     summary="Top characters by total mentions, one row each, one column per document along the corpus's axis; cells are mentions.",
     requires=NARRATIVE_CHARACTER_POSITIONS_REQUIRES,
@@ -1521,6 +1699,115 @@ DISPERSION_FREQUENCY_VS_CONCENTRATION = PanelDefinition(
     notes=(
         "The published dispersion table has no per-occurrence offsets, so a true positions plot of where each "
         "hit falls cannot be built from it; this scatter is what the table supports.",
+    ),
+)
+
+
+JUILLAND_D = "Juilland D"
+ADJUSTED_FREQUENCY = "Adjusted Frequency"
+
+
+def dispersion_top_adjusted_terms(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Ranked bars of top terms by Juilland's Adjusted Frequency (Juilland U = F * D)."""
+    top_n = int(params.get("top-n", 25))
+    hide_func = bool(params.get("hide-function-words", True))
+    working = frame.copy()
+    working[TERM] = working[TERM].astype(str).str.strip()
+    working[FREQUENCY] = pd.to_numeric(working[FREQUENCY], errors="coerce").fillna(0)
+    working[JUILLAND_D] = pd.to_numeric(working[JUILLAND_D], errors="coerce").fillna(0.0)
+    working[ADJUSTED_FREQUENCY] = pd.to_numeric(working[ADJUSTED_FREQUENCY], errors="coerce").fillna(0.0)
+    working = working[working[ADJUSTED_FREQUENCY] > 0]
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no terms with positive adjusted frequency to plot"))
+
+    if hide_func:
+        working = working[~working[TERM].map(is_function_word)]
+        if working.empty:
+            return Result.failure(
+                Diagnostic.error(
+                    "PANEL_NO_DATA",
+                    "all top terms were function words; turn off hide-function-words to view all terms",
+                )
+            )
+
+    sorted_df = working.sort_values([ADJUSTED_FREQUENCY, FREQUENCY], ascending=[False, False], kind="stable").head(
+        top_n
+    )
+
+    marks: list[PanelMark] = []
+    for rank, (_, row) in enumerate(sorted_df.iterrows()):
+        term = str(row[TERM])
+        adj_freq = float(row[ADJUSTED_FREQUENCY])
+        raw_freq = float(row[FREQUENCY])
+        jd = float(row[JUILLAND_D])
+        marks.append(
+            PanelMark(
+                key=term,
+                label=term,
+                x=adj_freq,
+                y=float(rank),
+                evidence=Evidence(
+                    scope="terms",
+                    filters=((TERM, term),),
+                    count=int(raw_freq),
+                    phrase=term,
+                    describe=(
+                        f"'{term}': Adjusted Frequency = {adj_freq:.1f} "
+                        f"(raw frequency: {int(raw_freq)}, Juilland's D: {jd:.2f})"
+                    ),
+                ),
+            )
+        )
+
+    prepared = PreparedPanel(
+        panel=DISPERSION_TOP_ADJUSTED_TERMS.name,
+        shape="ranked_bars",
+        title=DISPERSION_TOP_ADJUSTED_TERMS.title,
+        subtitle=f"Top {len(marks)} core vocabulary words ranked by dispersion-adjusted frequency (Juilland U)",
+        marks=tuple(marks),
+        x_label="Juilland's Adjusted Frequency (U = F * D)",
+        y_label="",
+        provenance=provenance,
+        data=sorted_df,
+        notes=DISPERSION_TOP_ADJUSTED_TERMS.notes,
+    )
+    return Result.success(prepared)
+
+
+DISPERSION_TOP_ADJUSTED_TERMS = PanelDefinition(
+    name="dispersion_top_adjusted_terms",
+    title="Core vocabulary by adjusted frequency",
+    question="Which words form the true core vocabulary, when raw frequency is discounted for clumpiness?",
+    tool="dispersion",
+    shape="ranked_bars",
+    summary="Ranked bars of top terms by Juilland's Adjusted Frequency (Juilland U = F * D).",
+    requires=(TERM, FREQUENCY, JUILLAND_D, ADJUSTED_FREQUENCY),
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=25,
+            minimum=5,
+            maximum=100,
+            label="Terms to show",
+            help="Number of core vocabulary terms to display.",
+        ),
+        PanelParam(
+            name="hide-function-words",
+            type="bool",
+            default=True,
+            label="Hide function words",
+            help="Exclude closed-class function words ('the', 'of', 'and') to focus on content vocabulary.",
+        ),
+    ),
+    build=dispersion_top_adjusted_terms,
+    notes=(
+        "Juilland's Adjusted Frequency (U = F * D) penalizes terms that appear frequently in only a few documents.",
+        "Terms with high U appear consistently throughout the corpus and constitute true core vocabulary.",
     ),
 )
 
@@ -2042,19 +2329,114 @@ COREFERENCE_CHAIN_POSITIONS = PanelDefinition(
 )
 
 
+def coreference_top_clusters(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Ranked bars of the largest coreference chains across the corpus."""
+    top_n = int(params.get("top-n", 25))
+    working = frame.copy()
+    working[CLUSTER_ID] = working[CLUSTER_ID].astype(str)
+    working[LEMMA] = working[LEMMA].astype(str).str.lower()
+    working[MENTION] = working[MENTION].astype(str)
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no coreference clusters found to plot"))
+
+    doc_col = DOCUMENT_ID if DOCUMENT_ID in working.columns else None
+
+    # Group by Cluster ID and dominant lemma
+    grouped = (
+        working.groupby([CLUSTER_ID, LEMMA], sort=False)
+        .agg(
+            Mentions=(MENTION, "count"),
+            Docs=(doc_col, "nunique") if doc_col else (MENTION, lambda _: 1),
+        )
+        .reset_index()
+    )
+    grouped = grouped.sort_values(["Mentions", CLUSTER_ID], ascending=[False, True], kind="stable").head(top_n)
+
+    marks: list[PanelMark] = []
+    for rank, (_, row) in enumerate(grouped.iterrows()):
+        cid = str(row[CLUSTER_ID])
+        lemma = str(row[LEMMA])
+        cnt = int(row["Mentions"])
+        docs = int(row["Docs"])
+        label_text = f"'{lemma}' (chain {cid})"
+        marks.append(
+            PanelMark(
+                key=f"{cid}:{lemma}",
+                label=label_text,
+                x=float(cnt),
+                y=float(rank),
+                evidence=Evidence(
+                    scope="rows",
+                    filters=((CLUSTER_ID, cid), (LEMMA, lemma)),
+                    count=cnt,
+                    describe=f"{label_text}: {cnt} mention(s) across {docs} document(s)",
+                ),
+            )
+        )
+
+    prepared = PreparedPanel(
+        panel=COREF_TOP_CLUSTERS.name,
+        shape="ranked_bars",
+        title=COREF_TOP_CLUSTERS.title,
+        subtitle=f"Top {len(marks)} coreference mention chains across the corpus",
+        marks=tuple(marks),
+        x_label="Total Mention Count",
+        y_label="",
+        provenance=provenance,
+        data=grouped,
+        notes=COREF_TOP_CLUSTERS.notes,
+    )
+    return Result.success(prepared)
+
+
+COREF_TOP_CLUSTERS = PanelDefinition(
+    name="coreference_top_clusters",
+    title="Largest coreference mention chains",
+    question="Which entities or lemmas form the largest coreference chains across the corpus?",
+    tool="coreference",
+    shape="ranked_bars",
+    summary="Top coreference mention clusters ranked by total occurrences.",
+    requires=(CLUSTER_ID, LEMMA, MENTION),
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=25,
+            minimum=5,
+            maximum=100,
+            label="Chains to show",
+            help="Number of top coreference chains to display.",
+        ),
+    ),
+    build=coreference_top_clusters,
+    notes=(
+        "The coreference engine clusters noun mentions by lower-cased lemma baseline.",
+        "Chains represent recurring mentions of the same lemma across sentences.",
+    ),
+)
+
+
 TIME_POSITIONS_PANELS: tuple[PanelDefinition, ...] = (
     LEXICON_SERIES_RATE,
     LEXICON_SERIES_HEATMAP,
     DATE_ANNOTATOR_TIMELINE,
     DATE_ANNOTATOR_TYPE_COUNTS,
     GENDER_ANNOTATOR_MENTIONS_OVER_TIME,
+    GENDER_ANNOTATOR_TOP_NAMES,
+    GENDER_ANNOTATOR_CORPUS_BREAKDOWN,
     NARRATIVE_EMOTION_ARC,
     NARRATIVE_CHARACTER_POSITIONS,
     NARRATIVE_CHARACTERS_BY_ORDER,
     SHAPES_STORY_ARC,
     DISPERSION_FREQUENCY_VS_CONCENTRATION,
+    DISPERSION_TOP_ADJUSTED_TERMS,
     NER_TOP_ENTITIES,
     NER_ENTITY_TIMELINE,
     KWIC_HIT_POSITIONS,
     COREFERENCE_CHAIN_POSITIONS,
+    COREF_TOP_CLUSTERS,
 )

@@ -12,7 +12,12 @@
  * else would notice a field added on one side only.
  */
 
-import { isLiveKind, type Agg, type Settings } from "./chartLayout";
+import {
+  isLiveKind,
+  type Agg,
+  type ChartSelection,
+  type Settings,
+} from "./chartLayout";
 
 /** A chart setting as the server stores it. Field names are the wire names. */
 export type ViewSettings = {
@@ -130,14 +135,23 @@ export function isDirty(
  */
 export function filtersFor(
   settings: Settings,
-  selected: { label: string; group: string } | null,
+  selected: ChartSelection | null,
 ): RowFilter[] {
-  if (!selected) return [];
+  if (
+    !selected ||
+    selected.rowIndices ||
+    settings.kind === "histogram" ||
+    settings.kind === "ecdf"
+  )
+    return [];
   const filters: RowFilter[] = [];
-  if (settings.kind !== "histogram" && settings.x) {
-    filters.push({ column: settings.x, equals: selected.label });
+  if (settings.x) {
+    filters.push({
+      column: settings.x,
+      equals: selected.parent ?? selected.label,
+    });
   }
-  if (settings.group) {
+  if (settings.group && selected.parent !== null) {
     filters.push({ column: settings.group, equals: selected.group });
   }
   return filters;
@@ -151,12 +165,27 @@ export function filtersFor(
  * either shape contributes here.
  */
 export function selectionFor(
-  settings: { x: string; group: string },
+  settings: { x: string; group: string; kind?: string },
   filters: RowFilter[],
-): { label: string; group: string } | null {
+  rows: Record<string, string>[] = [],
+): ChartSelection | null {
   if (!filters.length) return null;
   const label = filters.find((f) => f.column === settings.x)?.equals ?? "";
   const group =
     filters.find((f) => f.column === settings.group)?.equals ?? "(all)";
+  if (settings.kind === "sunburst" || settings.kind === "treemap") {
+    const child = filters.some((filter) => filter.column === settings.group);
+    if (child) {
+      const suffix = ` · ${group}`;
+      // Early versions saved the display label rather than the x value.
+      const parent =
+        label.endsWith(suffix) && !rows.some((row) => row[settings.x] === label)
+          ? label.slice(0, -suffix.length)
+          : label;
+      return { label: `${parent}${suffix}`, group, parent };
+    }
+    return { label, group: label, parent: null };
+  }
+  if (settings.kind === "calendar") return { label, group: "" };
   return { label, group };
 }

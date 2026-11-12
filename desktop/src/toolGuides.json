@@ -109,7 +109,7 @@
     "settings": "seed fixes vocd-D's random sampling so two runs agree; change it only to test stability. No other settings: the four measures are always all reported.",
     "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ndiversity = nlp.measures(corpus, which=[\"lexical_diversity\"])\nnlp.show(diversity, x=\"Year\", y=\"MTLD\", kind=\"scatter\", title=\"Vocabulary variety over time\")"
   },
-  "narrative": {
+  "narrative_arc": {
     "what": "How a story moves: sentiment across the text, where characters appear, and who is named when.",
     "how": "Each document (or chapter) is cut into equal segments; tone and character mentions are charted against position, turning a whole book or speech collection into one readable curve.",
     "formula": "The emotion arc is VADER compound sentiment per segment, z-scored within the document so its shape is comparable across lengths. Character positions are each mention's location as a fraction through the text (0-1); the character-by-order heat strip aggregates those fractions into columns per document and rows per name.",
@@ -117,7 +117,7 @@
     "interpretation": "The curve is a map of tone, not plot: a flat arc with a late dip is a finding about sentiment, which you then check against the text. Character density is about mentions, not importance.",
     "limits": "Segment count sets the resolution and the arc smooths local events away. Names miss nicknames and pronouns unless coreference or the gender tools have been run. Irony and negation still fool VADER in places.",
     "settings": "field: form (surface words) or lemma for the word-level work under the arc. Segmenting is fixed at equal fractions of each document so that different lengths line up.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"narrative\", corpus)\nnlp.show(result.table, x=\"Position\", y=\"Sentiment\", kind=\"line\", title=\"Emotion arc\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"narrative_arc\", corpus)\nnlp.show(result.table, x=\"Position\", y=\"Sentiment\", kind=\"line\", title=\"Emotion arc\")"
   },
   "ner": {
     "what": "Named people, places and organisations: who and what is mentioned, in which document, and where in it.",
@@ -189,20 +189,30 @@
     "settings": "This tool has no settings of its own; it always reports distance, depth and subordination. It does require the English parser (see Models).",
     "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nsyntax = nlp.measures(corpus, which=[\"sentence_complexity\"])\nnlp.show(syntax, x=\"Year\", y=\"Mean Dependency Distance\", kind=\"scatter\", title=\"Syntactic complexity over time\")"
   },
-  "sentiment_vader_anew": {
-    "what": "Positive and negative tone in sentences and documents. VADER (a word-list method, always available) measures valence; optionally ANEW rates text on psychological dimensions from your own lexicon file.",
-    "how": "Runs on the parsed text, one row per sentence or document. VADER ships with the suite; ANEW is only run when you provide its ratings CSV.",
-    "formula": "VADER sums valence ratings for its lexicon words with rules for negation, degree modifiers ('very'), punctuation and capitalisation, then normalises to compound in [-1, 1] plus positive/neutral/negative proportions. ANEW averages each matched lemma's valence, arousal and dominance ratings from the lexicon you supply.",
+  "polarity_vader": {
+    "what": "Positive and negative tone in sentences and documents, measured by VADER's word-list method and rules.",
+    "how": "Runs on the parsed text, one row per sentence and one per document. VADER ships with the suite, so there is nothing to install or supply.",
+    "formula": "VADER sums valence ratings for its lexicon words with rules for negation, degree modifiers ('very'), punctuation and capitalisation, then normalises to a compound score in [-1, 1] plus positive, neutral and negative proportions; a document's score is the mean over its sentences.",
     "question": "Does tone swing across a campaign's speeches? Chart the compound score by date and read the sentences at each peak.",
-    "interpretation": "Compound near 0 is neutral; +1 and -1 are the extremes. Compare scores within one method - VADER and ANEW answer different questions. A document-level score hides mixed sentences, so open the sentence view before concluding.",
-    "limits": "Word lists misread sarcasm, domain jargon ('unemployment' is negative in VADER regardless of context) and long negation scopes. ANEW's ratings come from its original raters and era; scores are averages over matched words only.",
-    "settings": "analysis: vader only, or both (VADER plus ANEW). anew-lexicon: your ANEW ratings CSV when analysis=both. The desktop keeps only these two settings; scripts can also choose the matching field (form or lemma).",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ntone = nlp.sentiment(corpus, model=\"vader\", unit=\"document\")\nnlp.show(tone, x=\"Year\", y=\"Compound\", kind=\"line\", title=\"Tone over time\")"
+    "interpretation": "Compound near 0 is neutral and +1 and -1 are the extremes. A document-level score hides mixed sentences, so open the sentence view before concluding.",
+    "limits": "Word lists misread sarcasm, domain jargon ('unemployment' is negative in VADER regardless of context) and long negation scopes.",
+    "settings": "field: score the surface form or the lemma. vader-lexicon: pin the legacy-exact VADER lexicon file instead of the packaged one.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ntone = nlp.sentiment(corpus, unit=\"document\")\nnlp.show(tone, x=\"Year\", y=\"Compound\", kind=\"line\", title=\"Tone over time\")"
+  },
+  "valence_anew": {
+    "what": "How pleasant, arousing and dominant each document's words are, rated against the ANEW word norms you supply.",
+    "how": "Runs on the parsed text, one row per document. It needs an ANEW ratings CSV (valence, arousal and dominance per word); the suite does not ship one.",
+    "formula": "For each document ANEW averages the valence, arousal and dominance ratings of the lemmas it recognises in your lexicon; words it does not know are skipped and the hit count is reported beside each mean.",
+    "question": "Which texts use the most pleasant vocabulary? Chart valence by date and check the hit count before trusting any point.",
+    "interpretation": "ANEW rates words from 1 to 9 (5 is neutral). A document scored from few rated words is noisy, and ANEW and VADER answer different questions, so do not set one unit against the other.",
+    "limits": "Coverage depends on your lexicon: uncommon or domain words may be missing, leaving a mean over very few words. The ratings come from ANEW's original raters and era.",
+    "settings": "anew-field: match on the surface form or the lemma. anew-lexicon: your ANEW ratings CSV.",
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nvalues = nlp.run(\"valence_anew\", corpus)\nnlp.show(values[\"anew\"], x=\"Document\", y=\"Valence\", kind=\"bar\", title=\"Valence by document\")"
   },
   "shapes": {
     "what": "Story shape: the classic arcs of narrative - rise, fall, steady - drawn from the whole text, plus a Sankey view of how categories flow across sections.",
     "how": "The text is divided into equal segments and a key feature is charted across them (the story-arc panel), or named categories are flowed from section to section (the Sankey).",
-    "formula": "Story arc: the text is split into equal-sized bins and each bin's prominence score (distinctive-term density or sentiment, standardised) is plotted in sequence - the TextArc/Gauss-Piper family of shapes. The shape_hc/shape_svd/shape_nmf tools below do the formal version: per-feature z-scores first, then clustering or decomposition.",
+    "formula": "Story arc: the text is split into equal-sized bins and each bin's prominence score (distinctive-term density or sentiment, standardised) is plotted in sequence - the TextArc/Gauss-Piper family of shapes. The story_shape_hc/story_shape_svd/story_shape_nmf tools below do the formal version: per-feature z-scores first, then clustering or decomposition.",
     "question": "Does this novella rise toward the middle or end? Run the arc on one text and name the shape before looking at another.",
     "interpretation": "Shapes are impressions of the whole - good for comparing several works in one glance, never for locating a scene. When comparing works, same bins and same feature are required or the shapes are not the same measurement.",
     "limits": "Resolution is the bin count; short texts give blocky arcs. The shape says nothing about genre expectations, irony or who speaks - it is one line through a complex object.",
@@ -449,7 +459,7 @@
     "settings": "queries: your search terms (the same forms the search tool uses). case-sensitive: distinguish case. smooth: moving-average window in periods (default 1 = raw). Grouping is by the period the run form chooses.",
     "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nseries = nlp.term_rates(\n    corpus,\n    {\"liberty\": [\"liberty\"], \"equality\": [\"equality\"]},\n    per=1000,\n    by=\"decade\",\n    match=\"exact-lowercase\",\n)\nnlp.show(series, x=\"Decade\", y=[\"liberty per 1000\", \"equality per 1000\"], kind=\"line\", title=\"Two words over time\")"
   },
-  "sentiment_neural_bert": {
+  "polarity_distilbert_sst2": {
     "what": "Tone per sentence and document from a small neural classifier - DistilBERT fine-tuned on movie reviews (SST-2) - the modern counterpart to VADER.",
     "how": "Each sentence runs through the ONNX model (shipped with the app) and gets a positive/negative probability; documents average their sentences, with per-sentence and per-document panels.",
     "formula": "DistilBERT (a distilled BERT encoder) with a classification head fine-tuned on SST-2: softmax over {negative, positive} per sentence. Document score = mean of its sentences' positive probabilities (shown also as a -1..1 rescaling of 2p-1 for comparability with VADER's compound).",
@@ -459,17 +469,17 @@
     "settings": "model: distilbert-sst2 (the shipped one). Everything else is fixed - the model file is the measurement. Scripts can also choose unit=document or sentence and pick this model through nlp.sentiment.",
     "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\ntone = nlp.sentiment(corpus, model=\"distilbert-sst2\", unit=\"document\")\nnlp.show(tone, x=\"Year\", y=\"Score\", kind=\"line\", title=\"Neural tone over time\")"
   },
-  "sentiment_neural_spacy": {
+  "polarity_spacy": {
     "what": "Tone per sentence and document through spaCy's sentiment model pipeline - the same neural measurement as the BERT tool, hosted by spaCy.",
     "how": "Runs the installed spaCy model's text-classification component over each sentence and aggregates to documents; same panels as the other sentiment tools so the scores can be compared directly.",
     "formula": "spaCy's textcat component (a neural classifier) produces positive/negative probabilities per sentence; document score is the sentence mean, as in the BERT variant. Which architecture you get depends on the installed spaCy package version and model.",
     "question": "Does the choice of engine move the tone curve at all? Run it beside the BERT tool on the same corpus and compare the two lines.",
-    "interpretation": "Read exactly as sentiment_neural_bert - probability of positive in the model's training sense. Differences between engines on the same text are model differences, not findings about the text.",
+    "interpretation": "Read exactly as polarity_distilbert_sst2 - probability of positive in the model's training sense. Differences between engines on the same text are model differences, not findings about the text.",
     "limits": "Needs the spaCy model installed (see Models). Same domain sensitivity as any review-trained classifier. Sentences are classified independently of their neighbours, so quoted irony reads straight.",
     "settings": "model: the spaCy pipeline name (en_core_web_sm is the default and what the suite installs). No other options; swap models only between runs and say so in your notes.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"sentiment_neural_spacy\", corpus)\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"polarity_spacy\", corpus)\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
   },
-  "sentiment_neural_stanza": {
+  "polarity_stanza": {
     "what": "Tone per sentence and document through Stanza's neural pipeline - the third engine on the same question, for triangulation.",
     "how": "Each sentence is classified by the installed Stanza sentiment model; results aggregate to documents and appear in the same panel family as the other engines.",
     "formula": "Stanza's sentiment classifier (a neural model over word and character features) scores each sentence; documents average their sentences. The scales are the model's own, so compare shapes across engines, not raw values.",
@@ -477,9 +487,9 @@
     "interpretation": "As the other neural tools: per-sentence probabilities averaged to documents. The panel family keeps the columns aligned so a side-by-side chart is honest.",
     "limits": "Needs the Stanza models downloaded (see Models); the first run is slow while they load. Same training-domain caveats - Stanza's sentiment data is also modern and mostly review-adjacent.",
     "settings": "language: the pipeline language ('en' default). No other options; the model package is the measurement.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"sentiment_neural_stanza\", corpus, language=\"en\")\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"polarity_stanza\", corpus, language=\"en\")\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
   },
-  "sentiment_neural_corenlp": {
+  "polarity_corenlp": {
     "what": "Tone per sentence and document via Stanford CoreNLP's sentiment system - the classic recursive neural sentiment model, if you run the CoreNLP server.",
     "how": "Text is sent to a CoreNLP server you have running locally (default http://localhost:9000); its sentiment classes per sentence are collected and aggregated like the other engines'.",
     "formula": "CoreNLP's sentiment annotator (Socher et al.'s recursive neural tensor network over parse trees): each sentence gets a 0-4 class (very negative to very positive), mapped to the common score scale in the panels. Tree-based, so it sees compositional structure the flat classifiers do not.",
@@ -487,9 +497,9 @@
     "interpretation": "Scores are class values mapped to the shared scale - read shapes, and cross-check the panels' raw columns before quoting a number. The server's model version belongs in your notes.",
     "limits": "Requires a separately installed and running CoreNLP server - the tool fails cleanly if it cannot reach it. Network round-trips make it the slowest of the four. The model is the oldest of the family and its training domain is movie reviews.",
     "settings": "server: the CoreNLP URL (default http://localhost:9000). Nothing else - the annotator configuration is fixed in the suite.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"sentiment_neural_corenlp\", corpus, server=\"http://localhost:9000\")\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"polarity_corenlp\", corpus, server=\"http://localhost:9000\")\nnlp.show(result.table, x=\"Document\", y=\"Score\", kind=\"bar\", title=\"Tone per document\")"
   },
-  "shape_hc": {
+  "story_shape_hc": {
     "what": "Story shapes by clustering: groups whole documents (or segments) into eras by their structural profile, and draws the cluster tree.",
     "how": "Each unit becomes a feature vector of story-shape measures, standardised per feature, then hierarchically clustered - the dendrogram is the output, and the era panel shows each cluster's shape.",
     "formula": "Feature standardisation first (per-feature z-scores across the units, so sentence length cannot drown everything - shape components follow units, not raw features). Then agglomerative hierarchical clustering with Ward (default), average, complete or single linkage over the standardised features; resampling (32 draws) tests how stable each split is.",
@@ -497,27 +507,27 @@
     "interpretation": "Clusters are groups with similar profiles under these features; the tree shows nesting (a big split into two, one of which splits again). Stability scores tell you which branches survive resampling - only those deserve names.",
     "limits": "Standardisation means components are relative to this corpus: add documents and old shapes shift. Linkage choice changes the tree in the middle ranks. Clusters of few units are unstable by construction.",
     "settings": "method: ward (default), average, complete or single - Ward for compact clusters, single for chaining effects you may want to see. n-clusters: how many groups to cut from the tree (default 2). resample: how many resampling draws for stability (default 32).",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"shape_hc\", corpus, method=\"ward\", n_clusters=3)\nnlp.show(result.table, title=\"Document clusters by shape\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"story_shape_hc\", corpus, method=\"ward\", n_clusters=3)\nnlp.show(result.table, title=\"Document clusters by shape\")"
   },
-  "shape_svd": {
+  "story_shape_svd": {
     "what": "Story shapes by decomposition: the few latent axes along which documents' shapes vary, with each document's position on them.",
     "how": "Standardised shape features are reduced by SVD (the algebra behind PCA) to n components: the loadings say what each axis means, the document panel where each text sits.",
     "formula": "Per-feature z-scores first, then singular value decomposition of the units-by-features matrix; component 1 is the largest axis of variation in shapes (currently dominated by overall pacing/extremity), component 2 the largest remaining, and so on. Resampling (32 draws) scores how stable each component's direction is.",
     "question": "What is the biggest way these stories differ in shape - and does a genre or period sit at one end of it? The loadings and document positions answer in two panels.",
     "interpretation": "Loadings say which features make an axis (read the top positive and negative rows together). Documents at opposite ends of an axis differ along exactly those features. Explained-variance share says how much of the variety each axis holds.",
-    "limits": "Standardised to this corpus (see shape_hc). Components beyond the first couple hold small variance and unstable directions; two runs on different corpora have different axes to compare. Sign of a component is arbitrary - read both ends.",
+    "limits": "Standardised to this corpus (see story_shape_hc). Components beyond the first couple hold small variance and unstable directions; two runs on different corpora have different axes to compare. Sign of a component is arbitrary - read both ends.",
     "settings": "n-components: how many axes to keep (default 2). seed: resampling start. resample: stability draws (default 32).",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"shape_svd\", corpus, n_components=2)\nnlp.show(result.table, x=\"Component 1\", y=\"Component 2\", kind=\"scatter\", title=\"Documents in shape space\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"story_shape_svd\", corpus, n_components=2)\nnlp.show(result.table, x=\"Component 1\", y=\"Component 2\", kind=\"scatter\", title=\"Documents in shape space\")"
   },
-  "shape_nmf": {
+  "story_shape_nmf": {
     "what": "Story shapes as additive parts: non-negative matrix factorisation splits shape profiles into n building blocks each document mixes in its own proportions.",
     "how": "Standardised shape features are factored into parts and per-document weights - an additive reading ('this story is part steady-rise, part late-crisis') where SVD gives a subtractive axis reading.",
-    "formula": "Per-feature z-scores first (shifting to non-negativity for NMF), then non-negative matrix factorisation: units-by-features ~ weights x parts, fitted to minimise the Frobenius reconstruction error (Lee & Seung's multiplicative updates, up to max-iter). Parts are additive components; each document's row of weights is its composition. Resampled stability as in shape_svd.",
+    "formula": "Per-feature z-scores first (shifting to non-negativity for NMF), then non-negative matrix factorisation: units-by-features ~ weights x parts, fitted to minimise the Frobenius reconstruction error (Lee & Seung's multiplicative updates, up to max-iter). Parts are additive components; each document's row of weights is its composition. Resampled stability as in story_shape_svd.",
     "question": "Which recurring building blocks of shape does this genre use, and in what proportion per story? The composition panel is the answer.",
     "interpretation": "Each part is a feature profile (read its loadings); a document's weights are 'how much of each block'. Unlike SVD axes, parts can all be high at once - mixtures, not oppositions.",
     "limits": "The z-score shift to non-negativity moves zero from 'average' to 'the minimum observed' - read loadings accordingly. NMF parts are not unique between runs at different seeds; stability helps but comparison across corpora stays shaky.",
     "settings": "n-components: how many parts (default 2). seed: fitting and resampling start. resample: stability draws (default 32). max-iter: fitting iterations (default 200) - raise it if reconstruction error is still falling in the output.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"shape_nmf\", corpus, n_components=3, seed=42)\nnlp.show(result.table, kind=\"heatmap\", title=\"Shape composition per document\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"story_shape_nmf\", corpus, n_components=3, seed=42)\nnlp.show(result.table, kind=\"heatmap\", title=\"Shape composition per document\")"
   },
   "geocode": {
     "what": "Place names in the text become coordinates: which locations these documents mention, ready for a map.",
@@ -539,17 +549,17 @@
     "settings": "provider: offline (default), google or nominatim (names leave the machine). limit: how many places to resolve (default 200). The SVO extraction itself is fixed.",
     "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"svo_map\", corpus, provider=\"offline\", limit=100)\nnlp.show(result.table, title=\"Actions by place\")"
   },
-  "word2vec_bert": {
+  "word_vectors_bert": {
     "what": "Meaning as neighbourhoods from contextual embeddings: which words and passages stand near a query word in this corpus's usage.",
     "how": "Words (or sentences) are embedded by a small transformer, and the nearest neighbours of a query are listed - meaning as the company a word keeps here, not in a general corpus.",
     "formula": "Token embeddings from BERT-base's subword outputs (averaged per word), cosine similarity between vectors defines neighbourhoods; neighbours = highest cosine to the query vector. min-count filters hapaxes before embedding. The saved vectors are cacheable across runs (the model's work is reused when nothing changed).",
-    "question": "What does 'liberty' mean in this collection specifically? Its nearest neighbours here compared with word2vec_gensim's is the whole method.",
+    "question": "What does 'liberty' mean in this collection specifically? Its nearest neighbours here compared with word_vectors_gensim's is the whole method.",
     "interpretation": "Neighbours are the corpus's usage pattern: closer cosine = more interchangeable contexts here. The meaning-axis and meaning-group panels read semantic dimensions from the neighbour structure - treat them as descriptive, not psychological.",
     "limits": "Subword averaging mangles rare names; context is per sentence, so polysemous words blur ('bank' averages its senses). Small corpora give thin training signal - this is embedding of usage, not a trained lexical resource.",
     "settings": "field: lemma or form. model: bert-base-uncased (the shipped encoder). min-count: embed only words seen at least this often (default 2). query: the word whose neighbours you want. top-n: neighbours listed (default 5). seed: for any sampling in the panels.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word2vec_bert\", corpus, query=\"liberty\", top_n=10)\nnlp.show(result.table, x=\"Neighbour\", y=\"Cosine\", kind=\"bar\", title=\"Words near 'liberty'\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word_vectors_bert\", corpus, query=\"liberty\", top_n=10)\nnlp.show(result.table, x=\"Neighbour\", y=\"Cosine\", kind=\"bar\", title=\"Words near 'liberty'\")"
   },
-  "word2vec_gensim": {
+  "word_vectors_gensim": {
     "what": "Meaning as neighbourhoods, trained the classic way: word2vec (skip-gram or CBOW) over the corpus itself.",
     "how": "A word2vec model is trained on the parsed text and queried for neighbours, analogy results and saved vectors - the transparent, tunable counterpart to the BERT tool.",
     "formula": "word2vec (Mikolov et al. 2013): sg=1 trains skip-gram (predict context from word), sg=0 CBOW - over windows of `window` tokens, `vector-size` dimensions, `epochs` passes, words under min-count dropped. Neighbours by cosine; the t-SNE panel projects vectors to 2 dimensions for viewing.",
@@ -557,7 +567,7 @@
     "interpretation": "Neighbours reflect the training corpus at these settings; window=5 catches topical rather than syntactic company. Analogy moves ('king - man + woman') are stable only on large corpora - read them as sketches.",
     "limits": "Needs enough text to train meaningfully - tiny corpora give noise (min-count and vector-size are guards, not cures). Rare words and names are unreliable. Two runs at different seeds differ in details.",
     "settings": "field: lemma or form. min-count: minimum occurrences to get a vector (default 2). vector-size: dimensions (default 100). window: context size in tokens (default 5). epochs: training passes (default 20). sg: 1 = skip-gram (default), 0 = CBOW. seed: training start. remove-stopwords: drop function words before training. query and top-n: which word's neighbours to show (default 5).",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word2vec_gensim\", corpus, window=5, query=\"liberty\", top_n=10)\nnlp.show(result.table, x=\"Neighbour\", y=\"Cosine\", kind=\"bar\", title=\"Words near 'liberty'\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word_vectors_gensim\", corpus, window=5, query=\"liberty\", top_n=10)\nnlp.show(result.table, x=\"Neighbour\", y=\"Cosine\", kind=\"bar\", title=\"Words near 'liberty'\")"
   },
   "lda_stability": {
     "what": "Whether your topic model is real: LDA refitted at several seeds, with matched topics across runs and a stability score.",
@@ -569,7 +579,7 @@
     "settings": "topics: k per fit (default 3). seeds: comma-separated seed list (default 100,101,102). top-n: words per topic used for matching (default 10). passes: training passes per fit (default 10). stable-at: overlap share for 'same topic' (default 0.5). nouns-only: restrict vocabulary to nouns.",
     "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"lda_stability\", corpus, topics=3, seeds=\"100,101,102,103\")\nnlp.show(result.table, title=\"Topics that survive refitting\")"
   },
-  "word_sense_induction": {
+  "word_senses_bert": {
     "what": "The separate senses of a word in your corpus: occurrences grouped into usages, so 'bank' splits into its river and money senses here.",
     "how": "Every occurrence is embedded in its sentence context (BERT), clustered, and each cluster is a proposed sense with its example sentences - induced from the corpus, no dictionary involved.",
     "formula": "Contextual embeddings of the target word's occurrences (BERT-base over the sentence, target-token vector); k-means over those vectors into senses, sized by the split-words panel's silhouette evidence. Each sense's exemplars are the occurrences nearest its centroid.",
@@ -577,7 +587,7 @@
     "interpretation": "Clusters are usage-senses in this corpus: read the exemplars before naming one. The clean-split words panel names words whose occurrences cluster most clearly - the safe cases to write about.",
     "limits": "Clusters are as many as you ask for; embeddings blur rare senses into common ones. Induced senses are corpus-relative ('the river sense here') and need not match a dictionary's divisions.",
     "settings": "field: form (default) or lemma to group occurrences. model: bert-base-uncased (the shipped encoder). The split-words and senses panels carry the cluster count and examples.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word_sense_induction\", corpus, field=\"form\")\nnlp.show(result.table, title=\"Induced senses and their examples\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"word_senses_bert\", corpus, field=\"form\")\nnlp.show(result.table, title=\"Induced senses and their examples\")"
   },
   "bert_extract": {
     "what": "Extractive summary: the handful of sentences that best stand for each document, chosen by a transformer reading.",
@@ -589,17 +599,17 @@
     "settings": "sentences: how many to extract (default 3). model: bert-base-uncased (default), granite-embedding-english-r2 or qwen3-embedding-0.6b - the embedding models installed under Models; larger models give smoother centrality at a speed cost.",
     "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"bert_extract\", corpus, sentences=3)\nnlp.show(result.table, title=\"Three central sentences per document\")"
   },
-  "bert_topics": {
+  "topic_clusters_bert": {
     "what": "Topics from sentence embeddings: documents (or sentences) clustered by transformer meaning, with each cluster's most typical words.",
     "how": "Embeds the units, clusters them into k groups, and labels each group by its highest-weight vocabulary - topics as dense regions of meaning-space rather than word co-occurrence.",
-    "formula": "Unit embeddings from the chosen transformer (see doc_embeddings), standardised across units, then clustering into `topics` groups; cluster labels come from the most distinctive terms of the units in each cluster. The eras panel charts cluster shares over position or time.",
+    "formula": "Unit embeddings from the chosen transformer (see document_embeddings), standardised across units, then clustering into `topics` groups; cluster labels come from the most distinctive terms of the units in each cluster. The eras panel charts cluster shares over position or time.",
     "question": "Do these chapters form meaning-clusters the bag-of-words model missed? Compare the k=3 clustering with LDA's on the same corpus.",
     "interpretation": "Clusters group semantically similar units - naming one is reading its typical words and a few members. Share-over-time movement is the interesting pattern for a collection with dates.",
-    "limits": "k is imposed; embedding models have their own blind spots (see doc_embeddings). Sentence-level runs on long corpora cost; document-level blurs mixed documents into one vector. Two models need not find the same clusters.",
+    "limits": "k is imposed; embedding models have their own blind spots (see document_embeddings). Sentence-level runs on long corpora cost; document-level blurs mixed documents into one vector. Two models need not find the same clusters.",
     "settings": "topics: number of clusters (default 3). top-n: typical words listed per topic (default 5). seed: clustering start (default 42). model: bert-base-uncased (default), granite-embedding-english-r2 or qwen3-embedding-0.6b.",
-    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"bert_topics\", corpus, topics=3, seed=42)\nnlp.show(result.table, title=\"Meaning clusters\")"
+    "example": "import nlpsuite as nlp\n\ncorpus = nlp.corpus()\nresult = nlp.run(\"topic_clusters_bert\", corpus, topics=3, seed=42)\nnlp.show(result.table, title=\"Meaning clusters\")"
   },
-  "doc_embeddings": {
+  "document_embeddings": {
     "what": "Documents as points in meaning-space: similarity, neighbours and a map by transformer embeddings, plus search-by-meaning across the corpus.",
     "how": "Every document (or sentence) is embedded by a small transformer; outputs are a similarity heat map, each unit's nearest neighbours, a 2-D map and a search panel answering 'what is closest to this sentence'.",
     "formula": "Embeddings from the chosen model (mean-pooled token vectors over the unit; sentence or document unit). Similarity = cosine between vectors, shown as the heat map and neighbour lists. The map panel projects with t-SNE; search_results ranks units by cosine to the query's embedding. Vectors are cached across runs keyed by model, model file and item texts - a second run over unchanged documents recomputes nothing.",

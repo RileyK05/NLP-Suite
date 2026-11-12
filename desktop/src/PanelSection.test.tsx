@@ -250,6 +250,32 @@ describe("building controls from the declaration", () => {
 });
 
 describe("the section on a run's record", () => {
+  it("keeps the chosen figure when an automatic draw finishes later", async () => {
+    const second = { ...volcano, name: "second", title: "Second figure" };
+    const chosen = { ...volcano, name: "chosen", title: "Chosen figure" };
+    vi.mocked(api).mockResolvedValue([volcano, second, chosen]);
+    let finishAutomatic!: (answer: PanelAnswer) => void;
+    vi.mocked(post)
+      .mockReturnValueOnce(
+        new Promise<PanelAnswer>((resolve) => {
+          finishAutomatic = resolve;
+        }) as ReturnType<typeof post>,
+      )
+      .mockResolvedValue({ ...preparedAnswer, title: chosen.title });
+    const { container } = render(<PanelSection projectId="p1" jobId="j1" />);
+    await act(async () => {});
+    const tab = [
+      ...container.querySelectorAll<HTMLButtonElement>(".panel-picker button"),
+    ].find((button) => button.textContent === chosen.title)!;
+    await act(async () => tab.click());
+    await act(async () => finishAutomatic({ ok: false, diagnostics: [] }));
+    expect(tab.getAttribute("aria-selected")).toBe("true");
+    expect(
+      container.querySelector('svg[role="img"]')?.getAttribute("aria-label"),
+    ).toBe(chosen.title);
+    expect(vi.mocked(post)).toHaveBeenCalledTimes(2);
+  });
+
   it("draws the declared primary figure when the run opens", async () => {
     vi.mocked(api).mockResolvedValue([volcano]);
     vi.mocked(post).mockResolvedValue(preparedAnswer);
@@ -265,12 +291,12 @@ describe("the section on a run's record", () => {
   it("opens the next figure when the first refuses this run", async () => {
     const groups = {
       ...volcano,
-      name: "word2vec_gensim_meaning_groups",
+      name: "word_vectors_gensim_meaning_groups",
       title: "Groups of words that mean alike",
     };
     const network = {
       ...volcano,
-      name: "word2vec_gensim_word_network",
+      name: "word_vectors_gensim_word_network",
       title: "A word's neighbourhood",
     };
     vi.mocked(api).mockResolvedValue([groups, network]);
@@ -328,13 +354,13 @@ describe("the section on a run's record", () => {
   it("opens the figure for the selected artifact when a run has several tables", async () => {
     const neighbour = {
       ...volcano,
-      name: "word2vec_gensim_neighbours",
+      name: "word_vectors_gensim_neighbours",
       title: "Nearest neighbours",
       requires: ["Word", "Neighbor", "Cosine"],
     };
     const projection = {
       ...volcano,
-      name: "word2vec_gensim_tsne",
+      name: "word_vectors_gensim_tsne",
       title: "t-SNE projection",
       requires: ["Word", "X", "Y"],
     };

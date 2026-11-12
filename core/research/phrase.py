@@ -27,6 +27,7 @@ _WORD = re.compile(r"[^\W_]", re.UNICODE)
 _QUERY_PART = re.compile(r"[^\W_]+(?:['\u2019][^\W_]+)?|[^\w\s]", re.UNICODE)
 _CLITICS = (
     "n't",
+    "n\u2019t",
     "'re",
     "'ve",
     "'ll",
@@ -214,7 +215,7 @@ def _approximate_tokens(text: str) -> list[str]:
         cut = len(clitic)
         stem, suffix = token[:-cut], token[-cut:]
         # spaCy's English tokenizer uses "ca"/"wo" before n't.
-        if suffix.casefold() == "n't" and stem.casefold() in {"can", "won"}:
+        if suffix.casefold() in {"n't", "n\u2019t"} and stem.casefold() in {"can", "won"}:
             stem = stem[:-1]
         tokens.extend((stem, suffix))
     return tokens

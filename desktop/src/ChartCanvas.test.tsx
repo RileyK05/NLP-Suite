@@ -77,8 +77,9 @@ describe("drawing a layout", () => {
     expect(draw({ group: "Set" })).toContain("chart-legend");
   });
 
-  it("invites the reader to point at it before anything is hovered", () => {
-    expect(draw()).toContain("Point to read a value");
+  it("explains selection and keyboard navigation before a mark is active", () => {
+    expect(draw()).toContain("Select a mark to see its rows");
+    expect(draw()).toContain("Use arrow keys to move between marks");
   });
 
   it("offers SVG and PNG downloads of the drawn chart", () => {
@@ -151,6 +152,60 @@ describe("drawing a layout", () => {
       );
       expect(html, kind).not.toContain("NaN");
     }
+  });
+});
+
+describe("the non-Cartesian drawings", () => {
+  const suite = [
+    { Date: "2020-01-01", Word: "alpha", Count: "4", Set: "x" },
+    { Date: "2020-01-02", Word: "alpha", Count: "2", Set: "y" },
+    { Date: "2020-02-01", Word: "beta", Count: "3", Set: "x" },
+    { Date: "2020-02-02", Word: "beta", Count: "1", Set: "y" },
+    { Date: "2020-03-01", Word: "gamma", Count: "5", Set: "x" },
+  ];
+
+  it("draws every kind with clickable marks and finite geometry", () => {
+    const cases: [string, Partial<Settings>][] = [
+      ["pie", {}],
+      ["sunburst", { group: "Set" }],
+      ["treemap", { group: "Set" }],
+      ["violin", {}],
+      ["radar", { group: "Set" }],
+      ["waffle", {}],
+      ["calendar", { x: "Date" }],
+      ["sankey", { group: "Set" }],
+    ];
+    for (const [kind, over] of cases) {
+      const result = buildLayout(
+        suite,
+        settings({ kind: kind as Settings["kind"], x: "Word", ...over }),
+      );
+      if (!result.ok) throw new Error(`${kind}: ${result.reason}`);
+      const html = renderToStaticMarkup(
+        <ChartCanvas
+          layout={result.layout}
+          selected={null}
+          onSelect={() => {}}
+          title={`${kind} test`}
+        />,
+      );
+      expect(html, kind).not.toContain("NaN");
+      expect(html, kind).toContain('role="button"');
+    }
+  });
+
+  it("draws a pie as arcs rather than a row of rectangles", () => {
+    const result = buildLayout(suite, settings({ kind: "pie" }));
+    if (!result.ok) throw new Error(result.reason);
+    const html = renderToStaticMarkup(
+      <ChartCanvas
+        layout={result.layout}
+        selected={null}
+        onSelect={() => {}}
+        title="pie"
+      />,
+    );
+    expect(html).toContain("<path");
   });
 });
 

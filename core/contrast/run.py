@@ -28,7 +28,7 @@ from core.contrast.sides import Alignment, align, side_of
 from core.contrast.topics import topic_prevalence
 from core.contrast.words import distinctive_words
 from core.io.document_fields import field_value
-from core.io.reader import Corpus
+from core.io.reader import Corpus, display_names
 from core.models.vector_cache import VectorCache
 from core.result import Diagnostic, Result
 
@@ -64,10 +64,14 @@ def _words(text: str) -> int:
     return len(text.split())
 
 
-def _unit(alignment: str) -> str:
-    """What an alignment's groups are called in a sentence: "Speaker groups", "decades"."""
+def _unit(alignment: str, period_noun: str = "decade") -> str:
+    """What an alignment's groups are called in a sentence: "Speaker groups", "decades", "periods".
+
+    A corpus ordered by chapter is cut into periods of chapters, not decades:
+    the noun is the alignment's own (``Alignment.period_noun``).
+    """
     if alignment == "period":
-        return "decades"
+        return f"{period_noun}s"
     return f"{alignment.removeprefix('field:')} groups"
 
 
@@ -194,13 +198,17 @@ def _methods(  # noqa: PLR0912,PLR0913,PLR0917 -- dispatches independent selecte
             frames.update(tool(tool_name))
         measured = measure_table(corpus, frames, MEASURES, alignment)
         out["contrast_measures.csv"] = measured
-        out["contrast_measure_tests.csv"] = measure_tests(measured, MEASURES, spec.sides, _unit(spec.alignment))
+        out["contrast_measure_tests.csv"] = measure_tests(
+            measured, MEASURES, spec.sides, _unit(spec.alignment, alignment.period_noun)
+        )
 
     if "tone" in spec.methods:
         frames = tool(TONE.tool, {"analysis": "vader"})
         toned = measure_table(corpus, frames, (TONE,), alignment)
         out["contrast_tone.csv"] = toned
-        out["contrast_tone_tests.csv"] = measure_tests(toned, (TONE,), spec.sides, _unit(spec.alignment))
+        out["contrast_tone_tests.csv"] = measure_tests(
+            toned, (TONE,), spec.sides, _unit(spec.alignment, alignment.period_noun)
+        )
 
     if "keyness" in spec.methods:
         if table is None:
@@ -253,6 +261,9 @@ def _methods(  # noqa: PLR0912,PLR0913,PLR0917 -- dispatches independent selecte
 
 def _compared_rows(table: pd.DataFrame, corpus: Corpus, alignment: Alignment) -> pd.DataFrame:
     """The token rows of documents inside the alignment (keyness ignores the rest)."""
+    shown = display_names(corpus.docs)
     kept = {doc.path.name for doc in corpus.docs if doc.doc_id in alignment.groups}
     kept |= {doc.name for doc in corpus.docs if doc.doc_id in alignment.groups}
+    # The parser's own name for each document: the path when basenames collide.
+    kept |= {shown[doc.doc_id] for doc in corpus.docs if doc.doc_id in alignment.groups}
     return table[table[Col.DOCUMENT.value].astype(str).isin(kept)]

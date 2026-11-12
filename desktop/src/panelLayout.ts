@@ -79,6 +79,14 @@ export type LineSeries = {
 export type PanelLayout =
   | { shape: "scatter_labelled"; marks: PlacedMark[]; groups: string[] }
   | {
+      shape: "geographic";
+      marks: MapMark[];
+      groups: string[];
+      land: [number, number][][];
+      cellDegrees: number;
+      maximum: number;
+    }
+  | {
       shape: "line_series";
       marks: PlacedMark[];
       series: LineSeries[];
@@ -163,6 +171,47 @@ export type PanelLayout =
 
 /** A heatmap cell: a placed mark plus the number its colour encodes. */
 export type HeatCell = PlacedMark & { value: number };
+
+export type MapMark = PlacedMark & { radius: number; value: number };
+
+const MAP_COLORS = ["#a9e4e0", "#004f70"];
+
+function layoutGeographic(
+  prepared: PreparedPanel,
+): Extract<PanelLayout, { shape: "geographic" }> {
+  const cellDegrees = prepared.mapCellDegrees ?? 0;
+  const weight = (mark: PanelMark) =>
+    (cellDegrees ? mark.value : mark.size) ?? 0;
+  const maximum = Math.max(0, ...prepared.marks.map(weight));
+  return {
+    shape: "geographic",
+    groups: [],
+    cellDegrees,
+    maximum,
+    land: (prepared.mapLand ?? []).map((ring) =>
+      ring.split(" ").map((point) => {
+        const [lon, lat] = point.split(",").map(Number);
+        return [lon, lat];
+      }),
+    ),
+    marks: prepared.marks.map((mark, rank) => {
+      const value = weight(mark);
+      return {
+        ...placed(
+          mark,
+          mark.group,
+          cellDegrees && maximum > 0
+            ? heatColor(Math.sqrt(value / maximum), 0, 1, MAP_COLORS)
+            : "#006b8f",
+          rank,
+        ),
+        value,
+        radius:
+          maximum > 0 ? Math.max(3.5, 14 * Math.sqrt(value / maximum)) : 5,
+      };
+    }),
+  };
+}
 
 /** A distribution point: a placed mark plus its vertical jitter, in row
  *  units (positive is downward, toward the next row). */
@@ -646,7 +695,7 @@ export function facetGrid(count: number): { rows: number; columns: number } {
 function layoutHeatmap(prepared: PreparedPanel, stops: string[]): PanelLayout {
   const scale = prepared.colorScale ?? "";
   const values = prepared.marks.map((mark) => mark.value ?? 0);
-  const domain = heatDomain(values, scale);
+  const domain = prepared.valueDomain ?? heatDomain(values, scale);
   const cells = prepared.marks.map((mark, index) => ({
     ...placed(
       mark,
@@ -826,6 +875,8 @@ export function buildPanelLayout(prepared: PreparedPanel): PanelLayoutResult {
   switch (prepared.shape) {
     case "scatter_labelled":
       return { ok: true, layout: layoutScatter(prepared), annotations };
+    case "geographic":
+      return { ok: true, layout: layoutGeographic(prepared), annotations };
     case "line_series":
       return { ok: true, layout: layoutLineSeries(prepared), annotations };
     case "ranked_bars":

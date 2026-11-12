@@ -69,7 +69,7 @@ class TestNeural:
                 "Neutral": [40, 140, 40, 40, 40, 40, 40],
             }
         )
-        panel = build("sentiment_neural_bert_tone_by_group", frame, {"measure": "% Positive"}).unwrap()
+        panel = build("polarity_distilbert_sst2_tone_by_group", frame, {"measure": "% Positive"}).unwrap()
         by_document = {m.evidence.filters[0][1]: m.x for m in panel.marks}
         assert by_document["2"] == 25.0, "50 of 200 sentences is 25%, not 50"
         assert by_document["1"] == 50.0

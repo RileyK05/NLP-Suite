@@ -30,7 +30,7 @@ def _resolves(name: str) -> bool:
 
 class TestMigrationGuide:
     def test_unified_commands_resolve(self) -> None:
-        # Tool names may carry digits (word2vec_bert), so the pattern includes them.
+        # Tool names may carry digits (word_vectors_bert), so the pattern includes them.
         names = set(re.findall(r"nlp-suite ([a-z_0-9]+)", _guide_text()))
         assert names, "guide names no unified commands"
         for name in sorted(names):

@@ -36,7 +36,7 @@ const tools: Tool[] = Object.keys(guides).map((name) => ({
 }));
 describe("Learn field guide", () => {
   it("includes an in-depth guide for all current desktop tools", () => {
-    expect(tools).toHaveLength(61);
+    expect(tools).toHaveLength(62);
     for (const guide of Object.values(guides)) {
       expect(Object.keys(guide)).toEqual([
         "what",

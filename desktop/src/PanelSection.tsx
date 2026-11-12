@@ -166,7 +166,9 @@ export function PanelSection({
             if (!alive) return;
             setActive(panel);
             setParams(panelDefaults(panel));
-            if (await draw(panel, panelDefaults(panel))) return;
+            const sequence = drawSequence.current + 1;
+            const drawn = await draw(panel, panelDefaults(panel));
+            if (drawn || drawSequence.current !== sequence) return;
           }
           if (!alive || ordered.length < 2) return;
           setActive(ordered[0]);

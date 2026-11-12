@@ -386,7 +386,7 @@ _TOOL_CHARTS: dict[str, tuple[tuple[str, str, str, str, str], ...]] = {
             "separated, rather than a sign the word matters.",
         ),
     ),
-    "sentiment_vader_anew": (
+    "polarity_vader": (
         (
             "line",
             "Date",
@@ -409,6 +409,22 @@ _TOOL_CHARTS: dict[str, tuple[tuple[str, str, str, str, str], ...]] = {
             "Which documents read most positive or negative overall?",
             "Document-level compound is a mean over sentences, so a document near zero may be "
             "calm or may be equal parts of both.",
+        ),
+    ),
+    "valence_anew": (
+        (
+            "line",
+            "Date",
+            "Valence",
+            "Have these documents grown more pleasant or more unpleasant over time?",
+            "Document-level ANEW valence against the calendar, one point per document.",
+        ),
+        (
+            "scatter",
+            "Hits",
+            "Valence",
+            "Is each valence score backed by many rated words?",
+            "A document with few ANEW-rated words has a noisy mean; the hover gives the count.",
         ),
     ),
     "doc_similarity": (

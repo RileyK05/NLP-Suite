@@ -326,7 +326,7 @@ class TestEveryKindDrawsFromACsv:
     # What the desktop dialog sends for each kind, mirrored here so this test
     # exercises the combination a reader actually produces. Sankey needs a
     # group (its target column) like sunburst/treemap, so it is in both sets.
-    AGG_REJECTED = frozenset({"scatter", "box", "violin", "histogram", "bubble"})
+    AGG_REJECTED = frozenset({"scatter", "box", "violin", "histogram", "bubble", "ecdf"})
     GROUP_REQUIRED = frozenset({"heatmap", "sunburst", "treemap", "sankey"})
     GROUP_REJECTED = frozenset({"pie", "waffle", "calendar"})
 
@@ -414,6 +414,10 @@ class TestTheWorkbenchAgreesWithTheEngine:
             f"the workbench draws {unknown} live, which the engine cannot draw at all — "
             "so its Publish button would submit a job that is refused"
         )
+
+    def test_the_workbench_draws_the_whole_engine_vocabulary(self) -> None:
+        """The preview is the inventory: every kind the engine draws is live."""
+        assert set(self._list("LIVE_KINDS")) == set(CHART_KINDS)
 
     def test_the_palette_is_the_engine_palette(self) -> None:
         """A preview and a published chart of the same column share colours."""

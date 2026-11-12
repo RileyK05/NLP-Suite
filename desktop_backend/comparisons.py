@@ -91,8 +91,12 @@ class ComparisonDefinition(BaseModel):
     @field_validator("alignment")
     @classmethod
     def _alignment(cls, value: str) -> str:
-        if value in ("none", "period") or (value.startswith("field:") and value[6:].strip()):
+        if value in ("none", "period"):
             return value
+        if value.startswith("field:") and value[6:].strip():
+            # Stored stripped: the detail is looked up by this name, and
+            # " Speaker" matches no document's "Speaker".
+            return "field:" + value[6:].strip()
         raise ValueError('Line the sides up by "none", "period" or "field:<detail name>"')
 
     @model_validator(mode="after")
@@ -117,6 +121,15 @@ class ComparisonBody(BaseModel):
     name: StrictStr = Field(min_length=1, max_length=120)
     definition: ComparisonDefinition
     expected_revision: int | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _named(cls, value: str) -> str:
+        # A blank name saves as "" and then fails this same model when a
+        # backup of the project is restored, so the whole archive is refused.
+        if not value.strip():
+            raise ValueError("Name the comparison")
+        return value.strip()
 
 
 #: The ``contrast`` tool as a plan knows it. Kept out of the general catalog

@@ -52,7 +52,7 @@ def _neural_prepare(frame: pd.DataFrame) -> Result[pd.DataFrame]:
 
 def _vader() -> MeasureTool:
     return MeasureTool(
-        tool="sentiment_vader_anew",
+        tool="polarity_vader",
         requires=(DOC_ID, DOC, DATE, "Sentences", "Compound", "Pos", "Neg", "Neu"),
         prepare=prepare_passthrough((DOC_ID, DOC, "Compound", "Sentences")),
         measures=("Compound", "Pos", "Neg", "Neu"),
@@ -69,7 +69,7 @@ def _vader() -> MeasureTool:
 
 def _anew() -> MeasureTool:
     return MeasureTool(
-        tool="sentiment_vader_anew",
+        tool="valence_anew",
         requires=(DOC_ID, DOC, DATE, "Hits", "Valence", "Arousal", "Dominance"),
         prepare=prepare_passthrough((DOC_ID, DOC, "Valence", "Hits")),
         measures=("Valence", "Arousal", "Dominance"),
@@ -100,7 +100,7 @@ def _neural(tool: str) -> MeasureTool:
 
 def _swn() -> MeasureTool:
     return MeasureTool(
-        tool="sentiment_swn_hedono",
+        tool="polarity_sentiwordnet",
         requires=(DOC_ID, DOC, DATE, "Tokens", "Hits", "Pos", "Neg", "Obj", "Net"),
         prepare=prepare_passthrough((DOC_ID, DOC, "Net", "Tokens")),
         measures=("Net", "Pos", "Neg", "Obj"),
@@ -117,7 +117,7 @@ def _swn() -> MeasureTool:
 
 def _hedonometer() -> MeasureTool:
     return MeasureTool(
-        tool="sentiment_swn_hedono",
+        tool="happiness_hedonometer",
         requires=(DOC_ID, DOC, DATE, "Tokens", "Hits", "Happiness"),
         prepare=prepare_passthrough((DOC_ID, DOC, "Happiness", "Tokens")),
         measures=("Happiness",),
@@ -153,14 +153,12 @@ def _gender_guess() -> MeasureTool:
 SENTIMENT_VIEWS_PANELS = (
     *measure_panels(_vader(), title_word="VADER tone", prefix="sentiment_vader_tone"),
     *measure_panels(_anew(), title_word="ANEW ratings", prefix="sentiment_anew"),
-    *measure_panels(_neural("sentiment_neural_bert"), title_word="BERT tone", prefix="sentiment_neural_bert_tone"),
-    *measure_panels(_neural("sentiment_neural_spacy"), title_word="spaCy tone", prefix="sentiment_neural_spacy_tone"),
     *measure_panels(
-        _neural("sentiment_neural_stanza"), title_word="Stanza tone", prefix="sentiment_neural_stanza_tone"
+        _neural("polarity_distilbert_sst2"), title_word="BERT tone", prefix="polarity_distilbert_sst2_tone"
     ),
-    *measure_panels(
-        _neural("sentiment_neural_corenlp"), title_word="CoreNLP tone", prefix="sentiment_neural_corenlp_tone"
-    ),
+    *measure_panels(_neural("polarity_spacy"), title_word="spaCy tone", prefix="polarity_spacy_tone"),
+    *measure_panels(_neural("polarity_stanza"), title_word="Stanza tone", prefix="polarity_stanza_tone"),
+    *measure_panels(_neural("polarity_corenlp"), title_word="CoreNLP tone", prefix="polarity_corenlp_tone"),
     *measure_panels(_swn(), title_word="SentiWordNet tone", prefix="sentiment_swn"),
     *measure_panels(_hedonometer(), title_word="Hedonometer happiness", prefix="sentiment_hedonometer"),
     *measure_panels(_gender_guess(), title_word="Writing-style score", prefix="gender_guess_style"),

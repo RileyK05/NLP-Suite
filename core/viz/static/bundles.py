@@ -392,7 +392,7 @@ def _pair_grid(columns: Sequence[str], prepare: Prepare) -> Callable[[pd.DataFra
 
 
 def _meaning_map(frame: pd.DataFrame) -> Drawing:
-    """The doc_embeddings map, clusters outlined, every point named where it fits."""
+    """The document_embeddings map, clusters outlined, every point named where it fits."""
     from scipy.spatial import ConvexHull
 
     from core.viz.panel_helpers import document_labels
@@ -668,16 +668,16 @@ def _all_bundles() -> tuple[Bundle, ...]:
             draw=_similarity_map,
         ),
         Bundle(
-            name="doc_embeddings_decades_map",
-            tool="doc_embeddings",
+            name="document_embeddings_decades_map",
+            tool="document_embeddings",
             title="A map of the documents by meaning, by decade",
             question="Do eras form neighbourhoods of meaning?",
             requires=("Document A", "Document B", "Similarity"),
             draw=_similarity_map,
         ),
         Bundle(
-            name="doc_embeddings_clusters",
-            tool="doc_embeddings",
+            name="document_embeddings_clusters",
+            tool="document_embeddings",
             title="Neighbourhoods of meaning",
             question="Which documents form clusters by meaning, and which sit between them?",
             requires=("Document", "X", "Y", "Cluster"),

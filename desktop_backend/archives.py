@@ -11,6 +11,7 @@ import tempfile
 from typing import Any
 import uuid
 import zipfile
+import zlib
 
 from pydantic import ValidationError
 
@@ -19,7 +20,14 @@ from desktop_backend.fields import MAX_FIELDS_PER_PROJECT, FieldRow, FieldSettin
 from desktop_backend.notebooks import MAX_NOTEBOOKS_PER_PROJECT, NotebookBody
 from desktop_backend.paths import portable_key, safe_relative
 from desktop_backend.questions import MAX_QUESTIONS_PER_PROJECT, QuestionBody
-from desktop_backend.store import MAX_DOCUMENTS, MAX_PROJECT_NAME, TERMINAL_JOB_STATES, Workspace, now
+from desktop_backend.store import (
+    MAX_DOCUMENTS,
+    MAX_PROJECT_NAME,
+    TERMINAL_JOB_STATES,
+    Workspace,
+    free_name,
+    now,
+)
 from desktop_backend.views import MAX_VIEWS_PER_PROJECT, ViewBody
 
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -129,6 +137,10 @@ def restore(workspace: Workspace, source: Path) -> dict[str, Any]:
                 raise ValueError("Expanded project exceeds 2 GB.")
             for item in members:
                 safe_member(item.filename)
+                if item.flag_bits & 0x1:
+                    raise ValueError("Encrypted archive entries are not supported.")
+                if item.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise ValueError(f"Unsupported compression method for archive entry “{item.filename}”.")
                 mode = stat.S_IFMT(item.external_attr >> 16)
                 if item.is_dir() or mode not in (0, stat.S_IFREG):
                     raise ValueError("Only regular file entries are accepted.")
@@ -160,9 +172,12 @@ def restore(workspace: Workspace, source: Path) -> dict[str, Any]:
         KeyError,
         TypeError,
         AttributeError,
-        sqlite3.IntegrityError,
+        sqlite3.Error,
         zipfile.BadZipFile,
         json.JSONDecodeError,
+        zlib.error,
+        EOFError,
+        NotImplementedError,
     ) as exc:
         raise ValueError(f"Invalid project archive: {exc}") from exc
 
@@ -243,6 +258,19 @@ def _validate_views(manifest: dict[str, Any]) -> None:
         names.add(view["name"])
 
 
+def _question_body(question: dict[str, Any]) -> QuestionBody:
+    arguments: dict[str, Any] = {
+        "name": question["name"],
+        "snapshot_id": question["snapshot_id"],
+        "parser": question["parser"],
+        "document_ids": question["document_ids"],
+        "specification": question["specification"],
+    }
+    if "matching" in question:
+        arguments["matching"] = question["matching"]
+    return QuestionBody(**arguments)
+
+
 def _validate_questions(manifest: dict[str, Any]) -> None:
     questions = manifest.get("questions", [])
     if not isinstance(questions, list) or len(questions) > MAX_QUESTIONS_PER_PROJECT:
@@ -253,13 +281,7 @@ def _validate_questions(manifest: dict[str, Any]) -> None:
         if not isinstance(question, dict):
             raise ValueError("Invalid saved question.")
         try:
-            body = QuestionBody(
-                name=question["name"],
-                snapshot_id=question["snapshot_id"],
-                parser=question["parser"],
-                document_ids=question["document_ids"],
-                specification=question["specification"],
-            )
+            body = _question_body(question)
         except (ValidationError, TypeError) as exc:
             raise ValueError(f"Invalid saved question “{question.get('name', '?')}”: {exc}") from exc
         if not set(body.document_ids) <= document_ids:
@@ -289,6 +311,18 @@ def _validate_notebooks(manifest: dict[str, Any]) -> None:
         if notebook["name"] in names:
             raise ValueError(f"Two notebooks are both called “{notebook['name']}”.")
         names.add(notebook["name"])
+
+
+def _normalise_comparison_names(manifest: dict[str, Any]) -> None:
+    """Give a comparison saved with a blank name a generated one before validating or inserting it."""
+    saved = manifest.get("comparisons", [])
+    if not isinstance(saved, list):
+        return
+    taken = {item["name"] for item in saved if isinstance(item, dict) and isinstance(item.get("name"), str)}
+    for item in saved:
+        if isinstance(item, dict) and isinstance(item.get("name"), str) and not item["name"].strip():
+            item["name"] = free_name("Comparison", taken)
+            taken.add(item["name"])
 
 
 def _validate_details(manifest: dict[str, Any]) -> None:
@@ -323,11 +357,14 @@ def _validate_details(manifest: dict[str, Any]) -> None:
 
 
 def _publish(workspace: Workspace, stage: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    _normalise_comparison_names(manifest)
     _validate_inventory(stage, manifest)
     documents, jobs = manifest["documents"], manifest["jobs"]
     name = str(manifest["project"]["name"]).strip()
     if not name or len(name) > MAX_PROJECT_NAME:
         raise ValueError("Invalid project name.")
+    if not isinstance(manifest["project"].get("created"), str):
+        raise ValueError("Invalid project timestamps.")
     identifier = uuid.uuid4().hex
     destination = workspace.root / "projects" / identifier
     destination.parent.mkdir(exist_ok=True)
@@ -412,13 +449,14 @@ def _publish(workspace: Workspace, stage: Path, manifest: dict[str, Any]) -> dic
                     ),
                 )
             for question in manifest.get("questions", []):
+                body = _question_body(question)
                 specification = dict(question["specification"])
                 filtered = specification.get("evidence_document_id")
                 if filtered is not None:
                     specification["evidence_document_id"] = document_ids[str(filtered)]
                 db.execute(
                     "INSERT INTO questions(id,project_id,name,snapshot_id,parser,document_ids,specification,"
-                    "revision,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "matching,revision,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         uuid.uuid4().hex,
                         identifier,
@@ -427,6 +465,7 @@ def _publish(workspace: Workspace, stage: Path, manifest: dict[str, Any]) -> dic
                         question["parser"],
                         json.dumps([document_ids[str(item)] for item in question["document_ids"]]),
                         json.dumps(specification),
+                        json.dumps(body.matching.model_dump()),
                         question["revision"],
                         question["created"],
                         question["updated"],

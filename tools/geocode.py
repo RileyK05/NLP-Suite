@@ -10,8 +10,8 @@ providers:
 * ``nominatim`` — ``core.gis.nominatim``; no key at all, which is why it is
   the provider to prefer for coursework
 
-Outputs ``locations.csv`` (the place extract) and ``geocoded.csv``
-(``Place, Lat, Lon, Status``).
+Outputs ``locations.csv`` and ``geocoded.csv`` with coordinates, lookup
+status, and mention counts. Successful lookups feed two offline maps.
 """
 
 from __future__ import annotations
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             if fix:
                 print(f"fix: {fix}", file=sys.stderr)
         return 1
-    geocoded = geo_result.unwrap()
+    geocoded = geo_result.unwrap().merge(locations, on="Place", how="left")
 
     writer = make_writer(args, corpus, tool="geocode", params=vars(args))
     for frame, name, description in (
@@ -156,6 +156,32 @@ def main(argv: list[str] | None = None) -> int:
             for diag in written.diagnostics:
                 print(diag, file=sys.stderr)
             return 1
+    if geocoded["Status"].eq("OK").any():
+        from core.gis.mapping import heatmap_html
+        from core.gis.pins import pinmap_html
+
+        for name, description, chart in (
+            (
+                "pin_map.html",
+                "Places mentioned",
+                pinmap_html(geocoded, weight_col="Mentions", title="Places mentioned"),
+            ),
+            (
+                "heatmap.html",
+                "Place mention concentration",
+                heatmap_html(geocoded, weight_col="Mentions", title="Place mention concentration"),
+            ),
+        ):
+            if chart.value is None:
+                writer.add_diagnostics(Diagnostic.warning("GEOCODE_MAP_SKIPPED", chart.diagnostics[0].message))
+                continue
+            writer.add_diagnostics(*chart.diagnostics)
+            written = writer.write_text(chart.unwrap(), name, kind="chart", description=description)
+            if not written.ok:
+                writer.abandon()
+                for diag in written.diagnostics:
+                    print(diag, file=sys.stderr)
+                return 1
     writer.add_diagnostics(
         *corpus_result.diagnostics,
         *table_result.diagnostics,

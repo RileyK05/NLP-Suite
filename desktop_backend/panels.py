@@ -34,6 +34,8 @@ from core.io.reader import hash_file
 from core.result import Diagnostic, Result
 from core.viz.panels import PANELS, best_table, get_panel, panels_for_tool, prepare_panel
 from core.viz.panelspec import PanelDefinition, PreparedPanel, Source, requirement_words
+from core.viz.world_land import LAND
+from desktop_backend.runner import INPUT_MANIFEST
 
 __all__ = [
     "MAX_PANEL_ROWS",
@@ -56,8 +58,6 @@ __all__ = [
 #: complete -- every mark crosses -- but the table beside it is a preview,
 #: and a 50,000-row result should not travel to draw one.
 MAX_PANEL_ROWS = 500
-
-INPUT_MANIFEST = "input_files.csv"
 
 
 class PanelBody(BaseModel):
@@ -143,7 +143,11 @@ def public_panel(prepared: PreparedPanel, diagnostics: list[Any]) -> dict[str, A
     marks are not.
     """
     frame = prepared.data.head(MAX_PANEL_ROWS)
+    map_fields: dict[str, Any] = {}
+    if prepared.shape == "geographic":
+        map_fields = {"mapLand": LAND, "mapCellDegrees": prepared.map_cell_degrees}
     return {
+        **map_fields,
         "ok": True,
         "panel": prepared.panel,
         "shape": prepared.shape,
@@ -191,6 +195,7 @@ def public_panel(prepared: PreparedPanel, diagnostics: list[Any]) -> dict[str, A
         "pointsOnly": list(prepared.points_only),
         "xLog10": prepared.x_log10,
         "valueLabel": prepared.value_label,
+        "valueDomain": prepared.value_domain,
         "width": prepared.width,
         "height": prepared.height,
         "annotations": [

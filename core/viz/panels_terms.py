@@ -30,7 +30,7 @@ checks are unverified and this file says so wherever they matter -- the
 schemas are read from ``core/analysis/*.py`` and ``tools/*.py`` directly, not
 guessed.
 
-``tfidf`` and ``nrc`` get their own designs (a per-document top-terms
+``tfidf`` and ``emotion_nrc`` get their own designs (a per-document top-terms
 ranking plus a document x term heatmap; a document x emotion heatmap) because
 their real tables do not reduce to one ranked list: tf-idf is inherently
 per-document, and NRC already publishes one row per document with eight
@@ -59,6 +59,7 @@ from core.viz.panelspec import (
 
 __all__ = [
     "FRAMENET_RANKED_FRAMES",
+    "NGRAMS_HEATMAP",
     "NGRAMS_RANKED_TERMS",
     "NOMINALIZATION_RANKED_TERMS",
     "NRC_EMOTION_HEATMAP",
@@ -71,6 +72,7 @@ __all__ = [
     "VERBNET_RANKED_CLASSES",
     "WORDLIST_RANKED_TERMS",
     "WORDNET_RANKED_CATEGORIES",
+    "ngrams_heatmap",
     "ranked_terms",
 ]
 
@@ -389,6 +391,126 @@ NGRAMS_RANKED_TERMS = PanelDefinition(
 )
 
 
+def ngrams_heatmap(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Document x N-gram frequency heatmap for top corpus n-grams."""
+    top_n = int(params.get("top-n", 15))
+    hide_func = bool(params.get("hide-function-words", True))
+    working = frame.copy()
+    doc_col = "Document" if "Document" in working.columns else _DOC_ID
+    working[_NGRAM] = working[_NGRAM].astype(str).str.strip()
+    working[doc_col] = working[doc_col].astype(str).str.strip()
+    working[_FREQ_DOC] = pd.to_numeric(working[_FREQ_DOC], errors="coerce").fillna(0)
+
+    working = working[working[_FREQ_DOC] > 0]
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no n-gram occurrences found to plot"))
+
+    if hide_func:
+        working = working[~working[_NGRAM].map(_is_function_term)]
+        if working.empty:
+            return Result.failure(
+                Diagnostic.error(
+                    "PANEL_NO_DATA",
+                    "all n-grams were function-word sequences; turn off hide-function-words to view all",
+                )
+            )
+
+    # Find top N ngrams by total frequency across corpus
+    top_ngrams = (
+        working.groupby(_NGRAM, sort=False)[_FREQ_DOC]
+        .sum()
+        .sort_values(ascending=False, kind="stable")
+        .head(top_n)
+        .index.tolist()
+    )
+    if not top_ngrams:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no n-grams survived filtering"))
+
+    filtered = working[working[_NGRAM].isin(top_ngrams)].copy()
+    labels = document_labels(filtered[doc_col].tolist())
+    ordered_docs = filtered.drop_duplicates(doc_col).sort_values(doc_col, kind="stable")[doc_col].tolist()
+    y_categories = tuple(labels.get(d, d) for d in ordered_docs)
+    doc_to_y = {doc: idx for idx, doc in enumerate(ordered_docs)}
+    ngram_to_x = {ng: idx for idx, ng in enumerate(top_ngrams)}
+
+    marks: list[PanelMark] = []
+    grouped = filtered.groupby([doc_col, _NGRAM], sort=False)[_FREQ_DOC].sum().reset_index()
+    for _, row in grouped.iterrows():
+        doc = str(row[doc_col])
+        ng = str(row[_NGRAM])
+        cnt = float(row[_FREQ_DOC])
+        x_idx = ngram_to_x.get(ng)
+        y_idx = doc_to_y.get(doc)
+        if x_idx is None or y_idx is None:
+            continue
+        doc_disp = labels.get(doc, doc)
+        marks.append(
+            PanelMark(
+                key=f"{doc}:{ng}",
+                label=f"{doc_disp} / {ng}",
+                x=float(x_idx),
+                y=float(y_idx),
+                value=cnt,
+                evidence=Evidence(
+                    scope="rows",
+                    filters=((doc_col, doc), (_NGRAM, ng)),
+                    count=int(cnt),
+                    describe=f"{doc_disp}: '{ng}' occurs {int(cnt)} time(s)",
+                ),
+            )
+        )
+
+    prepared = PreparedPanel(
+        panel=NGRAMS_HEATMAP.name,
+        shape="heatmap",
+        title=NGRAMS_HEATMAP.title,
+        subtitle=f"{len(ordered_docs)} document(s) x {len(top_ngrams)} top n-gram(s)",
+        marks=tuple(marks),
+        x_label="N-gram",
+        y_label="Document",
+        provenance=provenance,
+        data=grouped,
+        x_categories=tuple(top_ngrams),
+        y_categories=y_categories,
+        color_scale="sequential",
+        value_label="Occurrences in document",
+        notes=NGRAMS_HEATMAP.notes,
+    )
+    return Result.success(prepared)
+
+
+NGRAMS_HEATMAP = PanelDefinition(
+    name="ngrams_heatmap",
+    title="N-gram frequency heatmap across documents",
+    question="How do the most frequent n-grams appear across each document in the corpus?",
+    tool="ngrams",
+    shape="heatmap",
+    summary="Document x N-gram frequency heatmap showing occurrences across documents.",
+    requires=(_NGRAM, _FREQ_DOC, _DOC_ID),
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=15,
+            minimum=3,
+            maximum=40,
+            label="N-grams to show",
+            help="Number of most-frequent corpus n-grams to include.",
+        ),
+        _HIDE_FUNCTION_WORDS,
+    ),
+    build=ngrams_heatmap,
+    notes=(
+        "Shows document-level occurrences of the corpus's most common multi-word expressions.",
+        "Darker cells indicate heavier usage in that document.",
+    ),
+)
+
+
 # ------------------------------------------------------- conll_wordlist --
 
 _WORD = "Word"
@@ -547,7 +669,7 @@ SEMANTIC_RANKED_LEMMAS = PanelDefinition(
     name="semantic_ranked_lemmas",
     title="Ranked semantic-tag lemmas",
     question="Which lemmas does the corpus use most among the ones semantic tagging could resolve?",
-    tool="semantic",
+    tool="semantic_classes",
     shape="ranked_bars",
     summary="Lemmas ranked by count, with their WordNet/VerbNet/FrameNet tags in the hover.",
     requires=(_LEMMA, _SEM_COUNT, "WordNet", "VerbNet", "FrameNet"),
@@ -561,7 +683,7 @@ SEMANTIC_RANKED_LEMMAS = PanelDefinition(
         "Unverified on the real 87-speech corpus: the machine that produced the real-data audit has no "
         "WordNet/VerbNet/FrameNet corpora installed, so 'semantic' fell back to its own labelled demonstration "
         "vocabulary there rather than a real run. This panel is built and tested against the tool's real "
-        "output schema (core/analysis/semantic.py), not against a real run.",
+        "output schema (core/analysis/semantic_classes.py), not against a real run.",
     ),
 )
 
@@ -702,7 +824,7 @@ WORDNET_RANKED_CATEGORIES = _category_builder(
 )
 
 
-# ------------------------------------------------------------------- nrc --
+# ------------------------------------------------------------------- emotion_nrc --
 
 _DOC = "Document"
 _NRC_EIGHT: tuple[str, ...] = ("fear", "anger", "anticipation", "trust", "surprise", "sadness", "disgust", "joy")
@@ -743,7 +865,7 @@ def _nrc_emotion_heatmap(
     missing = [emotion for emotion in _NRC_EIGHT if emotion not in working.columns]
     if missing:
         return Result.failure(
-            Diagnostic.error("PANEL_MISSING_COLUMN", f"nrc table is missing emotion column(s): {missing}")
+            Diagnostic.error("PANEL_MISSING_COLUMN", f"emotion_nrc table is missing emotion column(s): {missing}")
         )
     for emotion in _NRC_EIGHT:
         working[emotion] = pd.to_numeric(working[emotion], errors="coerce").fillna(0.0)
@@ -815,7 +937,7 @@ NRC_EMOTION_HEATMAP = PanelDefinition(
     name="nrc_emotion_heatmap",
     title="NRC emotion mix by document",
     question="Which emotions does the NRC lexicon find each document leaning on, and how does that change across documents?",
-    tool="nrc",
+    tool="emotion_nrc",
     shape="heatmap",
     summary="Document x emotion heatmap; value is each emotion's share of that document's lexicon hits.",
     requires=(_DOC_ID, _DOC, "Tokens", "Hits", *_NRC_EIGHT),
@@ -823,8 +945,8 @@ NRC_EMOTION_HEATMAP = PanelDefinition(
     build=_nrc_emotion_heatmap,
     notes=(
         "Unverified on the real 87-speech corpus: the machine that produced the real-data audit has no NRC "
-        "lexicon installed (nrclex is absent and no nrc-lexicon asset is configured), so 'nrc' never ran "
-        "there. This panel is built and tested against core/analysis/nrc.py's real, documented output schema.",
+        "lexicon installed (nrclex is absent and no nrc-lexicon asset is configured), so 'emotion_nrc' never ran "
+        "there. This panel is built and tested against core/analysis/emotion_nrc.py's real, documented output schema.",
     ),
 )
 
@@ -1125,6 +1247,7 @@ TFIDF_HEATMAP = PanelDefinition(
 
 TERMS_PANELS: tuple[PanelDefinition, ...] = (
     NGRAMS_RANKED_TERMS,
+    NGRAMS_HEATMAP,
     WORDLIST_RANKED_TERMS,
     NOMINALIZATION_RANKED_TERMS,
     SEMANTIC_RANKED_LEMMAS,

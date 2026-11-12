@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
+import math
 from pathlib import Path
 import re
 
@@ -67,6 +68,10 @@ def document_order(fields: Mapping[str, str] | None) -> float | None:
     if not text:
         return None
     try:
-        return float(text)
+        value = float(text)
     except ValueError:
         return None
+    # "NaN" and "inf" parse as floats but are not positions: NaN sits inside
+    # every order window (it compares False both ways) and no JSON reply can
+    # carry either, so the document list would fail to load at all.
+    return value if math.isfinite(value) else None

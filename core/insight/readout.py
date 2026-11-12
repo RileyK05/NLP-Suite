@@ -556,7 +556,7 @@ def _topic_model(frame: pd.DataFrame, draft: _Draft) -> None:
             )
 
 
-def _sentiment(frame: pd.DataFrame, draft: _Draft) -> None:
+def _vader_polarity(frame: pd.DataFrame, draft: _Draft) -> None:
     draft.structural |= {"Document", "Document ID", "Sentence"}
     if "Compound" in frame.columns and not frame.empty:
         series = frame["Compound"].dropna()
@@ -582,6 +582,10 @@ def _sentiment(frame: pd.DataFrame, draft: _Draft) -> None:
                 f"{empty_rows} of {len(frame)} rows contained no lexicon word at all, so their score is the "
                 "default rather than a measurement. Exclude them before averaging."
             )
+
+
+def _anew_valence(frame: pd.DataFrame, draft: _Draft) -> None:
+    draft.structural |= {"Document", "Document ID"}
     if "Valence" in frame.columns and not frame.empty:
         valence = frame["Valence"].dropna()
         if not valence.empty:
@@ -788,7 +792,8 @@ _RULES: dict[str, Callable[[pd.DataFrame, _Draft], None]] = {
     "ner": _ner,
     "lda_gensim": _topic_model,
     "topic_model": _topic_model,  # older runs under the pre-split name
-    "sentiment_vader_anew": _sentiment,
+    "polarity_vader": _vader_polarity,
+    "valence_anew": _anew_valence,
     "doc_similarity": _doc_similarity,
     "ngrams": _ngrams,
     "kwic": _kwic,

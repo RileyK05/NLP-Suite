@@ -276,6 +276,10 @@ export type PreparedPanel = {
   xLog10?: boolean;
   /** Heatmap: what a cell's colour stands for, the colour scale's title. */
   valueLabel?: string;
+  valueDomain?: [number, number] | null;
+  /** Geographic map: packed longitude/latitude land rings and optional grid width. */
+  mapLand?: string[];
+  mapCellDegrees?: number;
   /** The builder's preferred drawing size; a heatmap of 87 documents needs
    *  more height than a ranking of twenty words. */
   width?: number;

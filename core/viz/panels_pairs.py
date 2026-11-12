@@ -64,10 +64,12 @@ from core.viz.panelspec import (
 
 __all__ = [
     "COLLOCATIONS_NETWORK",
+    "DOC_DUPLICATES_CLUSTER_SIZES",
     "DOC_DUPLICATES_GRAPH",
     "DOC_SIMILARITY_HEATMAP",
     "DOC_SIMILARITY_NEIGHBOURS",
     "KNOWLEDGE_GRAPH_NETWORK",
+    "KNOWLEDGE_GRAPH_PREDICATES",
     "NGRAM_COOCCURRENCE_ASSOCIATION",
     "NGRAM_COOCCURRENCE_NETWORK",
     "NGRAM_COOCCURRENCE_PARTNERS",
@@ -75,10 +77,12 @@ __all__ = [
     "SVO_COMPARE_HEATMAP",
     "SVO_COMPARE_NEIGHBOURS",
     "collocations_network",
+    "doc_duplicates_cluster_sizes",
     "doc_duplicates_graph",
     "doc_similarity_heatmap",
     "doc_similarity_neighbours",
     "knowledge_graph_network",
+    "knowledge_graph_predicates",
     "ngram_cooccurrence_association",
     "ngram_cooccurrence_network",
     "ngram_cooccurrence_partners",
@@ -1139,7 +1143,9 @@ DOC_SIMILARITY_NEIGHBOURS = PanelDefinition(
     tool="doc_similarity",
     shape="network",
     summary="Each document linked to its top-k most similar, grouped by decade or speaker.",
-    requires=(DOC_A, DOC_B, SIMILARITY),
+    # BAND pins the full pair table: duplicates.csv carries the other three
+    # columns too, is narrower (so best_table preferred it), and is usually empty.
+    requires=(DOC_A, DOC_B, SIMILARITY, BAND),
     params=(
         PanelParam(
             name="k",
@@ -1679,6 +1685,89 @@ DOC_DUPLICATES_GRAPH = PanelDefinition(
 )
 
 
+def doc_duplicates_cluster_sizes(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Ranked bars of identical or near-duplicate document clusters by cluster size."""
+    top_n = int(params.get("top-n", 25))
+    for col in ("Group", "Size", "Members"):
+        if col not in frame.columns:
+            return Result.failure(Diagnostic.error("PANEL_NO_DATA", f"table missing {col!r}"))
+    working = frame.copy()
+    working["Group"] = working["Group"].astype(str)
+    working["Size"] = pd.to_numeric(working["Size"], errors="coerce").fillna(0)
+    working["Members"] = working["Members"].astype(str)
+    working = working[working["Size"] > 0]
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no duplicate document groups found"))
+
+    working = working.sort_values(["Size", "Group"], ascending=[False, True], kind="stable").head(top_n)
+
+    marks: list[PanelMark] = []
+    for rank, (_, row) in enumerate(working.iterrows()):
+        grp = str(row["Group"])
+        size = int(row["Size"])
+        members = str(row["Members"])
+        short_members = members if len(members) <= 40 else members[:37] + "…"
+        marks.append(
+            PanelMark(
+                key=grp,
+                label=f"Group {grp} ({short_members})",
+                x=float(size),
+                y=float(rank),
+                evidence=Evidence(
+                    scope="documents",
+                    filters=(("Group", grp),),
+                    count=size,
+                    describe=f"Group {grp}: {size} documents ({members})",
+                ),
+            )
+        )
+
+    prepared = PreparedPanel(
+        panel=DOC_DUPLICATES_CLUSTER_SIZES.name,
+        shape="ranked_bars",
+        title=DOC_DUPLICATES_CLUSTER_SIZES.title,
+        subtitle=f"Top {len(marks)} duplicate cluster(s) by document count",
+        marks=tuple(marks),
+        x_label="Number of Duplicate Documents",
+        y_label="",
+        provenance=provenance,
+        data=working,
+        notes=DOC_DUPLICATES_CLUSTER_SIZES.notes,
+    )
+    return Result.success(prepared)
+
+
+DOC_DUPLICATES_CLUSTER_SIZES = PanelDefinition(
+    name="doc_duplicates_cluster_sizes",
+    title="Duplicate document cluster sizes",
+    question="Which groups of duplicate or identical documents exist, and how large is each cluster?",
+    tool="doc_duplicates",
+    shape="ranked_bars",
+    summary="Identified duplicate clusters ranked by the number of documents in each group.",
+    requires=("Group", "Size", "Members"),
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=25,
+            minimum=5,
+            maximum=100,
+            label="Clusters to show",
+            help="Number of duplicate clusters to display.",
+        ),
+    ),
+    build=doc_duplicates_cluster_sizes,
+    notes=(
+        "Reflects exact or normalized duplicate detection clusters.",
+        "Clusters with higher sizes contain more copies or near-identical versions of the same text.",
+    ),
+)
+
+
 # ------------------------------------------------------------- knowledge_graph --
 
 _MIN_KG_EDGES = 2
@@ -1820,6 +1909,98 @@ KNOWLEDGE_GRAPH_NETWORK = PanelDefinition(
 )
 
 
+def knowledge_graph_predicates(
+    frame: pd.DataFrame,
+    params: Mapping[str, Any],
+    provenance: Provenance,
+) -> Result[PreparedPanel]:
+    """Ranked bars of the most frequent predicates/relations linking entities."""
+    top_n = int(params.get("top-n", 20))
+    for col in (PREDICATE, SUBJECT, OBJECT):
+        if col not in frame.columns:
+            return Result.failure(Diagnostic.error("PANEL_NO_DATA", f"knowledge graph table missing {col!r}"))
+    working = frame.copy()
+    working[PREDICATE] = working[PREDICATE].astype(str).str.strip()
+    working[SUBJECT] = working[SUBJECT].astype(str).str.strip()
+    working[OBJECT] = working[OBJECT].astype(str).str.strip()
+    working = working[working[PREDICATE].ne("") & working[SUBJECT].ne("") & working[OBJECT].ne("")]
+    if working.empty:
+        return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no triples found in knowledge graph table"))
+
+    grouped = (
+        working.groupby(PREDICATE, sort=False)
+        .agg(
+            Count=(SUBJECT, "count"),
+            UniqueSubjects=(SUBJECT, "nunique"),
+            UniqueObjects=(OBJECT, "nunique"),
+        )
+        .reset_index()
+    )
+    grouped = grouped.sort_values(["Count", PREDICATE], ascending=[False, True], kind="stable").head(top_n)
+
+    marks: list[PanelMark] = []
+    for rank, (_, row) in enumerate(grouped.iterrows()):
+        pred = str(row[PREDICATE])
+        cnt = int(row["Count"])
+        subjs = int(row["UniqueSubjects"])
+        objs = int(row["UniqueObjects"])
+        marks.append(
+            PanelMark(
+                key=pred,
+                label=pred,
+                x=float(cnt),
+                y=float(rank),
+                evidence=Evidence(
+                    scope="terms",
+                    filters=((PREDICATE, pred),),
+                    count=cnt,
+                    describe=f"'{pred}': {cnt} relation triple(s) linking {subjs} subject(s) to {objs} object(s)",
+                ),
+            )
+        )
+
+    prepared = PreparedPanel(
+        panel=KNOWLEDGE_GRAPH_PREDICATES.name,
+        shape="ranked_bars",
+        title=KNOWLEDGE_GRAPH_PREDICATES.title,
+        subtitle=f"Top {len(marks)} relation types (predicates) in the knowledge base",
+        marks=tuple(marks),
+        x_label="Triple Count",
+        y_label="",
+        provenance=provenance,
+        data=grouped,
+        notes=KNOWLEDGE_GRAPH_PREDICATES.notes,
+    )
+    return Result.success(prepared)
+
+
+KNOWLEDGE_GRAPH_PREDICATES = PanelDefinition(
+    name="knowledge_graph_predicates",
+    title="Most frequent knowledge graph relations",
+    question="Which relationship types (predicates) appear most frequently linking entities?",
+    tool="knowledge_graph",
+    shape="ranked_bars",
+    summary="Ranked bars of the most common predicates in the knowledge graph.",
+    requires=(PREDICATE, SUBJECT, OBJECT),
+    params=(
+        PanelParam(
+            name="top-n",
+            type="int",
+            default=20,
+            minimum=3,
+            maximum=50,
+            label="Predicates to show",
+            help="Number of most-frequent relationship types to display.",
+        ),
+    ),
+    build=knowledge_graph_predicates,
+    notes=(
+        "Predicates represent relationship types (e.g. 'isA', 'country', 'role') extracted for entities.",
+        "Shows relations present in the offline knowledge base or resolved from DBpedia.",
+    ),
+)
+
+
 PAIRS_PANELS: tuple[PanelDefinition, ...] = (
     NGRAM_COOCCURRENCE_ASSOCIATION,
     NGRAM_COOCCURRENCE_PARTNERS,
@@ -1830,5 +2011,7 @@ PAIRS_PANELS: tuple[PanelDefinition, ...] = (
     SVO_COMPARE_NEIGHBOURS,
     COLLOCATIONS_NETWORK,
     DOC_DUPLICATES_GRAPH,
+    DOC_DUPLICATES_CLUSTER_SIZES,
     KNOWLEDGE_GRAPH_NETWORK,
+    KNOWLEDGE_GRAPH_PREDICATES,
 )

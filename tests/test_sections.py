@@ -134,3 +134,9 @@ def test_bad_input_is_refused_plainly() -> None:
     assert detect_sections("   ").diagnostics[0].code == "SECTIONS_EMPTY"
     assert detect_sections("text", rule="chapters").diagnostics[0].code == "SECTIONS_BAD_RULE"
     assert detect_sections("text", rule="pattern").diagnostics[0].code == "SECTIONS_NO_PATTERN"
+
+
+def test_a_licence_with_no_body_is_refused_plainly() -> None:
+    result = detect_sections("*** START OF THE PROJECT GUTENBERG EBOOK X ***\n")
+    assert result.value is None
+    assert result.diagnostics[0].code == "SECTIONS_EMPTY_BODY"

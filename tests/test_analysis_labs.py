@@ -4,13 +4,14 @@ Earth tour KML + BERT topics (the expansion batch)."""
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from conftest import HashEmbeddingBackend
-from core.analysis.bert_topics import bert_topics
 from core.analysis.keyness import keyness
 from core.analysis.kwic import concordance
 from core.analysis.movement import movement_summary, movement_tracks
 from core.analysis.ngrams import collocation_network
+from core.analysis.topic_clusters_bert import topic_clusters_bert
 from core.conll.schema import Col
 from core.gis.mapping import kml, tour_kml
 
@@ -198,6 +199,39 @@ class TestCollocationNetwork:
     def test_bad_top_edges(self) -> None:
         assert not collocation_network(_coll_frame(), top_edges=0).ok
 
+    def test_both_directions_of_a_pair_are_one_edge_when_counting_what_was_cut(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from core.analysis import ngrams
+        from core.result import Result
+
+        bigrams = pd.DataFrame(
+            {
+                "Word 1": ["cat", "dog", "sun"],
+                "Word 2": ["dog", "cat", "moon"],
+                "Count": [3, 2, 4],
+                "PMI": [2.0, 1.5, 1.0],
+            }
+        )
+        monkeypatch.setattr(ngrams, "collocations", lambda *_a, **_k: Result.success(bigrams))
+        result = collocation_network(_coll_frame(), top_edges=2)
+        assert len(result.unwrap()) == 2
+        assert not any(d.code == "NET_EDGES_TRUNCATED" for d in result.diagnostics), "nothing was cut"
+        cut = collocation_network(_coll_frame(), top_edges=1)
+        [note] = [d for d in cut.diagnostics if d.code == "NET_EDGES_TRUNCATED"]
+        assert "top 1 of 2 edges" in note.message
+
+    def test_a_tie_on_pmi_keeps_the_more_frequent_pair(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from core.analysis import ngrams
+        from core.result import Result
+
+        bigrams = pd.DataFrame(
+            {"Word 1": ["ant", "cat"], "Word 2": ["bee", "dog"], "Count": [2, 50], "PMI": [2.0, 2.0]}
+        )
+        monkeypatch.setattr(ngrams, "collocations", lambda *_a, **_k: Result.success(bigrams))
+        [kept] = collocation_network(_coll_frame(), top_edges=1).unwrap().to_dict("records")
+        assert (kept["Word 1"], kept["Word 2"]) == ("cat", "dog")
+
 
 class TestMovementTracks:
     def _ner_frame(self) -> pd.DataFrame:
@@ -300,6 +334,16 @@ class TestTourKml:
         assert out.count("<when>") == 3
         assert "Paris" in out and "Berlin" in out
 
+    def test_a_long_tour_keeps_valid_times_past_the_hour(self) -> None:
+        import re
+
+        rows = 3601
+        frame = pd.DataFrame({"Place": ["P"] * rows, "Lat": [10.0] * rows, "Lon": [20.0] * rows})
+        times = re.findall(r"<when>([^<]+)</when>", tour_kml(frame).unwrap())
+        assert times[0] == "2026-01-01T00:00:00Z"
+        assert times[3599] == "2026-01-01T00:59:59Z"
+        assert times[3600] == "2026-01-01T01:00:00Z"
+
     def test_grouped_one_track_per_group(self) -> None:
         frame = self._geo()
         frame["Person"] = ["A", "A", "B"]
@@ -401,7 +445,7 @@ def _bert_frame() -> pd.DataFrame:
 
 class TestBertTopics:
     def test_separates_themes(self) -> None:
-        result = bert_topics(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend())
+        result = topic_clusters_bert(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend())
         assert result.ok
         topics, documents = result.unwrap()
         words_by_topic = topics.groupby("Topic")["Word"].apply(set).to_dict()
@@ -413,23 +457,23 @@ class TestBertTopics:
         assert by_doc["d2.txt"] == by_doc["d4.txt"]
 
     def test_deterministic_for_fixed_seed(self) -> None:
-        a = bert_topics(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend(), seed=7).unwrap()
-        b = bert_topics(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend(), seed=7).unwrap()
+        a = topic_clusters_bert(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend(), seed=7).unwrap()
+        b = topic_clusters_bert(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend(), seed=7).unwrap()
         assert a[0].equals(b[0]) and a[1].equals(b[1])
 
     def test_explicit_k(self) -> None:
-        _, documents = bert_topics(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend()).unwrap()
+        _, documents = topic_clusters_bert(_bert_frame(), n_topics=2, backend=HashEmbeddingBackend()).unwrap()
         assert set(documents["Topic"]) == {0, 1}
 
     def test_too_small(self) -> None:
         frame = _bert_frame()
-        result = bert_topics(frame[frame["Document ID"] == "1"], n_topics=2, backend=HashEmbeddingBackend())
+        result = topic_clusters_bert(frame[frame["Document ID"] == "1"], n_topics=2, backend=HashEmbeddingBackend())
         assert not result.ok
         assert result.diagnostics[0].code == "BERTOPIC_TOO_SMALL"
 
     def test_k_needs_two(self) -> None:
-        assert not bert_topics(_bert_frame(), n_topics=1, backend=HashEmbeddingBackend()).ok
+        assert not topic_clusters_bert(_bert_frame(), n_topics=1, backend=HashEmbeddingBackend()).ok
 
     def test_empty_frame(self) -> None:
         cols = list(_bert_frame().columns)
-        assert not bert_topics(pd.DataFrame(columns=cols), backend=HashEmbeddingBackend()).ok
+        assert not topic_clusters_bert(pd.DataFrame(columns=cols), backend=HashEmbeddingBackend()).ok

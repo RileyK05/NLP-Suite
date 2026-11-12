@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 import pandas as pd
 import pytest
 
+from desktop_backend.panels import result_tables
 from desktop_backend.server import create_app
 from desktop_backend.store import Workspace
 
@@ -143,19 +144,19 @@ class TestCatalogue:
         project_id, job_id, _ = finished_keyness_run(workspace)
         response = client.get(f"/api/projects/{project_id}/jobs/{job_id}/panels")
         assert response.status_code == 200
-        assert [panel["name"] for panel in response.json()] == ["keyness_volcano"]
+        assert [panel["name"] for panel in response.json()] == ["keyness_volcano", "keyness_top_distinctive"]
 
     def test_saved_embedding_vectors_offer_the_query_panel(self, client: TestClient, workspace: Workspace) -> None:
         project_id, job_id, _ = finished_run(
             workspace,
-            "word2vec_gensim",
+            "word_vectors_gensim",
             {"vectors.csv": 'Word,Count,Vector\ngovernment,4,"1,0"\nstate,3,"0.9,0.1"\n'},
         )
         response = client.get(f"/api/projects/{project_id}/jobs/{job_id}/panels")
         assert response.status_code == 200
         names = [panel["name"] for panel in response.json()]
-        assert "word2vec_gensim_saved_vectors" in names
-        assert "word2vec_gensim_neighbours" not in names, "precomputed neighbours need their own optional artifact"
+        assert "word_vectors_gensim_saved_vectors" in names
+        assert "word_vectors_gensim_neighbours" not in names, "precomputed neighbours need their own optional artifact"
 
 
 class TestDrawing:
@@ -207,12 +208,12 @@ class TestDrawing:
     ) -> None:
         project_id, job_id, _ = finished_run(
             workspace,
-            "word2vec_gensim",
+            "word_vectors_gensim",
             {"vectors.csv": ('Word,Count,Vector\ngovernment,4,"1,0"\nstate,3,"0.9,0.1"\nnation,2,"0,1"\n')},
         )
         body = client.post(
             f"/api/projects/{project_id}/jobs/{job_id}/panels",
-            json={"panel": "word2vec_gensim_saved_vectors", "params": {"query": "government"}},
+            json={"panel": "word_vectors_gensim_saved_vectors", "params": {"query": "government"}},
         ).json()
 
         assert body["ok"], body
@@ -288,7 +289,7 @@ class TestMultiTableRuns:
     def test_an_lda_run_is_offered_every_panel_it_can_draw(self, client: TestClient, workspace: Workspace) -> None:
         project_id, job_id, _ = finished_run(workspace, "lda_gensim", _LDA_TABLES)
         offered = [p["name"] for p in client.get(f"/api/projects/{project_id}/jobs/{job_id}/panels").json()]
-        assert sorted(offered) == ["lda_intertopic", "lda_prevalence", "lda_relevance"]
+        assert sorted(offered) == ["lda_gensim_topic_fit", "lda_intertopic", "lda_prevalence", "lda_relevance"]
 
     @pytest.mark.parametrize(
         ("panel", "table"),
@@ -296,6 +297,7 @@ class TestMultiTableRuns:
             ("lda_relevance", "terms_by_relevance.csv"),
             ("lda_intertopic", "intertopic_distances.csv"),
             ("lda_prevalence", "topics_dominant.csv"),
+            ("lda_gensim_topic_fit", "topics_dominant.csv"),
         ],
     )
     def test_each_panel_draws_from_the_table_that_carries_its_columns(
@@ -429,3 +431,24 @@ class TestBundles:
         )
         assert response.json()["ok"] is False
         assert response.json()["diagnostics"][0]["code"] == "BUNDLE_UNKNOWN"
+
+
+def test_result_tables_skips_desktop_input_manifest(workspace: Workspace) -> None:
+    project_id, job_id, _ = finished_run(
+        workspace,
+        "readability",
+        {
+            "readability.csv": "Document,Flesch\na.txt,50\nb.txt,60\n",
+            "desktop_inputs.csv": "id,name,words\n1,a.txt,10\n2,b.txt,20\n",
+        },
+    )
+    directory, envelope = workspace.artifacts(project_id, job_id)
+    assert [path for path, _ in result_tables(directory, envelope)] == ["readability.csv"]
+
+
+def test_manifest_name_is_single_source_of_truth() -> None:
+    from core.viz import run_figures
+    from desktop_backend import panels, runner
+
+    assert panels.INPUT_MANIFEST == runner.INPUT_MANIFEST
+    assert runner.INPUT_MANIFEST in run_figures._SKIP

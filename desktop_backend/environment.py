@@ -108,6 +108,9 @@ def _scan() -> dict[str, bool]:
         )
         if root
     )
+    # Listed either way: without nltk they are simply absent, and Settings has
+    # to show them as missing rather than leave them out.
+    found["wordnet"] = found["sentiwordnet"] = False
     if found["nltk"]:
         # Corpora presence is a filesystem question; importing nltk here would
         # drag scipy/BLAS into the API server and stall /api/tools for minutes
@@ -245,9 +248,9 @@ def availability(spec: ToolSpec, found: dict[str, bool], models: dict[str, str] 
         state = models.get(model.id) if models is not None and model is not None else None
         runtime, needs_model = _model_needs(spec, found, state)
         required.extend(runtime)
-    if spec.name == "sentiment_swn_hedono":
+    if spec.name == "polarity_sentiwordnet":
         required.append("sentiwordnet")
-    if spec.name == "nrc":
+    if spec.name == "emotion_nrc":
         required.append("nrclex")
     if spec.name == "table_charts":
         required.extend(["plotly", "openpyxl"])

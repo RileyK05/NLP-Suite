@@ -208,9 +208,13 @@ class TestCacheCap:
         for name in ("older", "newer"):
             annotations.store(name, self._frame())
         older, newer = annotations.path("older"), annotations.path("newer")
+        # Both ages are set explicitly: file timestamps come from a coarse
+        # clock, so a "newer" stored a moment before load() touches "older"
+        # can share its mtime, and prune then drops the wrong one.
+        os.utime(newer, (time.time() - 30, time.time() - 30))
         os.utime(older, (time.time() - 60, time.time() - 60))
         annotations.load("older")  # read is use: the old file is now the recent one
-        assert older.stat().st_mtime >= newer.stat().st_mtime
+        assert older.stat().st_mtime > newer.stat().st_mtime
 
         assert annotations.prune(limit=annotations.size_bytes() - 1) == 1
         assert {path.stem for path in annotations.root.glob("*.parquet")} == {"older"}

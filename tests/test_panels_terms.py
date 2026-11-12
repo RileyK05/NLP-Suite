@@ -1,7 +1,7 @@
 """Tests for the "terms" panel family (core/viz/panels_terms.py).
 
 Fixtures use the exact column names the real tools produce (see
-core/analysis/{nrc,tfidf,nominalization,verbnet,framenet,symbolic,wordnet}.py
+core/analysis/{emotion_nrc,tfidf,nominalization,verbnet,framenet,symbolic,wordnet}.py
 and core/profiler/executor.py's ``_adapt_ngrams``/``_adapt_conll_wordlist``),
 not invented ones -- an impossible fixture would pass every test written
 against it and tell us nothing about the real output.
@@ -380,7 +380,7 @@ class TestFrameNetSymbolicWordNet:
         assert labels == {"animal"}
 
 
-# ------------------------------------------------------------------- nrc --
+# ------------------------------------------------------------------- emotion_nrc --
 
 
 class TestNrcHeatmap:
@@ -565,18 +565,18 @@ class TestRegistration:
             "ngrams",
             "conll_wordlist",
             "nominalization",
-            "semantic",
+            "semantic_classes",
             "verbnet",
             "framenet",
             "symbolic",
             "wordnet",
-            "nrc",
+            "emotion_nrc",
             "tfidf",
         }
         assert {p.tool for p in TERMS_PANELS} <= expected
 
-    def test_twelve_panels_registered(self) -> None:
-        assert len(TERMS_PANELS) == 12
+    def test_thirteen_panels_registered(self) -> None:
+        assert len(TERMS_PANELS) == 13
 
 
 if __name__ == "__main__":

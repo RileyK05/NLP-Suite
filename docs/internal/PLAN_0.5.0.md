@@ -107,7 +107,7 @@ Each fact has where it was read, so a later session can re-check it.
 
   Note `narrative` and `shapes`: the **story-shape** tools, the ones books need most, cannot draw for a book.
 
-- Tools with some dated panels: `bert_topics 1/2`, `date_annotator 1/2`, `ner 1/2`, `nominalization 2/3`, `quote_annotator 2/3`, `sentiment_neural_* 3/5` (x4), `sentiment_vader_anew 6/9`, `shape_hc 1/2`, `verb_analysis 3/6`.
+- Tools with some dated panels: `topic_clusters_bert 1/2`, `date_annotator 1/2`, `ner 1/2`, `nominalization 2/3`, `quote_annotator 2/3`, `sentiment_neural_* 3/5` (x4), `sentiment_vader_anew 6/9`, `story_shape_hc 1/2`, `verb_analysis 3/6`.
 - Re-measure with:
   ```
   python -c "from core.viz.panels import PANELS; import collections; a=collections.Counter(p.tool for p in PANELS); d=collections.Counter(p.tool for p in PANELS if {'Date','Year'} & set(p.requires)); [print(t, d[t], a[t]) for t in sorted(a) if d[t]]"
@@ -331,7 +331,7 @@ def axis_of(corpus: Corpus, kind: str | None, noun: str = "") -> Axis: ...
    - `Position` (float) and `Position label` (text), from the axis, so a figure has one column to put on x whatever the axis is. **Only when the axis is not `none`.**
 
    Column order: after `Document` (as `_dated` does now), then Date, Year, Order, Position, Position label, then fields in name order.
-2. `_periods(corpus)` becomes `axis.periods(...)`. The `word2vec_bert` adapter (`_adapt_word2vec_bert`), and any other caller, take the axis from `BatchContext`.
+2. `_periods(corpus)` becomes `axis.periods(...)`. The `word_vectors_bert` adapter (`_adapt_word_vectors_bert`), and any other caller, take the axis from `BatchContext`.
 3. `BatchContext` gains `axis: Axis | None`. `execute(...)` gains an `axis=` keyword (default: `axis_of(corpus, None)`). The runner, the live bench (`desktop_backend/live.py`) and glance pass the project's axis.
 4. `_adapt_lexicon_series`: `facet_labels` gains `by` values:
    - `order` (each order value, e.g. each chapter);
@@ -505,8 +505,8 @@ After section 1, walk each of these on the real book (2.8) and apply 0.2 rule 3 
 
 | Question a reader brings to a novel | Tool(s) | Expected figure after section 1 |
 |---|---|---|
-| How does the mood move through the book? | `sentiment_vader_anew`, `sentiment_neural_bert`, `narrative` (emotion arc) | Sentiment across chapters with a rolling median; the arc from `core/narrative/arcs.py` on the order axis |
-| What shape is the story? | `shapes`, `shape_svd`, `shape_nmf`, `shape_hc` | Story-shape clusters. **Known issue** (backlog 4d-5): the shape matrix isn't standardized, so component 1 is sentence length. Fix it here, because books are where shapes matter: standardize features before SVD/NMF, and show a note. **Approved by Riley (D7)**; say in the release notes that new runs give different shapes. |
+| How does the mood move through the book? | `sentiment_vader_anew`, `polarity_distilbert_sst2`, `narrative` (emotion arc) | Sentiment across chapters with a rolling median; the arc from `core/narrative/arcs.py` on the order axis |
+| What shape is the story? | `shapes`, `story_shape_svd`, `story_shape_nmf`, `story_shape_hc` | Story-shape clusters. **Known issue** (backlog 4d-5): the shape matrix isn't standardized, so component 1 is sentence length. Fix it here, because books are where shapes matter: standardize features before SVD/NMF, and show a note. **Approved by Riley (D7)**; say in the release notes that new runs give different shapes. |
 | Who is in which chapter? | `ner` (PERSON), `core/narrative/characters.py` (`character_arcs`, `character_mentions`) | A character x chapter heat strip. **Check it exists** (grep `character` in `core/viz/panels*.py`); if not, add `narrative_characters_by_order` |
 | Does the prose change (dialogue, sentence length, vocabulary)? | `readability`, `sentence_complexity`, `lexical_diversity`, `quote_annotator` (share of text in quotes) | Measures across chapters; share of dialogue per chapter |
 | What is each chapter about? | `tfidf` (with `max-df-ratio 0.5`, see 5.5), `keyness` (this chapter vs the rest), `lda_gensim` with chapters as documents | Top terms per chapter; topic prevalence across chapters |
@@ -609,12 +609,12 @@ Pure analysis functions over **one joined token table** with a `Side` column. Th
   2. **One topic model over the union** (`lda_gensim` adapter over the joined table), then topic prevalence per side, so both sides use the same topics. **Never fit two models and compare topic numbers**: the numbering is arbitrary (4d-2's table).
   3. Distinctive topics: prevalence ratio per side, with the top documents of each side for that topic.
 - `core/contrast/meaning.py`: embeddings. **Needs 5.4 (the vector cache).**
-  1. `doc_embeddings` over the union with a `Side` column on `doc_map.csv`: the map is coloured by side.
+  1. `document_embeddings` over the union with a `Side` column on `doc_map.csv`: the map is coloured by side.
   2. Side centroids and their distance, **relative** (centred cosine, the 0.4.0 lesson: raw cosine puts everything at 98%).
   3. For each document, its nearest documents on the other side ("the debate closest to this SOTU").
 - `core/contrast/carryover.py` answers **"did the rhetoric carry over?"**. The distinctive method; design it carefully:
   1. Sentences of each side, restricted to the topic focus if given (lexicon match or semantic similarity above a threshold).
-  2. Embed sentences (Granite by default; `unit=sentence` already exists in `core/analysis/doc_embeddings.py`) through the vector cache.
+  2. Embed sentences (Granite by default; `unit=sentence` already exists in `core/analysis/document_embeddings.py`) through the vector cache.
   3. For each A sentence, its best B match by relative cosine, **within the alignment group** (same speaker).
   4. Classify pairs:
      - **carried** (similarity above a threshold calibrated on the corpus: the 95th percentile of random cross-side pairs, reported alongside);
@@ -1089,9 +1089,9 @@ This is not security (4.4.5 explains why Python can't be sandboxed from inside P
 
 ### 5.4 Cache sentence and document vectors (backlog 4d-7; needed by 3.4 and 4.3)
 
-- `core/models/vector_cache.py`: parquet files under `<data>/vectors/`, keyed by (model id, model sha, unit, document sha256, cleaning setting). `doc_embeddings`, `carryover`, `similar()` and `bert_topics` read through it.
+- `core/models/vector_cache.py`: parquet files under `<data>/vectors/`, keyed by (model id, model sha, unit, document sha256, cleaning setting). `document_embeddings`, `carryover`, `similar()` and `topic_clusters_bert` read through it.
 - Cap and "Clear" share Settings with the parse cache (5.1).
-- A/B: a second `doc_embeddings` run on the same corpus is at least 5x faster (measure).
+- A/B: a second `document_embeddings` run on the same corpus is at least 5x faster (measure).
 
 ### 5.5 Smaller items (each small; do them when their section touches the code)
 

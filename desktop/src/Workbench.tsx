@@ -14,12 +14,14 @@ import {
   isLiveKind,
   buildLayout,
   categoricalColumns,
+  dateColumns,
   distinctCount,
   formatNumber,
   isNumericColumn,
   measureColumns,
   numericColumns,
   rowsBehind,
+  usesMeasureOnly,
   type Agg,
   type LiveKind,
   type Settings,
@@ -57,34 +59,39 @@ const KIND_LABELS: Record<LiveKind, { label: string; hint: string }> = {
   scatter: { label: "Scatter", hint: "two measures, one point per row" },
   bubble: { label: "Bubble", hint: "scatter sized by value" },
   histogram: { label: "Histogram", hint: "how one measure is distributed" },
+  ecdf: {
+    label: "Cumulative distribution",
+    hint: "percent of rows at or below a value",
+  },
   box: { label: "Box plot", hint: "spread and middle per category" },
   heatmap: {
     label: "Heatmap",
     hint: "two category axes, colour is the measure",
   },
+  pie: { label: "Pie", hint: "shares of a whole" },
+  sunburst: { label: "Sunburst", hint: "hierarchical shares" },
+  treemap: { label: "Treemap", hint: "nested area rectangles" },
+  violin: { label: "Violin", hint: "distribution shape per group" },
+  radar: { label: "Radar", hint: "several measures on spokes" },
+  waffle: { label: "Waffle", hint: "square-unit share of a whole" },
+  calendar: { label: "Calendar", hint: "daily values by month" },
+  sankey: { label: "Sankey", hint: "flow between two categories" },
 };
 
-/**
- * What the engine draws that this browser does not, and what it writes.
- *
- * Kept beside `LIVE_KINDS` rather than imported from `VisualizeDialog`, whose
- * list is the dialog's own concern; `tests/test_chart_kind_parity.py` checks
- * both against `core/viz/chartspec.py`, so a kind added to the engine shows up
- * as a failure here rather than as a quietly missing button.
- *
- * `format` is what the engine is asked to produce. A chart kind produces the
- * interactive HTML figure; the two exports reproduce whatever is on screen.
- */
-const ENGINE_KINDS: { kind: string; label: string; hint: string }[] = [
-  { kind: "pie", label: "Pie", hint: "shares of a whole" },
-  { kind: "sunburst", label: "Sunburst", hint: "hierarchical shares" },
-  { kind: "treemap", label: "Treemap", hint: "nested area rectangles" },
-  { kind: "violin", label: "Violin", hint: "distribution shape per group" },
-  { kind: "radar", label: "Radar", hint: "several measures on spokes" },
-  { kind: "waffle", label: "Waffle", hint: "square-unit share of a whole" },
-  { kind: "calendar", label: "Calendar", hint: "daily values on a year grid" },
-  { kind: "sankey", label: "Sankey", hint: "flow between two categories" },
-];
+/** Kinds that need a second category column (the hierarchy or the target). */
+const NEEDS_GROUP: ReadonlySet<LiveKind> = new Set([
+  "heatmap",
+  "sunburst",
+  "treemap",
+  "sankey",
+]);
+/** Kinds that draw every row as it stands; no group split exists. */
+const NO_GROUP: ReadonlySet<LiveKind> = new Set([
+  "scatter",
+  "bubble",
+  "box",
+  "calendar",
+]);
 
 const EXPORTS: { format: string; label: string; hint: string }[] = [
   {
@@ -107,9 +114,33 @@ const AGGS: { id: Agg; label: string }[] = [
 ];
 
 /** Kinds where x is a category to group by, rather than a second measure. */
-const CATEGORICAL_X = new Set<LiveKind>(["bar", "line", "box", "heatmap"]);
+const CATEGORICAL_X = new Set<LiveKind>([
+  "bar",
+  "line",
+  "box",
+  "heatmap",
+  "pie",
+  "sunburst",
+  "treemap",
+  "violin",
+  "radar",
+  "waffle",
+  "calendar",
+  "sankey",
+]);
 /** Kinds that summarise several rows into one mark, so they need an aggregation. */
-const AGGREGATES = new Set<LiveKind>(["bar", "line", "heatmap"]);
+const AGGREGATES = new Set<LiveKind>([
+  "bar",
+  "line",
+  "heatmap",
+  "pie",
+  "sunburst",
+  "treemap",
+  "radar",
+  "waffle",
+  "calendar",
+  "sankey",
+]);
 
 /**
  * A recommended chart as the controls that draw it.
@@ -160,8 +191,9 @@ export function openingSettings(
   for (const chart of recommended) {
     const settings = chartSettings(chart);
     if (!settings) continue;
-    const needed =
-      chart.kind === "histogram" ? [settings.y] : [settings.x, settings.y];
+    const needed = usesMeasureOnly(chart.kind)
+      ? [settings.y]
+      : [settings.x, settings.y];
     if (needed.every((column) => table.columns.includes(column))) {
       return settings;
     }
@@ -205,7 +237,7 @@ export function useChartSettings(
   table: Table,
   recommended: RecommendedChart[] = [],
 ) {
-  const [settings, setSettings] = useState<Settings>(() =>
+  const [settings, updateSettings] = useState<Settings>(() =>
     openingSettings(table, recommended),
   );
   const [selected, setSelected] = useState<Selection>(null);
@@ -220,10 +252,14 @@ export function useChartSettings(
   const opening = recommended[0];
   const openingKey = opening ? `${opening.kind}:${opening.x}:${opening.y}` : "";
   useEffect(() => {
-    setSettings(openingSettings(table, recommended));
+    updateSettings(openingSettings(table, recommended));
     setSelected(null);
   }, [openingKey, table.columns.join("\u0000")]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const setSettings = (next: Settings, clearMark = false) => {
+    updateSettings(next);
+    if (clearMark) setSelected(null);
+  };
   return { settings, setSettings, selected, setSelected };
 }
 
@@ -260,7 +296,7 @@ export function Workbench({
   table: Table;
   artifactPath: string;
   settings: Settings;
-  onSettings: (settings: Settings) => void;
+  onSettings: (settings: Settings, clearMark?: boolean) => void;
   selected: Selection;
   onSelect: (selection: Selection) => void;
   canPublish: boolean;
@@ -305,10 +341,36 @@ export function Workbench({
     [selected, table.rows, settings],
   );
 
-  const set = (patch: Partial<Settings>) =>
-    onSettings({ ...settings, ...patch });
+  // `clearMark` is for a change that replaces the thing a drill-down was
+  // made against -- a new chart kind. The parent applies settings and the
+  // cleared mark in ONE update: calling onSelect(null) first and then
+  // onSettings() overwrote the new kind with the previous one, because each
+  // setter built its edit from the render it closed over.
+  const set = (patch: Partial<Settings>, clearMark = false) =>
+    onSettings({ ...settings, ...patch }, clearMark);
   const categoricalX = CATEGORICAL_X.has(settings.kind);
-  const xOptions = categoricalX ? categorical : numeric;
+  const dates = useMemo(() => dateColumns(table), [table]);
+  const xOptions =
+    settings.kind === "calendar"
+      ? dates.length
+        ? dates
+        : categorical
+      : categoricalX
+        ? categorical
+        : numeric;
+  const needsGroup = NEEDS_GROUP.has(settings.kind);
+  const noGroup =
+    NO_GROUP.has(settings.kind) ||
+    settings.kind === "pie" ||
+    settings.kind === "waffle";
+  const ranks = [
+    "bar",
+    "line",
+    "pie",
+    "sunburst",
+    "treemap",
+    "waffle",
+  ].includes(settings.kind);
   const partial =
     table.truncated ||
     (table.filtered_total ?? table.total) > table.rows.length;
@@ -368,21 +430,37 @@ export function Workbench({
                   // Moving between a category axis and a second measure changes
                   // what x means, so re-pick a column that fits the new kind.
                   const nextCategorical = CATEGORICAL_X.has(kind);
-                  const options = nextCategorical ? categorical : numeric;
+                  const options =
+                    kind === "calendar" && dates.length
+                      ? dates
+                      : nextCategorical
+                        ? categorical
+                        : numeric;
                   const keep = options.includes(settings.x);
-                  set({
-                    kind,
-                    x: keep
-                      ? settings.x
-                      : (options.find((c) => c !== settings.y) ??
-                        options[0] ??
-                        settings.x),
-                    group:
-                      kind === "heatmap" && !settings.group
-                        ? (categorical[1] ?? "")
-                        : settings.group,
-                  });
-                  setSelected(null);
+                  // A second category column is the hierarchy or the flow's
+                  // right-hand side. Pie and waffle draw one level, so their
+                  // stray group would be a setting the engine refuses.
+                  const nextGroup =
+                    kind === "pie" || kind === "waffle" || kind === "calendar"
+                      ? ""
+                      : NEEDS_GROUP.has(kind) && !settings.group
+                        ? (categorical.find(
+                            (column) =>
+                              column !== settings.x && column !== settings.y,
+                          ) ?? "")
+                        : settings.group;
+                  set(
+                    {
+                      kind,
+                      x: keep
+                        ? settings.x
+                        : (options.find((c) => c !== settings.y) ??
+                          options[0] ??
+                          settings.x),
+                      group: nextGroup,
+                    },
+                    true,
+                  );
                 }}
               >
                 {KIND_LABELS[kind].label}
@@ -393,28 +471,8 @@ export function Workbench({
           {onHandOff && (
             <div className="workbench-handoff">
               <span className="handoff-label">
-                Drawn by the engine, from these same settings:
+                Draw this arrangement with the engine, or export it:
               </span>
-              <div role="group" aria-label="Other chart types">
-                {ENGINE_KINDS.map((entry) => (
-                  <button
-                    key={entry.kind}
-                    type="button"
-                    className="viz-kind"
-                    title={entry.hint}
-                    onClick={() =>
-                      onHandOff({
-                        kind: entry.kind,
-                        x: settings.x,
-                        y: settings.y,
-                        format: "html",
-                      })
-                    }
-                  >
-                    {entry.label}
-                  </button>
-                ))}
-              </div>
               <div role="group" aria-label="Export this chart">
                 {EXPORTS.map((entry) => (
                   <button
@@ -443,7 +501,7 @@ export function Workbench({
               {settings.kind === "histogram" ? "Measure to bin" : "Measure"}
               <select
                 value={settings.y}
-                onChange={(e) => set({ y: e.target.value })}
+                onChange={(e) => set({ y: e.target.value }, true)}
               >
                 {numeric.map((column) => (
                   <option key={column}>{column}</option>
@@ -451,17 +509,31 @@ export function Workbench({
               </select>
             </label>
 
-            {settings.kind !== "histogram" && (
+            {!usesMeasureOnly(settings.kind) && (
               <label className="field-label">
-                {categoricalX ? "Group rows by" : "Against"}
+                {settings.kind === "calendar"
+                  ? "Dates in"
+                  : settings.kind === "pie"
+                    ? "Slices from"
+                    : settings.kind === "sunburst" ||
+                        settings.kind === "treemap"
+                      ? "Hierarchy from"
+                      : settings.kind === "sankey"
+                        ? "Flow from"
+                        : categoricalX
+                          ? "Group rows by"
+                          : "Against"}
                 <select
                   value={settings.x}
-                  onChange={(e) => set({ x: e.target.value })}
+                  onChange={(e) => set({ x: e.target.value }, true)}
                 >
                   {xOptions.map((column) => (
                     <option key={column}>{column}</option>
                   ))}
                 </select>
+                {settings.kind === "calendar" && !dates.length && (
+                  <small>No column in this table looks like dates.</small>
+                )}
               </label>
             )}
 
@@ -470,7 +542,7 @@ export function Workbench({
                 Combine repeated rows by
                 <select
                   value={settings.agg}
-                  onChange={(e) => set({ agg: e.target.value as Agg })}
+                  onChange={(e) => set({ agg: e.target.value as Agg }, true)}
                 >
                   {AGGS.map((agg) => (
                     <option key={agg.id} value={agg.id}>
@@ -481,17 +553,21 @@ export function Workbench({
               </label>
             )}
 
-            {settings.kind !== "box" && (
+            {!noGroup && (
               <label className="field-label">
-                {settings.kind === "heatmap" ? "Row axis" : "Colour by"}
+                {settings.kind === "heatmap"
+                  ? "Row axis"
+                  : settings.kind === "sunburst" || settings.kind === "treemap"
+                    ? "Outer ring"
+                    : settings.kind === "sankey"
+                      ? "Flow target"
+                      : "Colour by"}
                 <select
                   value={settings.group}
-                  onChange={(e) => set({ group: e.target.value })}
+                  onChange={(e) => set({ group: e.target.value }, true)}
                 >
                   <option value="">
-                    {settings.kind === "heatmap"
-                      ? "Choose a column"
-                      : "Nothing"}
+                    {needsGroup ? "Choose a column" : "Nothing"}
                   </option>
                   {categorical
                     .filter((column) => column !== settings.x)
@@ -510,29 +586,30 @@ export function Workbench({
                   min={4}
                   max={40}
                   value={settings.bins}
-                  onChange={(e) => set({ bins: Number(e.target.value) })}
+                  onChange={(e) => set({ bins: Number(e.target.value) }, true)}
                 />
                 <small>{settings.bins} bins</small>
               </label>
             )}
 
-            {categoricalX && settings.kind !== "heatmap" && (
-              <label className="field-label">
-                Order
-                <select
-                  value={settings.sort}
-                  onChange={(e) =>
-                    set({ sort: e.target.value as Settings["sort"] })
-                  }
-                >
-                  <option value="high">Largest first</option>
-                  <option value="low">Smallest first</option>
-                  <option value="table">Table order</option>
-                </select>
-              </label>
-            )}
+            {categoricalX &&
+              !["heatmap", "calendar", "radar"].includes(settings.kind) && (
+                <label className="field-label">
+                  Order
+                  <select
+                    value={settings.sort}
+                    onChange={(e) =>
+                      set({ sort: e.target.value as Settings["sort"] })
+                    }
+                  >
+                    <option value="high">Largest first</option>
+                    <option value="low">Smallest first</option>
+                    <option value="table">Table order</option>
+                  </select>
+                </label>
+              )}
 
-            {categoricalX && (
+            {ranks && (
               <label className="field-label">
                 Show at most
                 <input
@@ -563,6 +640,9 @@ export function Workbench({
                 selected={selected}
                 onSelect={setSelected}
                 title={`${settings.y} by ${settings.x}`}
+                subtitle={`${KIND_LABELS[settings.kind].label} · ${formatNumber(
+                  result.layout.used,
+                )} row${result.layout.used === 1 ? "" : "s"} from this page`}
                 name={
                   artifactPath
                     .split("/")

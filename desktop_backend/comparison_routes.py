@@ -50,20 +50,29 @@ def preview(workspace: Workspace, definition: ComparisonDefinition) -> dict[str,
     """
     sides: list[dict[str, Any]] = []
     detail_values: list[dict[str, set[str]]] = []
+    spellings: list[dict[str, str]] = []
     for side in definition.sides:
         try:
             _project, documents = resolve_side(workspace, side)
         except ValueError as exc:
             sides.append({"name": side.name, "error": str(exc)})
             detail_values.append({})
+            spellings.append({})
             continue
         dates = sorted(doc["document_date"] for doc in documents if doc.get("document_date"))
         values: dict[str, set[str]] = {}
+        # Keyed by the folded name: the engine reads a detail whatever the
+        # case of its name (field_value), so "Speaker" on one side and
+        # "speaker" on the other line up, and the preview must offer them.
+        spelling: dict[str, str] = {}
         for doc in documents:
             for name, value in doc["fields"].items():
-                if name not in ("Side", "Project", "Date"):
-                    values.setdefault(name, set()).add(value)
+                key = name.casefold()
+                if key not in ("side", "project", "date"):
+                    spelling.setdefault(key, name)
+                    values.setdefault(key, set()).add(str(value).strip())
         detail_values.append(values)
+        spellings.append(spelling)
         sides.append(
             {
                 "name": side.name,
@@ -73,8 +82,8 @@ def preview(workspace: Workspace, definition: ComparisonDefinition) -> dict[str,
                 "last_date": dates[-1] if dates else None,
                 # A detail with one value is named ("Kind: sotu"), not counted ("1 Kind").
                 "details": {
-                    name: {"count": len(found), "examples": sorted(found, key=str.casefold)[:3]}
-                    for name, found in sorted(values.items())
+                    spelling[key]: {"count": len(found), "examples": sorted(found, key=str.casefold)[:3]}
+                    for key, found in sorted(values.items())
                 },
             }
         )
@@ -82,9 +91,10 @@ def preview(workspace: Workspace, definition: ComparisonDefinition) -> dict[str,
     shared: list[dict[str, Any]] = []
     if len(readable) == len(sides) and readable:
         names = set.intersection(*(set(values) for values in readable))
-        for name in sorted(names, key=str.casefold):
-            common = set.intersection(*(values[name] for values in readable))
-            shared.append({"name": name, "shared_values": len(common), "examples": sorted(common)[:5]})
+        for key in sorted(names):
+            common = set.intersection(*(values[key] for values in readable))
+            # Spelled as the first side spells it.
+            shared.append({"name": spellings[0][key], "shared_values": len(common), "examples": sorted(common)[:5]})
     # Periods line up only when every side has dates.
     return {"sides": sides, "alignments": shared, "dated": all(side.get("first_date") for side in sides)}
 

@@ -120,10 +120,12 @@ def test_the_drill_down_filters_match_what_the_workbench_filters_on() -> None:
     start = views.index("export function filtersFor(")
     stored = views[start : views.index("\n}", start)]
     assert "settings.x" in stored and "settings.group" in stored
-    # Both skip the x predicate for a histogram, whose marks are bins rather
-    # than values of a column.
-    assert 'settings.kind !== "histogram"' in applied
-    assert 'settings.kind !== "histogram"' in stored
+    # Exact bins and observations use row positions in the loaded preview.
+    # The stored equality predicates cannot represent these selections.
+    assert "mark.rowIndices" in applied
+    assert "selected.rowIndices" in stored
+    assert 'settings.kind === "histogram"' in stored
+    assert 'settings.kind === "ecdf"' in stored
 
 
 def test_a_setting_the_workbench_no_longer_has_is_not_still_stored() -> None:

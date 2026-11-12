@@ -11,7 +11,7 @@ in progress; completed plans, reviews and old build logs are in Git history.
 | Install from source or diagnose dependencies | [Install](INSTALL.md) |
 | Understand the desktop, its scope and its limits | [Desktop](DESKTOP.md) |
 | Move from NLP Suite 1.6.x | [Migration](MIGRATION.md) |
-| Make charts and inspect tool-specific figures | [Charts](viz-charts.md) · [Panels](viz-panels.md) |
+| Make charts, tool-specific figures and showcase figures | [Charts](viz-charts.md) · [Panels, showcases and the figure kit](viz-panels.md) · the app's **Visualizations** page |
 
 ## Develop and release
 
@@ -30,7 +30,6 @@ in progress; completed plans, reviews and old build logs are in Git history.
 | 0.5.0 implementation and release checks | [Plan](internal/PLAN_0.5.0.md) |
 | Unscheduled ideas (add new ones to section 4d) | [Backlog](internal/PANELS_BACKLOG.md) |
 | Which figure each tool gets, and figure-quality rules | [Figure recipes](internal/FIGURE_RECIPES.md) |
-| Showcase figures and a figure kit for scripts | [Showcase figures plan](internal/SHOWCASE_FIGURES_PLAN.md) |
 | Research workflows | [Question-driven research](internal/QUESTION_DRIVEN_RESEARCH_PLAN.md) |
 | Legacy replacement | [Roadmap and chunking protocol](internal/FULL_REPLACEMENT_PLAN.md) · [live ledger](internal/REPLACEMENT_LEDGER.md) |
 | Legacy baseline | [Parity report (historical)](internal/LEGACY_PARITY.md) · [legacy environment](internal/LEGACY_ENVIRONMENT.md) |

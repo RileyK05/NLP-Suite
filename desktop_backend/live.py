@@ -340,7 +340,11 @@ class Bench:
         # same documents is a different parse (its Document IDs are positions).
         already = self.held(annotation_key(ordered_fingerprint(corpus.docs), parser_identity(pipeline)))
         if already is not None:
-            return replace(already, source="memory")
+            # The parse is reusable, the corpus is not: details (Party, Date,
+            # Order ...) are outside the fingerprint, so the corpus just read
+            # may carry edits the held one does not. Held again so the next
+            # hit starts from it too.
+            return self._hold(replace(already, corpus=corpus, source="memory"))
         # The same cache a published run reads (desktop_backend.project_corpus),
         # so a question asked here after a run -- or a run after a question --
         # costs a read of the parse, not the parse.
@@ -450,6 +454,14 @@ def model_budget(tool: str, table: pd.DataFrame | None) -> Diagnostic | None:
 LIVE_ROWS = 500
 
 
+def _cell(value: Any) -> str:
+    import pandas as pd  # kept off the cold-start import path, like the rest of this module
+
+    if value is None or (pd.api.types.is_scalar(value) and bool(pd.isna(value))):
+        return ""
+    return str(value)
+
+
 def as_table(frame: pd.DataFrame, limit: int = LIVE_ROWS) -> dict[str, Any]:
     """A result frame in the shape the desktop already reads.
 
@@ -459,7 +471,9 @@ def as_table(frame: pd.DataFrame, limit: int = LIVE_ROWS) -> dict[str, Any]:
     head = frame.head(limit)
     return {
         "columns": [str(column) for column in frame.columns],
-        "rows": [{str(k): "" if v is None else str(v) for k, v in row.items()} for row in head.to_dict("records")],
+        # Missing is empty, as in the CSV the artifact preview reads: NaN, NaT
+        # and pd.NA would otherwise arrive as the words "nan", "NaT", "<NA>".
+        "rows": [{str(k): _cell(v) for k, v in row.items()} for row in head.to_dict("records")],
         "total": len(frame),
         "filtered_total": len(frame),
         "offset": 0,
@@ -527,7 +541,7 @@ class Session:
         self._error = ""
         #: Live request ids the reader abandoned (R-C8). Answers for these are
         #: discarded rather than delivered to a question that is no longer asked.
-        self._cancelled: set[str] = set()
+        self._cancelled: dict[str, None] = {}
         #: Recent answers by id, newest last, each with the snapshot it was
         #: computed from and the settings that produced it.
         self._answers: dict[str, tuple[str, LiveResult, dict[str, Any]]] = {}
@@ -646,8 +660,21 @@ class Session:
                 )
             return snapshot
 
-    def analyse(self, tool: str, params: dict[str, Any], axis: dict[str, str] | None = None) -> LiveResult:
-        return self.bench.analyse(self.resolved().warm, tool, params, axis)
+    def analyse(
+        self,
+        tool: str,
+        params: dict[str, Any],
+        axis: dict[str, str] | None = None,
+        *,
+        snapshot: Snapshot | None = None,
+    ) -> LiveResult:
+        """Answer against *snapshot* when the caller already resolved one.
+
+        Resolving again here could pick up a load that committed in between,
+        and the answer would come from those documents while it is labelled
+        and remembered with the snapshot the caller checked.
+        """
+        return self.bench.analyse((snapshot or self.resolved()).warm, tool, params, axis)
 
     def cancel_analysis(self, request_id: str) -> dict[str, Any]:
         """Record that nobody is waiting for this answer any more (R-C8).
@@ -663,9 +690,9 @@ class Session:
         it may not grow with every question ever asked.
         """
         with self.lock:
-            self._cancelled.add(request_id)
+            self._cancelled[request_id] = None
             if len(self._cancelled) > _CANCELLED_KEEP * 2:
-                self._cancelled = set(sorted(self._cancelled)[-_CANCELLED_KEEP:])
+                self._cancelled = dict(list(self._cancelled.items())[-_CANCELLED_KEEP:])
         return {"ok": True, "request_id": request_id, "cancelled": True}
 
     def analysis_cancelled(self, request_id: str) -> bool:
@@ -676,7 +703,7 @@ class Session:
     def forget_cancelled(self, request_id: str) -> None:
         """Drop a cancellation once it has been honoured (id is one-use)."""
         with self.lock:
-            self._cancelled.discard(request_id)
+            self._cancelled.pop(request_id, None)
 
     def track_phrase(self, request: dict[str, Any]) -> dict[str, Any]:
         """Answer one phrase-distribution question from the warmed evidence."""

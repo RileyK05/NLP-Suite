@@ -76,8 +76,10 @@ __all__ = [
 #: Tools a script may run: every tool with a batch adapter, less the ones that
 #: only make sense behind their own page.
 _PRIVATE_TOOLS = frozenset({"phrase_distribution"})
-#: Chart kinds the app's chart canvas draws (desktop/src/chartLayout.ts LIVE_KINDS).
-_DRAWN_KINDS = ("bar", "line", "scatter", "bubble", "histogram", "box", "heatmap")
+#: Chart kinds :func:`show` draws: the canvas kinds the Scripts page's "Copy
+#: matplotlib code" can also reproduce (desktop/src/notebooks.ts matplotlibCode).
+#: The canvas draws more (pie, sankey, ...); scripts reach those with :func:`chart`.
+_DRAWN_KINDS = ("bar", "line", "scatter", "bubble", "histogram", "box", "heatmap", "ecdf")
 _MATCHES = ("lemma", "form", "exact-lowercase")
 #: What counts may be grouped along. Beyond these, ``by="field:<detail name>"``
 #: groups by any document detail ("field:Village") - the same vocabulary the
@@ -636,7 +638,7 @@ def sentiment(corpus: Corpus, *, model: str = "vader", unit: str = "document") -
     if unit not in ("document", "sentence"):
         raise SuiteError("unit must be 'document' or 'sentence'.")
     if model == "vader":
-        result = run("sentiment_vader_anew", corpus, analysis="vader")
+        result = run("polarity_vader", corpus)
         # Compound is VADER's overall score (-1 to 1); Neg/Neu/Pos are its parts,
         # and a chart of the first of them answers a question nobody asked.
         return _prefer(
@@ -648,7 +650,7 @@ def sentiment(corpus: Corpus, *, model: str = "vader", unit: str = "document") -
             question="How does the overall tone (VADER compound, -1 to 1) change over time?",
         )
     if model == "distilbert-sst2":
-        result = run("sentiment_neural_bert", corpus, model=model)
+        result = run("polarity_distilbert_sst2", corpus, model=model)
         return result["sentiment_sentences" if unit == "sentence" else "sentiment_documents"]
     raise SuiteError("model must be 'vader' or 'distilbert-sst2'.")
 
@@ -707,7 +709,7 @@ def similar(
     corpus: Corpus, query: str, *, unit: str = "sentence", model: str = "granite-embedding-english-r2"
 ) -> pd.DataFrame:
     """Sentences (or documents) closest in meaning to *query*, best first."""
-    return run("doc_embeddings", corpus, query=query, unit=unit, model=model)["search_results"]
+    return run("document_embeddings", corpus, query=query, unit=unit, model=model)["search_results"]
 
 
 # ------------------------------------------------------------------ output --
@@ -768,7 +770,10 @@ def _chart_for(
     frame: pd.DataFrame, x: str | None, y: str | Sequence[str] | None, kind: str | None, group: str | None
 ) -> tuple[dict[str, Any] | None, pd.DataFrame | None, str]:
     if kind is not None and kind not in _DRAWN_KINDS:
-        raise SuiteError(f"kind must be one of {', '.join(_DRAWN_KINDS)}, not {kind!r}.")
+        raise SuiteError(
+            f"kind must be one of {', '.join(_DRAWN_KINDS)}, not {kind!r}. "
+            f"For other kinds, draw the interactive figure: nlp.chart(table, kind={kind!r}, x=..., y=...)."
+        )
     if x is None and y is None:
         preferred = _preferred_chart(frame, kind)
         if preferred is not None:
@@ -833,8 +838,8 @@ def show(
 
     With no x/y the app picks the chart most worth drawing (the same advice
     the Explore page gives). Give ``x=`` and ``y=`` (one column or a list)
-    to choose; ``kind=`` is bar, line, scatter, bubble, histogram, box or
-    heatmap. When the notebook is saved as a run, the table is kept as a CSV.
+    to choose. For a cumulative distribution use ``kind="ecdf"`` and give
+    the measure as ``x=``. Saving the notebook as a run keeps the table as a CSV.
     """
     session = current()
     frame = _as_frame(table)
@@ -867,10 +872,8 @@ def chart(
 
     Where :func:`show` draws a quick chart in the page itself, this draws the
     full interactive figure the Analyze page publishes -- plotly's HTML, with
-    hover, zoom and pan, and the richer kinds (``sankey``, ``sunburst``,
-    ``treemap``, ``radar``, ``violin``, ``waffle``, ``calendar``, ``pie``)
-    that the page's own canvas does not draw. The frame is shown under the
-    cell and kept as ``<name>.html`` when the notebook is saved as a run.
+    hover, zoom and pan. The figure is shown under the cell and kept as
+    ``<name>.html`` when the notebook is saved as a run.
 
     *kind* is any kind the engine draws (``nlp.chart`` is the way to reach
     them all). *x* is the category axis; for ``sankey`` *x* is the source and

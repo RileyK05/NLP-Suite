@@ -12,7 +12,7 @@ from core.analysis import (
     contextual as ctx_mod,
     html_annotator as html_mod,
     knowledge_graph as kg_mod,
-    semantic as sem_mod,
+    semantic_classes as sem_mod,
 )
 from core.conll.schema import Col
 from core.io.reader import read_corpus

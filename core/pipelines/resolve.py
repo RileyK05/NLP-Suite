@@ -14,9 +14,10 @@ run continues on that backend and says so loudly.
 Four rules keep this from becoming the kind of silent magic that makes results
 untrustworthy:
 
-1. **Only a model problem triggers it.** A configuration error, an unsupported
-   language, or a parse that fails on the text is not a reason to change
-   backend -- those are answers, and switching would hide them.
+1. **Only a model problem or a missing backend package triggers it.** A
+   configuration error, an unsupported language, or a parse that fails on the
+   text is not a reason to change backend -- those are answers, and switching
+   would hide them.
 2. **It is always announced**, as a warning carrying both backends and the fix
    command for the one that failed, so the environment still gets repaired.
 3. **The run records the backend that did the work**, never the one that was
@@ -49,9 +50,16 @@ FALLBACK_ORDER: tuple[str, ...] = ("spacy", "stanza")
 #: usable". Only these justify trying a different backend.
 _MODEL_CODES = frozenset({"PIPELINE_MODEL_MISSING", "PIPELINE_MODEL_UNREADABLE", "PIPELINE_MODEL_CORRUPT"})
 
+#: Diagnostic codes that mean "there is no point even trying the configured
+#: backend": its Python package is not installed, so no builder exists for it.
+_BACKEND_CODES = frozenset({"PIPELINE_BACKEND_NOT_INSTALLED"})
 
-def _is_model_problem(diagnostics: tuple[Diagnostic, ...]) -> bool:
-    return any(diagnostic.code in _MODEL_CODES for diagnostic in diagnostics)
+#: Every failure that justifies trying another backend.
+_TRIGGER_CODES = _MODEL_CODES | _BACKEND_CODES
+
+
+def _is_fallback_problem(diagnostics: tuple[Diagnostic, ...]) -> bool:
+    return any(diagnostic.code in _TRIGGER_CODES for diagnostic in diagnostics)
 
 
 def available_backends() -> tuple[str, ...]:
@@ -133,7 +141,7 @@ class _SubstitutedPipeline:
 
 def _fallback_warning(requested: str, used: str, failure: tuple[Diagnostic, ...]) -> Diagnostic:
     """One warning that says what happened, why, and how to put it back."""
-    reason = next((d.message for d in failure if d.code in _MODEL_CODES), "the model could not be loaded")
+    reason = next((d.message for d in failure if d.code in _TRIGGER_CODES), "the model could not be loaded")
     fix = next(
         (d.context["fix"] for d in failure if isinstance(d.context, dict) and d.context.get("fix")),
         "",
@@ -168,10 +176,24 @@ def resolve_pipeline(
     """
     register_builders(cache)
 
-    first = cache.get(config.parser, config.language)
+    if (
+        config.parser in FALLBACK_ORDER
+        and not cache.has_builder(config.parser)
+        and importlib.util.find_spec(config.parser) is None
+    ):
+        first: Result[Pipeline] = Result.failure(
+            Diagnostic.error(
+                "PIPELINE_BACKEND_NOT_INSTALLED",
+                f"the {config.parser} package is not installed.",
+                backend=config.parser,
+                fix=f"pip install {config.parser}",
+            )
+        )
+    else:
+        first = cache.get(config.parser, config.language)
     if first.value is not None:
         return first
-    if not allow_fallback or not _is_model_problem(first.diagnostics):
+    if not allow_fallback or not _is_fallback_problem(first.diagnostics):
         return first
 
     tried: list[str] = []

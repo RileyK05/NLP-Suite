@@ -79,7 +79,7 @@ def test_a_missing_model_runtime_is_not_advertised_ready() -> None:
     assert {"onnxruntime", "tokenizers"} <= set(result["missing"])
 
 
-def test_bert_topics_fallback_needs_torch_not_just_transformers() -> None:
+def test_topic_clusters_bert_fallback_needs_torch_not_just_transformers() -> None:
     """The development fallback without torch would offer a run that cannot finish.
 
     ``TransformerBackend`` runs the model under ``torch.no_grad()``, so
@@ -87,7 +87,7 @@ def test_bert_topics_fallback_needs_torch_not_just_transformers() -> None:
     tool must say it needs setup rather than appear ready and fail at embed
     time.
     """
-    spec = get_tool("bert_topics")
+    spec = get_tool("topic_clusters_bert")
     assert spec is not None
     ready = {"spacy": True, "en_core_web_sm": True, "transformers": True, "torch": True}
     assert availability(spec, ready)["state"] == "available"
@@ -97,9 +97,24 @@ def test_bert_topics_fallback_needs_torch_not_just_transformers() -> None:
 
 
 def test_lexicon_requirement_is_visible() -> None:
-    spec = get_tool("nrc")
+    spec = get_tool("emotion_nrc")
     assert spec is not None
     # nrclex ships the bundled lexicon; without it the tool is setup-blocked,
     # not input-blocked (no asset file to pick).
     assert availability(spec, {"spacy": True, "en_core_web_sm": True})["state"] == "needs_setup"
     assert availability(spec, {"spacy": True, "en_core_web_sm": True, "nrclex": True})["state"] == "available"
+
+
+def test_wordnet_is_listed_as_missing_when_nltk_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings must show WordNet and SentiWordNet as missing, not leave them out."""
+    import importlib.util
+
+    from desktop_backend import environment
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "nltk" else real(name, *a))
+    found = environment._scan()
+    assert found["nltk"] is False
+    assert found["wordnet"] is False and found["sentiwordnet"] is False
+    listed = {item["name"]: item["present"] for item in environment.components(found)}
+    assert listed["wordnet"] is False and listed["sentiwordnet"] is False

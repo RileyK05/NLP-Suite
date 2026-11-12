@@ -139,7 +139,7 @@ def test_resume_tracks_file_contents(tmp_path: Path) -> None:
 
 def test_resume_requires_known_input_and_model_identity() -> None:
     assert resume.current_key("readability", {}, None) is None
-    assert resume.current_key("nrc", {}, _corpus()) is None
+    assert resume.current_key("emotion_nrc", {}, _corpus()) is None
     assert resume.current_key("sentence_complexity", {}, _corpus()) is None
 
 
@@ -183,7 +183,7 @@ def test_plan_rejects_nonfinite_parameters(value: float) -> None:
 
 
 def test_registry_rejects_duplicate_widget_keys() -> None:
-    spec = get_tool("sentiment_vader_anew")
+    spec = get_tool("polarity_vader")
     assert spec is not None
     assert len(spec.params) == len({param.name for param in spec.params})
     bad = replace(spec, params=(*spec.params, spec.params[0]))
@@ -210,8 +210,8 @@ def test_partial_analysis_is_failed_but_artifacts_survive(tmp_path: Path, monkey
 @pytest.mark.parametrize(
     "tool,function,path_key",
     [
-        ("nrc", "emotions", "lexicon"),
-        ("sentiment_swn_hedono", "hedonometer", "hedonometer-lexicon"),
+        ("emotion_nrc", "emotions", "lexicon"),
+        ("happiness_hedonometer", "hedonometer", "hedonometer-lexicon"),
     ],
 )
 def test_batch_lexicon_options_reach_analysis(monkeypatch, tool, function, path_key) -> None:
@@ -241,26 +241,34 @@ def test_batch_vader_options_reach_analysis(monkeypatch: pytest.MonkeyPatch) -> 
         return Result.success(pd.DataFrame())
 
     monkeypatch.setattr(executor, "load_vader_analyzer", load)
-    for name in ("vader", "vader_sentences", "anew"):
+    for name in ("vader_documents", "vader_sentences"):
         monkeypatch.setattr(executor, name, score)
     plan = build_plan(
-        ["sentiment_vader_anew"],
-        {
-            "sentiment_vader_anew": {
-                "field": "lemma",
-                "anew-field": "form",
-                "vader-lexicon": "vader.txt",
-                "anew-lexicon": "anew.csv",
-            }
-        },
+        ["polarity_vader"],
+        {"polarity_vader": {"field": "lemma", "vader-lexicon": "vader.txt"}},
     ).unwrap()
     assert executor.execute(plan, table=pd.DataFrame()).outcomes[0].ok
     assert calls == [
         ("load", "vader.txt"),
         {"field": Col.LEMMA, "analyzer": analyzer},
-        {"field": Col.LEMMA, "analyzer": analyzer},
-        {"field": Col.FORM, "lexicon": "anew.csv"},
+        {},  # vader_documents(sentences) takes the scored frame positionally
     ]
+
+
+def test_batch_anew_options_reach_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def score(frame, **kwargs):
+        calls.append(kwargs)
+        return Result.success(pd.DataFrame())
+
+    monkeypatch.setattr(executor, "anew", score)
+    plan = build_plan(
+        ["valence_anew"],
+        {"valence_anew": {"anew-field": "form", "anew-lexicon": "anew.csv"}},
+    ).unwrap()
+    assert executor.execute(plan, table=pd.DataFrame()).outcomes[0].ok
+    assert calls == [{"field": Col.FORM, "lexicon": "anew.csv"}]
 
 
 def test_blocked_rename_chain_preserves_all_sources(tmp_path: Path) -> None:

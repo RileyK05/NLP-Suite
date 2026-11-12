@@ -275,3 +275,11 @@ def test_duplicate_event_names_are_refused(project: tuple[Workspace, str, dict[s
 
     with pytest.raises(ValidationError):
         FieldSettings(events=[ProjectEvent(name="Korea", date="1950"), ProjectEvent(name="korea", date="1951")])
+
+
+def test_non_finite_order_is_no_order() -> None:
+    from core.io.document_fields import document_order
+
+    assert document_order({"Order": "3"}) == 3.0
+    for text in ("NaN", "nan", "inf", "-Infinity"):
+        assert document_order({"Order": text}) is None

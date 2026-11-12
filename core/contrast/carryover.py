@@ -9,7 +9,7 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
-from core.analysis.doc_embeddings import sentence_vectors
+from core.analysis.document_embeddings import sentence_vectors
 from core.analysis.lexicon_series import term_hits
 from core.conll.schema import Col
 from core.contrast.sides import Alignment, side_of

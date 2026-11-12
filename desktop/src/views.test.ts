@@ -82,11 +82,20 @@ describe("the two shapes of one arrangement", () => {
     // fallback beats casting the string through and failing further in, where
     // nothing says where it came from.
     const restored = fromViewSettings(
-      { ...stored, kind: "sunburst" },
+      { ...stored, kind: "spiral" },
       { ...settings, kind: "line" },
     );
     expect(restored.kind).toBe("line");
     expect(restored.y).toBe("Count");
+  });
+
+  it("reopens a hierarchy kind now that the workbench draws it live", () => {
+    expect(
+      fromViewSettings(
+        { ...stored, kind: "sunburst" },
+        { ...settings, kind: "line" },
+      ).kind,
+    ).toBe("sunburst");
   });
 });
 

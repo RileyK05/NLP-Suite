@@ -30,6 +30,7 @@ import pandas as pd
 from sklearn.manifold import TSNE
 
 from core.conll.schema import Col, validate_columns
+from core.deps import OptionalDependencyError, import_optional
 from core.result import Diagnostic, Result
 
 __all__ = [
@@ -131,12 +132,13 @@ def train(
         return Result.failure(Diagnostic.error("W2V_NO_SENTENCES", "no usable sentences; nothing to train on"))
 
     try:
-        from gensim.models import Word2Vec
-    except ImportError:
+        Word2Vec = import_optional("gensim.models").Word2Vec
+    except OptionalDependencyError as exc:
+        detail = "not installed" if exc.missing else f"installed but broken ({exc.reason})"
         return Result.failure(
             Diagnostic.error(
                 "W2V_BACKEND_MISSING",
-                "Gensim is not installed; embeddings need the optional 'topics' extra",
+                f"Gensim is {detail}; embeddings need the optional 'topics' extra",
                 fix="python -m pip install nlp-suite-ng[topics]",
             )
         )

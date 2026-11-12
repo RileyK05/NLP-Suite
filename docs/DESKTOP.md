@@ -75,6 +75,12 @@ runtime. No personal research corpus is bundled.
   change the accepted run. Resource uploads block submission until complete.
 - Result tables with full-dataset substring search and 500-row pagination,
   CSV and complete-run ZIP exports.
+- Explore's chart workbench draws all sixteen chart kinds live, including
+  pie, sunburst, treemap, violin, radar, waffle, calendar and Sankey; long
+  rankings turn on their side rather than printing rotated labels. The
+  **Visualizations** page is the inventory of every kind and every
+  purpose-built analysis figure, with previews and a link to the page that
+  draws it.
 - Project renaming, recoverable archiving, and archived-project restoration.
   Documents, runs and projects can be moved to Trash, restored, or purged.
 - Portable `.nlpsuite` backup/restore: documents, originals, run files and

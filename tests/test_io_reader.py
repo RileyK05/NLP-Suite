@@ -268,3 +268,24 @@ class TestDocumentShape:
         doc = Document(doc_id=1, path=Path("a.txt"), text="hi")
         assert doc.date is None
         assert doc.name == "a.txt"
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be", "utf-32"])
+def test_a_file_with_a_unicode_byte_order_mark_is_read_as_that_encoding(tmp_path: Path, encoding: str) -> None:
+    """A Notepad "Unicode" file must not come back as cp1252 mojibake with its NULs stripped."""
+    import codecs
+
+    from core.io.reader import read_text
+
+    text = "Hello world, café 你好"
+    bom = {
+        "utf-16": b"",
+        "utf-16-le": codecs.BOM_UTF16_LE,
+        "utf-16-be": codecs.BOM_UTF16_BE,
+        "utf-32": b"",
+    }[encoding]
+    source = tmp_path / "unicode.txt"
+    source.write_bytes(bom + text.encode(encoding))
+    result = read_text(source)
+    assert result.unwrap() == text
+    assert not result.diagnostics

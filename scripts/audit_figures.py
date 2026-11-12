@@ -51,7 +51,7 @@ def load_tables(source: Path) -> dict[str, dict[str, pd.DataFrame]]:
         except (OSError, ValueError, KeyError):
             continue
         for csv in sorted(envelope.parent.glob("*.csv")):
-            if csv.name == "input_files.csv":
+            if csv.name == "desktop_inputs.csv":
                 continue
             try:
                 by_tool.setdefault(tool, {}).setdefault(csv.name, pd.read_csv(csv, encoding="utf-8-sig"))

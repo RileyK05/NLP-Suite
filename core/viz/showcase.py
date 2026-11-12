@@ -1,6 +1,6 @@
 """Showcase figures: one multi-panel publication figure per tool, built with the kit.
 
-``docs/internal/SHOWCASE_FIGURES_PLAN.md`` section 2: a showcase is a figure that
+``docs/viz-panels.md`` (showcase figures and the figure kit): a showcase is a figure that
 shows three zoom levels at once -- the whole corpus, a few documents close up,
 and what the method itself learned -- under a title that is the finding or the
 question, with the world on the axis and model internals shown rather than
@@ -26,6 +26,7 @@ import io
 import re
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from core.result import Diagnostic, Result
@@ -944,12 +945,14 @@ def _lexicon_series_showcase(frames: Mapping[str, pd.DataFrame], events: Sequenc
     return fig
 
 
-def _bert_topics_showcase(frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]] = ()) -> Canvas:
+def _topic_clusters_bert_showcase(
+    frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]] = ()
+) -> Canvas:
     """Which topics each era talks about: topic shares over time and the top words."""
     from core.viz import kit
 
     docs = _require(frames, "bert_topic_docs.csv")
-    topics_frame = frames.get("bert_topics.csv")
+    topics_frame = frames.get("topic_clusters_bert.csv")
     x, x_label = _time_axis_column(docs)
     topics_frame = topics_frame if topics_frame is not None else pd.DataFrame()
     topic_ids = sorted(pd.to_numeric(docs["Topic"], errors="coerce").dropna().unique())
@@ -1116,6 +1119,465 @@ def _draw_mallet_weights(
     kit.bars(ax, values, labels=names, colors=bar_colors)
 
 
+def _lexical_diversity_showcase(frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]] = ()) -> Canvas:
+    """How varied is the vocabulary: TTR trend over time, length check, and decade spread."""
+    frame = _require(frames, "lexical_diversity.csv")
+    x, x_label = _time_axis_column(frame)
+    measure = "TTR" if "TTR" in frame.columns else "Type-Token Ratio"
+    length_col = "Tokens" if "Tokens" in frame.columns else "Words"
+
+    fig = canvas(
+        "How varied is the vocabulary?",
+        f"Lexical diversity ({measure}) over the corpus; checked against text length before trusting differences",
+        size=(15.0, 13.0),
+        library=LIBRARY,
+    )
+    fig.rows([1.05, 1.0], hspace=0.34)
+    ax_a = fig.row(0).cols([1.0]).axis(0)
+    _trend_panel(
+        ax_a,
+        frame,
+        value=measure,
+        x=x,
+        x_label=x_label,
+        title=f"A. The whole corpus: vocabulary richness ({measure}) by document",
+        events=events if x == "Year" else (),
+    )
+    row_b = fig.row(1)
+    row_b.cols([1.0, 1.0])
+    ax_b = row_b.axis(0)
+    ax_c = row_b.axis(1)
+    if length_col in frame.columns:
+        _joint_panel(ax_b, frame, x=length_col, y=measure, x_label=length_col, y_label=measure)
+        ax_b.set_title(
+            f"B. Length check: is {measure} driven by sample size?", loc="left", fontsize=11, fontweight="bold", pad=8
+        )
+    _group_box(ax_c, frame, value=measure, group=None, year_column="Year" if "Year" in frame.columns else None)
+    ax_c.set_title(f"C. {measure} by decade / group", loc="left", fontsize=11, fontweight="bold", pad=8)
+    return fig
+
+
+def _sentence_complexity_showcase(
+    frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]] = ()
+) -> Canvas:
+    """Syntactic complexity across the corpus: sentence length, clause depth, and decade spread."""
+    frame = _require(frames, "sentence_complexity.csv")
+    # If frame has Sentence ID, aggregate by Document ID
+    if "Sentence ID" in frame.columns:
+        working = frame.copy()
+        for col in ("Tokens", "Mean Dependency Distance", "Depth", "Subordinate Clauses"):
+            if col in working.columns:
+                working[col] = pd.to_numeric(working[col], errors="coerce")
+        agg_spec: dict[str, tuple[str, str]] = {
+            "Tokens": ("Tokens", "median"),
+            "Mean Dependency Distance": ("Mean Dependency Distance", "median"),
+        }
+        if "Depth" in working.columns:
+            agg_spec["Depth"] = ("Depth", "median")
+        if "Year" in working.columns:
+            agg_spec["Year"] = ("Year", "first")
+        if "Order" in working.columns:
+            agg_spec["Order"] = ("Order", "first")
+        doc_col = "Document ID" if "Document ID" in working.columns else "Document"
+        frame = working.groupby(doc_col, as_index=False).agg(**agg_spec)
+
+    x, x_label = _time_axis_column(frame)
+    measure = "Mean Dependency Distance" if "Mean Dependency Distance" in frame.columns else "Depth"
+
+    fig = canvas(
+        "Syntactic complexity across the corpus",
+        f"Sentence structure ({measure}) over time; checked against sentence length",
+        size=(15.0, 13.0),
+        library=LIBRARY,
+    )
+    fig.rows([1.05, 1.0], hspace=0.34)
+    ax_a = fig.row(0).cols([1.0]).axis(0)
+    _trend_panel(
+        ax_a,
+        frame,
+        value=measure,
+        x=x,
+        x_label=x_label,
+        title=f"A. The whole corpus: syntactic complexity ({measure}) by document",
+        events=events if x == "Year" else (),
+    )
+    row_b = fig.row(1)
+    row_b.cols([1.0, 1.0])
+    ax_b = row_b.axis(0)
+    ax_c = row_b.axis(1)
+    if "Tokens" in frame.columns:
+        _joint_panel(ax_b, frame, x="Tokens", y=measure, x_label="Median Sentence Tokens", y_label=measure)
+        ax_b.set_title(
+            f"B. Length check: is {measure} driven by sentence length?",
+            loc="left",
+            fontsize=11,
+            fontweight="bold",
+            pad=8,
+        )
+    _group_box(ax_c, frame, value=measure, group=None, year_column="Year" if "Year" in frame.columns else None)
+    ax_c.set_title(f"C. {measure} by decade / group", loc="left", fontsize=11, fontweight="bold", pad=8)
+    return fig
+
+
+def _emotion_nrc_showcase(frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]] = ()) -> Canvas:
+    """The emotional landscape: emotions over time, close-up speech mix, and prevalence."""
+    from core.viz import kit
+
+    frame = _require(frames, "emotion_nrc.csv")
+    x, x_label = _time_axis_column(frame)
+    emotions = [
+        e
+        for e in ("fear", "anger", "anticipation", "trust", "surprise", "sadness", "disgust", "joy")
+        if e in frame.columns
+    ]
+    if len(emotions) < 2:
+        raise ValueError("emotion showcase needs at least two emotion columns")
+    for e in emotions:
+        frame[e] = pd.to_numeric(frame[e], errors="coerce").fillna(0.0)
+
+    labels = {e: e.capitalize() for e in emotions}
+    colors = kit.palette(emotions, colors={})
+
+    fig = canvas(
+        "The emotional landscape of the corpus",
+        "Proportions of eight Plutchik emotions across documents and over time",
+        size=(15.0, 13.0),
+        library=LIBRARY,
+    )
+    fig.rows([1.05, 1.0], hspace=0.34)
+    ax_a = fig.row(0).cols([1.0]).axis(0)
+
+    stream_shares = _yearly_shares(frame, emotions, x)
+    kit.stream(ax_a, stream_shares, labels=labels, colors=colors)
+    ax_a.set(xlabel=x_label, ylabel="Average emotion share")
+    kit.time_axis(ax_a, frame, x=x)
+    if events and x == "Year":
+        kit.events(ax_a, list(events))
+    ax_a.set_title(
+        "A. The corpus over time: affective tone across the eight Plutchik emotions",
+        loc="left",
+        fontsize=11,
+        fontweight="bold",
+        pad=24 if events and x == "Year" else 8,
+    )
+
+    row_b = fig.row(1)
+    row_b.cols([1.05, 1.0])
+    ax_b = row_b.axis(0)
+    ax_c = row_b.axis(1)
+
+    closeups = _pick_closeups(frame, x, 6)
+    shares = closeups[emotions]
+    shares.index = [_document_label(row, date_column=x) for _, row in closeups.iterrows()]
+    kit.mixture_bars(ax_b, shares, colors=colors)
+    ax_b.set_title(
+        "B. Six documents close up: individual emotion profiles", loc="left", fontsize=11, fontweight="bold", pad=10
+    )
+    ax_b.set_xlabel("Share of document's emotion hits")
+
+    # Panel C: Overall prevalence bars
+    means = frame[emotions].mean().sort_values(ascending=True)
+    kit.bars(
+        ax_c,
+        (means * 100.0).tolist(),
+        labels=[labels[e] for e in means.index],
+        colors=[colors.get(e, "#0072B2") for e in means.index],
+    )
+    ax_c.set_title("C. Corpus-wide emotion ranking", loc="left", fontsize=11, fontweight="bold", pad=10)
+    ax_c.set_xlabel("Average percentage of hits (%)")
+    return fig
+
+
+def _collocations_showcase(frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]] = ()) -> Canvas:
+    """Which words bind together: association vs frequency, and top pairs."""
+    from core.viz import kit
+
+    frame = _require(frames, "collocations.csv")
+    _ = events
+    required = ("Word 1", "Word 2", "Pair", "Co-occurrences")
+    for col in required:
+        if col not in frame.columns:
+            raise ValueError(f"collocations table missing column {col}")
+
+    measure_col = "Log Dice" if "Log Dice" in frame.columns else ("PMI" if "PMI" in frame.columns else "Co-occurrences")
+
+    fig = canvas(
+        "Which words bind together?",
+        f"Statistical association ({measure_col}) against co-occurrence frequency across the corpus",
+        size=(15.0, 13.0),
+        library=LIBRARY,
+    )
+    fig.rows([1.05, 1.0], hspace=0.34)
+    ax_a = fig.row(0).cols([1.0]).axis(0)
+
+    # Panel A: Association vs Frequency scatter
+    working = frame.copy()
+    working["Co-occurrences"] = pd.to_numeric(working["Co-occurrences"], errors="coerce")
+    working[measure_col] = pd.to_numeric(working[measure_col], errors="coerce")
+    usable = working.dropna(subset=["Co-occurrences", measure_col])
+    if usable.empty:
+        raise ValueError("no valid pairs to plot")
+
+    xs = np.log10(usable["Co-occurrences"].clip(lower=1))
+    ys = usable[measure_col].to_numpy()
+    ax_a.scatter(xs, ys, s=20, alpha=0.5, color="#0072B2", edgecolors="none")
+    ax_a.set(xlabel="Log10 Co-occurrence Count", ylabel=measure_col)
+    ax_a.set_title(
+        f"A. Association ({measure_col}) vs. co-occurrence frequency (log scale)",
+        loc="left",
+        fontsize=11,
+        fontweight="bold",
+        pad=8,
+    )
+    ax_a.spines[["top", "right"]].set_visible(False)
+
+    from core.viz.static.style import INK
+
+    # Label top non-overlapping pairs by measure
+    top_pairs = usable.nlargest(15, measure_col)
+    placed: list[tuple[float, float]] = []
+    for _, row in top_pairs.iterrows():
+        px = float(np.log10(max(1, row["Co-occurrences"])))
+        py = float(row[measure_col])
+        if any(abs(px - ox) < 0.25 and abs(py - oy) < 0.8 for ox, oy in placed):
+            continue
+        pair_name = str(row["Pair"])
+        ax_a.annotate(
+            pair_name,
+            (px, py),
+            fontsize=6.8,
+            color=INK,
+            xytext=(3, 2),
+            textcoords="offset points",
+        )
+        placed.append((px, py))
+        if len(placed) >= 6:
+            break
+
+    row_b = fig.row(1)
+    row_b.cols([1.0, 1.0])
+    ax_b = row_b.axis(0)
+    ax_c = row_b.axis(1)
+
+    # Panel B: Top 15 collocations ranked bars
+    top15 = usable.nlargest(15, measure_col).sort_values(measure_col, ascending=True)
+    kit.bars(ax_b, top15[measure_col].tolist(), labels=top15["Pair"].astype(str).tolist(), colors="#0072B2")
+    ax_b.set_title(f"B. Top 15 collocations by {measure_col}", loc="left", fontsize=11, fontweight="bold", pad=10)
+    ax_b.set_xlabel(measure_col)
+
+    # Panel C: Co-occurrence counts of top pairs
+    kit.bars(ax_c, top15["Co-occurrences"].tolist(), labels=top15["Pair"].astype(str).tolist(), colors="#E69F00")
+    ax_c.set_title(
+        "C. Co-occurrence frequencies for top collocations", loc="left", fontsize=11, fontweight="bold", pad=10
+    )
+    ax_c.set_xlabel("Co-occurrences")
+    return fig
+
+
+def _spellcheck_showcase(frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]]) -> Canvas:
+    _ = events
+    from core.viz import kit
+    from core.viz.static.style import INK
+
+    frame = next((frames[name] for name in ("spell_check.csv", "spellcheck.csv") if name in frames), None)
+    if frame is None:
+        raise ValueError("showcase needs spell_check.csv")
+    for col in ("Word", "Count", "Score"):
+        if col not in frame.columns:
+            raise ValueError(f"spellcheck table missing column {col}")
+
+    fig = canvas(
+        "How accurate is the transcription?",
+        "Spelling errors, correction confidence, and error concentration across documents",
+        size=(15.0, 13.0),
+        library=LIBRARY,
+    )
+    fig.rows([1.05, 1.0], hspace=0.34)
+    ax_a = fig.row(0).cols([1.0]).axis(0)
+
+    # Panel A: Confidence Score vs Frequency
+    working = frame.copy()
+    working["Count"] = pd.to_numeric(working["Count"], errors="coerce").fillna(0)
+    working["Score"] = pd.to_numeric(working["Score"], errors="coerce").fillna(0.0)
+    usable = working[working["Count"] > 0]
+    if usable.empty:
+        raise ValueError("no spelling errors to plot")
+
+    agg_words = (
+        usable.groupby("Word", sort=False)
+        .agg(
+            TotalCount=("Count", "sum"),
+            Score=("Score", "mean"),
+        )
+        .reset_index()
+    )
+
+    xs = agg_words["Score"].to_numpy()
+    ys = np.log10(agg_words["TotalCount"].clip(lower=1))
+    ax_a.scatter(xs, ys, s=28, alpha=0.6, color="#0072B2", edgecolors="none")
+    ax_a.axvline(0.75, color="#009E73", linestyle="--", linewidth=1.2, alpha=0.8)
+    ax_a.set(xlabel="Correction Confidence Score (0 to 1)", ylabel="Log10 Total Occurrences")
+    ax_a.set_title(
+        "A. Suggestion confidence vs. frequency across unknown words (dash: >= 0.75 threshold)",
+        loc="left",
+        fontsize=11,
+        fontweight="bold",
+        pad=8,
+    )
+    ax_a.spines[["top", "right"]].set_visible(False)
+
+    # Annotate top non-overlapping words
+    top_words = agg_words.nlargest(15, "TotalCount")
+    placed: list[tuple[float, float]] = []
+    for _, row in top_words.iterrows():
+        px = float(row["Score"])
+        py = float(np.log10(max(1, row["TotalCount"])))
+        if any(abs(px - ox) < 0.08 and abs(py - oy) < 0.4 for ox, oy in placed):
+            continue
+        w = str(row["Word"])
+        ax_a.annotate(
+            w,
+            (px, py),
+            fontsize=7.2,
+            color=INK,
+            xytext=(4, 2),
+            textcoords="offset points",
+        )
+        placed.append((px, py))
+        if len(placed) >= 8:
+            break
+
+    row_b = fig.row(1)
+    row_b.cols([1.0, 1.0])
+    ax_b = row_b.axis(0)
+    ax_c = row_b.axis(1)
+
+    # Panel B: Top 15 spelling errors ranked bars
+    top15 = agg_words.nlargest(15, "TotalCount").sort_values("TotalCount", ascending=True)
+    kit.bars(ax_b, top15["TotalCount"].tolist(), labels=top15["Word"].astype(str).tolist(), colors="#D55E00")
+    ax_b.set_title("B. Top 15 unknown/misspelled words", loc="left", fontsize=11, fontweight="bold", pad=10)
+    ax_b.set_xlabel("Total Occurrences")
+
+    # Panel C: Errors per document
+    doc_col = "Document" if "Document" in usable.columns else "Document ID"
+    if doc_col in usable.columns:
+        doc_errs = usable.groupby(doc_col, sort=False)["Count"].sum().reset_index()
+        top_docs = doc_errs.nlargest(15, "Count").sort_values("Count", ascending=True)
+        from core.viz.panel_helpers import document_labels
+
+        labels = document_labels(top_docs[doc_col].astype(str).tolist())
+        doc_names = [labels.get(d, d) for d in top_docs[doc_col].astype(str)]
+        kit.bars(ax_c, top_docs["Count"].tolist(), labels=doc_names, colors="#CC79A7")
+        ax_c.set_title("C. Spelling errors by document (top 15)", loc="left", fontsize=11, fontweight="bold", pad=10)
+        ax_c.set_xlabel("Error Count")
+    else:
+        ax_c.set_visible(False)
+
+    return fig
+
+
+def _ngrams_showcase(frames: Mapping[str, pd.DataFrame], events: Sequence[tuple[float, str]]) -> Canvas:
+    _ = events
+    from core.viz import kit
+    from core.viz.panel_helpers import is_function_word
+    from core.viz.static.style import INK
+
+    frame = next((frames[name] for name in ("ngrams.csv",) if name in frames), None)
+    if frame is None:
+        raise ValueError("showcase needs ngrams.csv")
+    for col in ("N-gram", "Frequency in Corpus"):
+        if col not in frame.columns:
+            raise ValueError(f"ngrams table missing column {col}")
+
+    fig = canvas(
+        "Which phrases define the discourse?",
+        "Recurring multi-word expressions, corpus frequency, and document dispersion",
+        size=(15.0, 13.0),
+        library=LIBRARY,
+    )
+    fig.rows([1.05, 1.0], hspace=0.34)
+    ax_a = fig.row(0).cols([1.0]).axis(0)
+
+    # Filter function-word dominated phrases for content showcase
+    working = frame.copy()
+    working["Frequency in Corpus"] = pd.to_numeric(working["Frequency in Corpus"], errors="coerce").fillna(0)
+    working = working[working["Frequency in Corpus"] > 0]
+    if working.empty:
+        raise ValueError("no valid n-grams to plot")
+
+    doc_id_col = "Document ID" if "Document ID" in working.columns else None
+    agg = (
+        working.groupby("N-gram", sort=False)
+        .agg(
+            CorpusFreq=("Frequency in Corpus", "first"),
+            DocCoverage=(doc_id_col, "nunique") if doc_id_col else ("Frequency in Corpus", lambda _: 1),
+        )
+        .reset_index()
+    )
+
+    def _is_content_ng(text: str) -> bool:
+        parts = text.split()
+        return not (is_function_word(parts[0]) and is_function_word(parts[-1]))
+
+    content_agg = agg[agg["N-gram"].map(_is_content_ng)]
+    if content_agg.empty:
+        content_agg = agg
+
+    # Panel A: Frequency vs Document Coverage scatter
+    xs = np.log10(content_agg["CorpusFreq"].clip(lower=1))
+    ys = content_agg["DocCoverage"].to_numpy()
+    ax_a.scatter(xs, ys, s=25, alpha=0.6, color="#009E73", edgecolors="none")
+    ax_a.set(xlabel="Log10 Corpus Frequency", ylabel="Document Coverage (Number of Documents)")
+    ax_a.set_title(
+        "A. Corpus frequency vs. document coverage across key phrases",
+        loc="left",
+        fontsize=11,
+        fontweight="bold",
+        pad=8,
+    )
+    ax_a.spines[["top", "right"]].set_visible(False)
+
+    top_content = content_agg.nlargest(15, "CorpusFreq")
+    placed: list[tuple[float, float]] = []
+    for _, row in top_content.iterrows():
+        px = float(np.log10(max(1, row["CorpusFreq"])))
+        py = float(row["DocCoverage"])
+        if any(abs(px - ox) < 0.25 and abs(py - oy) < 2.0 for ox, oy in placed):
+            continue
+        phrase = str(row["N-gram"])
+        ax_a.annotate(
+            phrase,
+            (px, py),
+            fontsize=7.0,
+            color=INK,
+            xytext=(3, 2),
+            textcoords="offset points",
+        )
+        placed.append((px, py))
+        if len(placed) >= 8:
+            break
+
+    row_b = fig.row(1)
+    row_b.cols([1.0, 1.0])
+    ax_b = row_b.axis(0)
+    ax_c = row_b.axis(1)
+
+    # Panel B: Top 15 content phrases
+    top15 = content_agg.nlargest(15, "CorpusFreq").sort_values("CorpusFreq", ascending=True)
+    kit.bars(ax_b, top15["CorpusFreq"].tolist(), labels=top15["N-gram"].astype(str).tolist(), colors="#0072B2")
+    ax_b.set_title("B. Top 15 content phrases by corpus frequency", loc="left", fontsize=11, fontweight="bold", pad=10)
+    ax_b.set_xlabel("Corpus Frequency")
+
+    # Panel C: Document coverage for top phrases
+    kit.bars(ax_c, top15["DocCoverage"].tolist(), labels=top15["N-gram"].astype(str).tolist(), colors="#E69F00")
+    ax_c.set_title(
+        "C. Document coverage (distinct documents using phrase)", loc="left", fontsize=11, fontweight="bold", pad=10
+    )
+    ax_c.set_xlabel("Documents")
+
+    return fig
+
+
 def _registry() -> tuple[Showcase, ...]:
     return (
         Showcase(
@@ -1143,8 +1605,8 @@ def _registry() -> tuple[Showcase, ...]:
             build=_readability_showcase,
         ),
         Showcase(
-            name="sentiment_vader_anew_showcase",
-            tool="sentiment_vader_anew",
+            name="polarity_vader_showcase",
+            tool="polarity_vader",
             title="How did the tone move?",
             question="How does per-document sentiment move, and what are the most positive and negative sentences?",
             tables=("vader.csv", "vader_sentences.csv"),
@@ -1191,12 +1653,12 @@ def _registry() -> tuple[Showcase, ...]:
             build=_lexicon_series_showcase,
         ),
         Showcase(
-            name="bert_topics_showcase",
-            tool="bert_topics",
+            name="topic_clusters_bert_showcase",
+            tool="topic_clusters_bert",
             title="Which topics does each era talk about?",
             question="How do the BERT topic shares move over the corpus, and what did each topic learn?",
-            tables=("bert_topic_docs.csv", "bert_topics.csv"),
-            build=_bert_topics_showcase,
+            tables=("bert_topic_docs.csv", "topic_clusters_bert.csv"),
+            build=_topic_clusters_bert_showcase,
         ),
         Showcase(
             name="clause_svo_showcase",
@@ -1205,6 +1667,54 @@ def _registry() -> tuple[Showcase, ...]:
             question="Which subjects and verbs recur in the corpus's subject-verb-object triples?",
             tables=("svo.csv",),
             build=_clause_svo_showcase,
+        ),
+        Showcase(
+            name="lexical_diversity_showcase",
+            tool="lexical_diversity",
+            title="How varied is the vocabulary?",
+            question="Does vocabulary richness change across the corpus, or is it an artifact of document length?",
+            tables=("lexical_diversity.csv",),
+            build=_lexical_diversity_showcase,
+        ),
+        Showcase(
+            name="sentence_complexity_showcase",
+            tool="sentence_complexity",
+            title="Syntactic complexity across the corpus",
+            question="Do sentences grow more elaborate over time, and what is the distribution of complex clauses?",
+            tables=("sentence_complexity.csv",),
+            build=_sentence_complexity_showcase,
+        ),
+        Showcase(
+            name="emotion_nrc_showcase",
+            tool="emotion_nrc",
+            title="The emotional landscape of the corpus",
+            question="Which emotions dominate each document, and how does the affective tone shift over time?",
+            tables=("emotion_nrc.csv",),
+            build=_emotion_nrc_showcase,
+        ),
+        Showcase(
+            name="collocations_showcase",
+            tool="collocations",
+            title="Which words bind together?",
+            question="Which word pairs co-occur most strongly, and how do statistical association and raw frequency interact?",
+            tables=("collocations.csv",),
+            build=_collocations_showcase,
+        ),
+        Showcase(
+            name="spellcheck_showcase",
+            tool="spellcheck",
+            title="How accurate is the transcription?",
+            question="Which spelling errors recur across the corpus, and how confident are the automated corrections?",
+            tables=("spell_check.csv", "spellcheck.csv"),
+            build=_spellcheck_showcase,
+        ),
+        Showcase(
+            name="ngrams_showcase",
+            tool="ngrams",
+            title="Which phrases define the discourse?",
+            question="Which recurring multi-word expressions dominate the corpus, and how are they shared across documents?",
+            tables=("ngrams.csv",),
+            build=_ngrams_showcase,
         ),
     )
 
