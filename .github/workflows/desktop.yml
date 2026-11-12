@@ -74,6 +74,9 @@ jobs:
           python -m pip install -r desktop/requirements-runtime-py312.txt
           python -m pip install --no-deps .
           python -m pip install pytest
+          # The Windows image preinstalls pipx into this Python; its own pins
+          # (filelock>=4.2) are not ours and fail pip check. Not part of the suite.
+          python -m pip uninstall -y pipx
           python -m pip check
       - name: Desktop backend and packaging tests
         # pytest does not create --basetemp's parent; on a fresh checkout out/ does not exist.

@@ -55,6 +55,9 @@ jobs:
           python -m pip install --no-deps -e .
           grep -v ' @ ' desktop/requirements-runtime-py312.txt > "$RUNNER_TEMP/constraints.txt"
           python -m pip install -c "$RUNNER_TEMP/constraints.txt" streamlit pytest "ruff>=0.16" "mypy>=1.11"
+          # The Windows image preinstalls pipx into this Python; its own pins
+          # (filelock>=4.2) are not ours and fail pip check. Not part of the suite.
+          python -m pip uninstall -y pipx
           python -m pip check
       - name: Lint (ruff check)
         run: python -m ruff check .
