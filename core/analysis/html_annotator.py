@@ -92,9 +92,11 @@ def gender_spans(frame: pd.DataFrame, field: str = "Form") -> Result[pd.DataFram
         return Result.failure(Diagnostic.error("HTML_MISSING_COLUMN", f"missing {field!r}"))
     if frame.empty:
         return Result.success(pd.DataFrame(columns=["Token", "Gender", "Sentence ID", "Document ID"]))
+    toks = frame[field].astype(str).tolist()
+    sids = frame["Sentence ID"].tolist() if "Sentence ID" in frame.columns else [""] * len(toks)
+    dids = frame["Document ID"].astype(str).tolist() if "Document ID" in frame.columns else [""] * len(toks)
     rows: list[dict[str, object]] = []
-    for _, row in frame.iterrows():
-        tok = str(row[field])
+    for tok, sid, did in zip(toks, sids, dids, strict=True):
         g = _PRONOUN_GENDER.get(tok.lower())
         if g is None:
             continue
@@ -102,8 +104,8 @@ def gender_spans(frame: pd.DataFrame, field: str = "Form") -> Result[pd.DataFram
             {
                 "Token": tok,
                 "Gender": g,
-                "Sentence ID": row.get("Sentence ID", ""),
-                "Document ID": str(row.get("Document ID", "")),
+                "Sentence ID": sid,
+                "Document ID": did,
             }
         )
     if not rows:

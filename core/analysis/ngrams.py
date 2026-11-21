@@ -7,6 +7,7 @@ from collections import Counter
 
 import pandas as pd
 
+from core.conll.frames import col_str_list, iter_sentence_groups
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
@@ -44,13 +45,14 @@ def ngrams(
     doc_counts: Counter[tuple[tuple[str, ...], str]] = Counter()
     corpus_counts: Counter[tuple[str, ...]] = Counter()
 
-    for (_did, _sid), sent in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        toks = [str(x).lower() for x in sent[field.value].tolist() if str(x).strip() and str(x).isalpha()]
+    tokens = col_str_list(frame, field)
+    for doc_id, _sentence_id, row_indices in iter_sentence_groups(frame):
+        toks = [tokens[index].lower() for index in row_indices if tokens[index].strip() and tokens[index].isalpha()]
         if len(toks) < n:
             continue
         for i in range(len(toks) - n + 1):
             ng = tuple(toks[i : i + n])
-            doc_counts[(ng, str(_did))] += 1
+            doc_counts[(ng, str(doc_id))] += 1
             corpus_counts[ng] += 1
 
     if not corpus_counts:
@@ -98,8 +100,9 @@ def collocations(
     bi = Counter[tuple[str, str]]()
     total_bigrams = 0
 
-    for (_did, _sid), sent in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        toks = [str(x).lower() for x in sent[field.value].tolist() if str(x).strip() and str(x).isalpha()]
+    tokens = col_str_list(frame, field)
+    for _doc_id, _sentence_id, row_indices in iter_sentence_groups(frame):
+        toks = [tokens[index].lower() for index in row_indices if tokens[index].strip() and tokens[index].isalpha()]
         for w in toks:
             uni[w] += 1
         for i in range(len(toks) - 1):
@@ -161,13 +164,19 @@ def collocation_network(
                 f"no collocation has PMI >= {min_pmi}; lower --min-pmi (e.g. 0) to keep all bigrams at the count threshold",
             ),
         )
-    canon: list[dict[str, object]] = []
-    for _, row in strong.iterrows():
-        a, b = str(row["Word 1"]), str(row["Word 2"])
-        if b < a:
-            a, b = b, a
-        canon.append({"Word 1": a, "Word 2": b, "Count": int(row["Count"]), "PMI": float(row["PMI"])})
-    edges = pd.DataFrame(canon, columns=["Word 1", "Word 2", "Count", "PMI"])
+    w1_col = strong["Word 1"].astype(str).tolist()
+    w2_col = strong["Word 2"].astype(str).tolist()
+    cnt_col = strong["Count"].astype(int).tolist()
+    pmi_col = strong["PMI"].astype(float).tolist()
+    edges = pd.DataFrame(
+        {
+            "Word 1": [a if a <= b else b for a, b in zip(w1_col, w2_col, strict=True)],
+            "Word 2": [b if a <= b else a for a, b in zip(w1_col, w2_col, strict=True)],
+            "Count": cnt_col,
+            "PMI": pmi_col,
+        },
+        columns=["Word 1", "Word 2", "Count", "PMI"],
+    )
     edges = edges.groupby(["Word 1", "Word 2"], as_index=False).agg(Count=("Count", "sum"), PMI=("PMI", "max"))
     # Counted after "cat dog" and "dog cat" became one edge: that is the
     # number of edges there were to keep.

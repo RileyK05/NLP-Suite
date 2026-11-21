@@ -39,6 +39,7 @@ Intentional differences from the legacy (all defect-grade, none silent):
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -384,10 +385,10 @@ def _climb_senses(
 ) -> str | None:
     """BFS hypernym climb over senses in order; the nearest anchor wins."""
     for sense in senses:
-        queue: list[tuple[str, int]] = [(sense, 0)]
+        queue: deque[tuple[str, int]] = deque([(sense, 0)])
         seen: set[str] = {sense}
         while queue:
-            current, depth = queue.pop(0)
+            current, depth = queue.popleft()
             if current in anchors:
                 return anchors[current]
             if max_depth is not None and depth >= max_depth:
@@ -397,6 +398,49 @@ def _climb_senses(
                     seen.add(parent)
                     queue.append((parent, depth + 1))
     return None
+
+
+def _classify_space_prepared(
+    word: str,
+    table: Mapping[str, str],
+    resolved_backend: TypologyBackend | None,
+    anchors: Mapping[str, str],
+) -> str:
+    cleaned = word.strip().lower()
+    if not cleaned:
+        return UNCLASSIFIED
+    if cleaned in table:
+        return table[cleaned]
+    if " " in cleaned and cleaned.split()[-1] in table:
+        return table[cleaned.split()[-1]]
+    if cleaned in SPACE_STOPWORDS:
+        return UNCLASSIFIED
+    if resolved_backend is not None:
+        senses = [s for s in resolved_backend.noun_synsets(cleaned) if not resolved_backend.is_instance(s)]
+        hit = _climb_senses(senses, anchors, resolved_backend, None)
+        if hit is not None:
+            return hit
+    return UNCLASSIFIED
+
+
+def _classify_actor_prepared(
+    actor: str,
+    table: Mapping[str, str],
+    resolved_backend: TypologyBackend | None,
+    anchors: Mapping[str, str],
+) -> str:
+    cleaned = actor.strip().lower()
+    if not cleaned:
+        return UNCLASSIFIED
+    if cleaned in table:
+        return table[cleaned]
+    if cleaned in ACTOR_GENERIC:
+        return "generic_person"
+    if resolved_backend is not None:
+        hit = _climb_senses(resolved_backend.noun_synsets(cleaned)[:1], anchors, resolved_backend, _ACTOR_MAX_DEPTH)
+        if hit is not None:
+            return hit
+    return UNCLASSIFIED
 
 
 def classify_space(
@@ -496,13 +540,8 @@ def _resolve_backend(backend: TypologyBackend | None) -> tuple[TypologyBackend |
     return resolved.unwrap(), list(resolved.diagnostics)
 
 
-def _aggregate(
-    words: Sequence[str | float | None],
-    columns: tuple[str, str],
-    classify: Callable[[str], Result[str]],
-) -> tuple[pd.DataFrame, list[Diagnostic]]:
-    rows: list[dict[str, object]] = []
-    diags: list[Diagnostic] = []
+def _clean_words(words: Sequence[str | float | None]) -> list[str]:
+    out: list[str] = []
     for raw in words:
         if raw is None:
             continue
@@ -513,14 +552,9 @@ def _aggregate(
             except (TypeError, ValueError):
                 pass
         cleaned = str(raw).strip()
-        if not cleaned:
-            continue
-        result = classify(cleaned)
-        if result.value is None:
-            return pd.DataFrame(columns=list(columns)), list(result.diagnostics)
-        diags.extend(result.diagnostics)
-        rows.append({columns[0]: cleaned.lower(), columns[1]: result.unwrap()})
-    return pd.DataFrame(rows, columns=list(columns)), diags
+        if cleaned:
+            out.append(cleaned)
+    return out
 
 
 def aggregate_spaces(
@@ -531,14 +565,33 @@ def aggregate_spaces(
     use_wordnet: bool = True,
 ) -> Result[pd.DataFrame]:
     """Classify location nouns to space types, in input order."""
-    frame, diags = _aggregate(
-        words,
-        _SPACE_COLUMNS,
-        lambda word: classify_space(word, lexicon=lexicon, backend=backend, use_wordnet=use_wordnet),
-    )
-    if frame.empty and not diags:
-        diags.append(Diagnostic.warning("SYMBOLIC_EMPTY_INPUT", "no words to classify"))
-    return Result.success(frame, *diags)
+    cleaned_words = _clean_words(words)
+    if not cleaned_words:
+        return Result.success(
+            pd.DataFrame(columns=list(_SPACE_COLUMNS)),
+            Diagnostic.warning("SYMBOLIC_EMPTY_INPUT", "no words to classify"),
+        )
+    table, diags = _resolve_lexicon(lexicon, "space-typology", "lib/symbolic_space_typology.csv", load_space_lexicon)
+    if table is None:
+        return Result.failure(*diags)
+    resolved_backend: TypologyBackend | None = None
+    anchors: dict[str, str] = {}
+    if use_wordnet:
+        resolved_backend, backend_diags = _resolve_backend(backend)
+        diags.extend(backend_diags)
+        if resolved_backend is None:
+            return Result.failure(*diags)
+        anchors = _anchor_map(resolved_backend, SPACE_ANCHORS)
+    memo: dict[str, str] = {}
+    rows: list[dict[str, object]] = []
+    for word in cleaned_words:
+        key = word.lower()
+        label = memo.get(key)
+        if label is None:
+            label = _classify_space_prepared(word, table, resolved_backend, anchors)
+            memo[key] = label
+        rows.append({_SPACE_COLUMNS[0]: key, _SPACE_COLUMNS[1]: label})
+    return Result.success(pd.DataFrame(rows, columns=list(_SPACE_COLUMNS)), *diags)
 
 
 def aggregate_actors(
@@ -549,14 +602,33 @@ def aggregate_actors(
     use_wordnet: bool = True,
 ) -> Result[pd.DataFrame]:
     """Classify person nouns to social types, in input order."""
-    frame, diags = _aggregate(
-        words,
-        _ACTOR_COLUMNS,
-        lambda word: classify_actor(word, lexicon=lexicon, backend=backend, use_wordnet=use_wordnet),
-    )
-    if frame.empty and not diags:
-        diags.append(Diagnostic.warning("SYMBOLIC_EMPTY_INPUT", "no words to classify"))
-    return Result.success(frame, *diags)
+    cleaned_words = _clean_words(words)
+    if not cleaned_words:
+        return Result.success(
+            pd.DataFrame(columns=list(_ACTOR_COLUMNS)),
+            Diagnostic.warning("SYMBOLIC_EMPTY_INPUT", "no words to classify"),
+        )
+    table, diags = _resolve_lexicon(lexicon, "actor-typology", "lib/social_actor_typology.csv", load_actor_lexicon)
+    if table is None:
+        return Result.failure(*diags)
+    resolved_backend: TypologyBackend | None = None
+    anchors: dict[str, str] = {}
+    if use_wordnet:
+        resolved_backend, backend_diags = _resolve_backend(backend)
+        diags.extend(backend_diags)
+        if resolved_backend is None:
+            return Result.failure(*diags)
+        anchors = _anchor_map(resolved_backend, ACTOR_ANCHORS)
+    memo: dict[str, str] = {}
+    rows: list[dict[str, object]] = []
+    for word in cleaned_words:
+        key = word.lower()
+        label = memo.get(key)
+        if label is None:
+            label = _classify_actor_prepared(word, table, resolved_backend, anchors)
+            memo[key] = label
+        rows.append({_ACTOR_COLUMNS[0]: key, _ACTOR_COLUMNS[1]: label})
+    return Result.success(pd.DataFrame(rows, columns=list(_ACTOR_COLUMNS)), *diags)
 
 
 def category_counts(frame: pd.DataFrame, column: str) -> Result[pd.DataFrame]:

@@ -13,10 +13,30 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from app.scanner import artifact_view, find_runs
+from app.scanner import RunRecord, artifact_view, find_runs
 
 DEFAULT_OUTPUT_ROOT = Path("out")
 MAX_INPUTS_SHOWN = 5
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _cached_runs(output_root_str: str, _nonce: int) -> list[RunRecord]:
+    return find_runs(Path(output_root_str))
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_bytes(path_str: str, _mtime_ns: int, _size: int) -> bytes:
+    return Path(path_str).read_bytes()
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_csv(path_str: str, _mtime_ns: int, _size: int) -> pd.DataFrame:
+    return pd.read_csv(path_str)
+
+
+def _file_bytes(target: Path) -> bytes:
+    stat = target.stat()
+    return _cached_bytes(str(target), stat.st_mtime_ns, stat.st_size)
 
 
 def _render_table(run_dir: Path, artifact_path: str) -> None:
@@ -25,14 +45,16 @@ def _render_table(run_dir: Path, artifact_path: str) -> None:
         st.warning(f"Missing table: {artifact_path}")
         return
     try:
-        frame = pd.read_csv(target)
+        stat = target.stat()
+        frame = _cached_csv(str(target), stat.st_mtime_ns, stat.st_size)
+        raw_bytes = _cached_bytes(str(target), stat.st_mtime_ns, stat.st_size)
     except Exception as exc:
         st.error(f"Could not read {artifact_path}: {exc}")
         return
     st.dataframe(frame, use_container_width=True)
     st.download_button(
         label=f"Download {artifact_path}",
-        data=target.read_bytes(),
+        data=raw_bytes,
         file_name=Path(artifact_path).name,
         mime="text/csv",
     )
@@ -44,13 +66,14 @@ def _render_markdown(run_dir: Path, artifact_path: str) -> None:
         st.warning(f"Missing report: {artifact_path}")
         return
     try:
-        st.markdown(target.read_text(encoding="utf-8"))
+        raw_bytes = _file_bytes(target)
+        st.markdown(raw_bytes.decode("utf-8"))
     except Exception as exc:
         st.error(f"Could not read {artifact_path}: {exc}")
         return
     st.download_button(
         label=f"Download {artifact_path}",
-        data=target.read_bytes(),
+        data=raw_bytes,
         file_name=Path(artifact_path).name,
         mime="text/markdown",
     )
@@ -62,13 +85,14 @@ def _render_html(run_dir: Path, artifact_path: str) -> None:
         st.warning(f"Missing HTML: {artifact_path}")
         return
     try:
-        components.html(target.read_text(encoding="utf-8"), height=500, scrolling=True)
+        raw_bytes = _file_bytes(target)
+        components.html(raw_bytes.decode("utf-8"), height=500, scrolling=True)
     except Exception as exc:
         st.error(f"Could not render {artifact_path}: {exc}")
         return
     st.download_button(
         label=f"Download {artifact_path}",
-        data=target.read_bytes(),
+        data=raw_bytes,
         file_name=Path(artifact_path).name,
         mime="text/html",
     )
@@ -79,15 +103,19 @@ def _render_chart(run_dir: Path, artifact_path: str) -> None:
     if not target.is_file():
         st.warning(f"Missing chart: {artifact_path}")
         return
+    try:
+        raw_bytes = _file_bytes(target)
+    except Exception as exc:
+        st.error(f"Could not read {artifact_path}: {exc}")
+        return
     if target.suffix == ".html":
         try:
-            html = target.read_text(encoding="utf-8")
-            components.html(html, height=500, scrolling=True)
+            components.html(raw_bytes.decode("utf-8"), height=500, scrolling=True)
         except Exception as exc:
             st.error(f"Could not render {artifact_path}: {exc}")
     st.download_button(
         label=f"Download {artifact_path}",
-        data=target.read_bytes(),
+        data=raw_bytes,
         file_name=Path(artifact_path).name,
     )
 
@@ -100,7 +128,7 @@ def _render_image(run_dir: Path, artifact_path: str) -> None:
     st.image(str(target))
     st.download_button(
         label=f"Download {artifact_path}",
-        data=target.read_bytes(),
+        data=_file_bytes(target),
         file_name=Path(artifact_path).name,
     )
 
@@ -113,7 +141,7 @@ def _render_unknown(run_dir: Path, artifact_path: str, kind: str) -> None:
     st.info(f"Unknown artifact kind {kind!r} — download only")
     st.download_button(
         label=f"Download {artifact_path}",
-        data=target.read_bytes(),
+        data=_file_bytes(target),
         file_name=Path(artifact_path).name,
     )
 
@@ -128,10 +156,13 @@ with st.sidebar:
     st.header("Settings")
     output_root_str = st.text_input("Output root", value=str(default_root))
     output_root = Path(output_root_str)
+    refresh_nonce = int(st.session_state.get("home_refresh_nonce", 0))
     if st.button("Refresh"):
+        refresh_nonce += 1
+        st.session_state["home_refresh_nonce"] = refresh_nonce
         st.rerun()
 
-runs = find_runs(output_root)
+runs = _cached_runs(str(output_root), refresh_nonce)
 
 if not runs:
     st.info(

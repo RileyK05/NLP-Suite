@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import hashlib
 import math
 
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -113,7 +114,7 @@ def _hash_stopwords(stopwords: list[str] | None) -> str:
 
 def _matrix(
     corpus: Corpus, stopwords: list[str] | None
-) -> tuple[list[_Entry], list[list[float]], list[Diagnostic]] | Diagnostic:
+) -> tuple[list[_Entry], np.ndarray, list[Diagnostic]] | Diagnostic:
     entries: list[_Entry] = []
     texts: list[str] = []
     diags: list[Diagnostic] = []
@@ -136,9 +137,8 @@ def _matrix(
         tfidf = vectorizer.fit_transform(texts)
     except ValueError as exc:
         return Diagnostic.error("SIM_VECTORIZE_FAILED", f"TF-IDF failed: {exc}")
-    sim = cosine_similarity(tfidf)
-    matrix = [[float(sim[i, j]) * 100.0 for j in range(len(entries))] for i in range(len(entries))]
-    return entries, matrix, diags
+    sim = cosine_similarity(tfidf) * 100.0
+    return entries, sim, diags
 
 
 _PAIR_COLUMNS = [
@@ -156,68 +156,73 @@ def pairwise_similarity(corpus: Corpus, stopwords: list[str] | None = None) -> R
     built = _matrix(corpus, stopwords)
     if isinstance(built, Diagnostic):
         return Result.failure(built)
-    entries, matrix, diags = built
-    rows = []
-    for i in range(len(entries)):
-        for j in range(i + 1, len(entries)):
-            raw_pct = matrix[i][j]
-            # Classification uses the raw cosine percentage. Rounding is a
-            # display concern only: 10.04% belongs to the 10-20% interval,
-            # not the 0-10% interval merely because it displays as 10.0.
-            band = band_index(raw_pct)
-            pct = round(raw_pct, 1)
-            rows.append(
-                {
-                    "Document ID A": entries[i].doc_id,
-                    "Document A": entries[i].display,
-                    "Document ID B": entries[j].doc_id,
-                    "Document B": entries[j].display,
-                    "Similarity": pct,
-                    "Band": CLASS_LABELS[band] if band is not None else "0%",
-                    "_raw_similarity": raw_pct,
-                }
-            )
-    out = pd.DataFrame(rows, columns=_PAIR_COLUMNS)
-    if rows:
-        # Sort the hidden raw scores together with their display rows, then
-        # drop the implementation detail before exposing the frame.
-        raw = (
-            pd.DataFrame(rows)
-            .sort_values(["Similarity", "Document ID A", "Document ID B"], ascending=[False, True, True])[
-                "_raw_similarity"
-            ]
-            .astype(float)
-            .tolist()
+    entries, sim, diags = built
+    n_entries = len(entries)
+    iu, ju = np.triu_indices(n_entries, k=1)
+    sim_arr = np.asarray(sim, dtype=float)
+    raw_arr = sim_arr[iu, ju] if n_entries else np.empty(0, dtype=float)
+    pct_arr = np.asarray([round(float(v), 1) for v in raw_arr], dtype=float)
+    id_a_arr = np.array([entries[int(i)].doc_id for i in iu])
+    id_b_arr = np.array([entries[int(j)].doc_id for j in ju])
+    if len(iu):
+        order = np.lexsort((id_b_arr, id_a_arr, -pct_arr))
+        iu_ord = iu[order]
+        ju_ord = ju[order]
+        raw_sorted = raw_arr[order]
+        pct_sorted = pct_arr[order]
+        bands = []
+        for val in raw_sorted:
+            band = band_index(float(val))
+            bands.append(CLASS_LABELS[band] if band is not None else "0%")
+        out = pd.DataFrame(
+            {
+                "Document ID A": id_a_arr[order],
+                "Document A": [entries[int(i)].display for i in iu_ord],
+                "Document ID B": id_b_arr[order],
+                "Document B": [entries[int(j)].display for j in ju_ord],
+                "Similarity": pct_sorted,
+                "Band": bands,
+            },
+            columns=_PAIR_COLUMNS,
         )
-        out = out.sort_values(
-            ["Similarity", "Document ID A", "Document ID B"], ascending=[False, True, True]
-        ).reset_index(drop=True)
+        raw = [float(v) for v in raw_sorted]
     else:
+        out = pd.DataFrame(columns=_PAIR_COLUMNS)
         raw = []
     return Result.success(DocPairsResult(frame=out, raw_similarities=tuple(raw)), *diags)
 
 
 def find_duplicates(
-    corpus: Corpus, threshold: float = 80.0, stopwords: list[str] | None = None
+    corpus: Corpus,
+    threshold: float = 80.0,
+    stopwords: list[str] | None = None,
+    *,
+    pairs: DocPairsResult | None = None,
 ) -> Result[DuplicatesResult]:
     """Pairs at or above *threshold* (0-100), ranked by similarity descending."""
     threshold_problem = _validate_threshold(threshold)
     if threshold_problem is not None:
         return Result.failure(threshold_problem)
-    pairs_result = pairwise_similarity(corpus, stopwords)
-    if pairs_result.value is None:
-        return Result.failure(*pairs_result.diagnostics)
-    pair_value = pairs_result.unwrap()
-    pairs = pair_value.to_frame()
+    diags: tuple[Diagnostic, ...] = ()
+    if pairs is None:
+        pairs_result = pairwise_similarity(corpus, stopwords)
+        if pairs_result.value is None:
+            return Result.failure(*pairs_result.diagnostics)
+        pair_value = pairs_result.unwrap()
+        diags = tuple(pairs_result.diagnostics)
+    else:
+        pair_value = pairs
+    pairs_frame = pair_value.frame
     # ``Similarity`` is intentionally rounded in the public output. Use the
     # hidden raw scores for the decision so 79.96 does not become an 80.0
     # duplicate just because of display rounding.
     raw_scores = pair_value.raw_similarities
-    if len(raw_scores) != len(pairs):
-        raw_scores = tuple(float(value) for value in pairs["Similarity"].tolist())
-    mask = [score >= float(threshold) for score in raw_scores]
-    dupes = pairs.loc[mask].reset_index(drop=True)
-    return Result.success(DuplicatesResult(frame=dupes[_PAIR_COLUMNS[:-1]]), *pairs_result.diagnostics)
+    if len(raw_scores) != len(pairs_frame):
+        raw_scores = tuple(float(value) for value in pairs_frame["Similarity"].tolist())
+    limit = float(threshold)
+    mask = [score >= limit for score in raw_scores]
+    dupes = pairs_frame.loc[mask, _PAIR_COLUMNS[:-1]].reset_index(drop=True)
+    return Result.success(DuplicatesResult(frame=dupes), *diags)
 
 
 def stopword_fingerprint(stopwords: list[str] | None) -> str:

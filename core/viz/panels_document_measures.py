@@ -463,28 +463,34 @@ def _point_marks(
     frame: pd.DataFrame, measure: str, labels: Mapping[str, str], tool: MeasureTool, group: str
 ) -> list[PanelMark]:
     """One mark per document, in *group*."""
-    marks: list[PanelMark] = []
-    for _, row in frame.iterrows():
-        doc_id = str(row[DOC_ID])
-        label = labels[str(row[DOC])]
-        value = float(row[measure])
-        size_text = _fmt_size(row.get(tool.size_column), tool.size_unit)
-        marks.append(
-            PanelMark(
-                key=f"doc:{doc_id}",
-                label=label,
-                x=float(row["_year"]),
-                y=value,
-                group=group,
-                evidence=Evidence(
-                    scope="rows",
-                    filters=((DOC_ID, doc_id),),
-                    count=1,
-                    describe=f"{label}: {measure} {value:g}{size_text}",
-                ),
-            )
+    size_col = (
+        frame[tool.size_column].tolist()
+        if tool.size_column and tool.size_column in frame.columns
+        else [None] * len(frame)
+    )
+    return [
+        PanelMark(
+            key=f"doc:{doc_id}",
+            label=(label := labels[str(doc_name)]),
+            x=float(year),
+            y=(value := float(raw_val)),
+            group=group,
+            evidence=Evidence(
+                scope="rows",
+                filters=((DOC_ID, doc_id),),
+                count=1,
+                describe=f"{label}: {measure} {value:g}{_fmt_size(raw_size, tool.size_unit)}",
+            ),
         )
-    return marks
+        for doc_id, doc_name, raw_val, year, raw_size in zip(
+            frame[DOC_ID].astype(str).tolist(),
+            frame[DOC].tolist(),
+            frame[measure].tolist(),
+            frame["_year"].tolist(),
+            size_col,
+            strict=True,
+        )
+    ]
 
 
 def _median_marks(
@@ -684,7 +690,7 @@ def _by_group(
         # A detail grouping ("Party", "Kind") reads its column here; "speaker"
         # reads the Speaker detail when the table has one and the file name
         # when it does not (run tables from before details existed).
-        working["_group"] = [group_of(str(row[DOC]), row[DATE], group_by, row) for _, row in working.iterrows()]
+        working["_group"] = [group_of(str(row[DOC]), row[DATE], group_by, row) for row in working.to_dict("records")]
     order = _group_order(working, group_by)
     index_of = {name: index for index, name in enumerate(order)}
     labels = document_labels(working[DOC])
@@ -703,28 +709,34 @@ def _by_group(
     # a legend as long as the axis, so the points share one colour.
     coloured = len(order) <= _MAX_COLOURED_GROUPS
 
-    marks: list[PanelMark] = []
-    for _, row in working.iterrows():
-        doc_id = str(row[DOC_ID])
-        label = labels[str(row[DOC])]
-        group = row["_group"]
-        value = float(row[measure])
-        size_text = _fmt_size(row.get(tool.size_column), tool.size_unit)
-        marks.append(
-            PanelMark(
-                key=f"doc:{doc_id}",
-                label=label,
-                x=value,
-                y=float(index_of[group]),
-                group=group if coloured else "",
-                evidence=Evidence(
-                    scope="rows",
-                    filters=((DOC_ID, doc_id),),
-                    count=1,
-                    describe=f"{label} ({group}): {measure} {value:g}{size_text}",
-                ),
-            )
+    size_col = (
+        working[tool.size_column].tolist()
+        if tool.size_column and tool.size_column in working.columns
+        else [None] * len(working)
+    )
+    marks = [
+        PanelMark(
+            key=f"doc:{doc_id}",
+            label=(label := labels[str(doc_name)]),
+            x=(value := float(raw_val)),
+            y=float(index_of[group]),
+            group=group if coloured else "",
+            evidence=Evidence(
+                scope="rows",
+                filters=((DOC_ID, doc_id),),
+                count=1,
+                describe=f"{label} ({group}): {measure} {value:g}{_fmt_size(raw_size, tool.size_unit)}",
+            ),
         )
+        for doc_id, doc_name, group, raw_val, raw_size in zip(
+            working[DOC_ID].astype(str).tolist(),
+            working[DOC].tolist(),
+            working["_group"].tolist(),
+            working[measure].tolist(),
+            size_col,
+            strict=True,
+        )
+    ]
 
     prepared = PreparedPanel(
         panel=definition.name,
@@ -776,27 +788,28 @@ def _length_check(
     usable["_extremity"] = (usable[measure] - median_value).abs()
     labelled_ids = set(usable.sort_values("_extremity", ascending=False).head(_LABEL_TOP_N)[DOC_ID].astype(str))
 
-    marks: list[PanelMark] = []
-    for _, row in usable.iterrows():
-        doc_id = str(row[DOC_ID])
-        label = labels[str(row[DOC])]
-        value = float(row[measure])
-        length = float(row[tool.length_column])
-        marks.append(
-            PanelMark(
-                key=f"doc:{doc_id}",
-                label=label,
-                x=length,
-                y=value,
-                labelled=doc_id in labelled_ids,
-                evidence=Evidence(
-                    scope="rows",
-                    filters=((DOC_ID, doc_id),),
-                    count=1,
-                    describe=f"{label}: {measure} {value:g}; {tool.length_label} {length:g}",
-                ),
-            )
+    marks = [
+        PanelMark(
+            key=f"doc:{doc_id}",
+            label=(label := labels[str(doc_name)]),
+            x=(length := float(raw_len)),
+            y=(value := float(raw_val)),
+            labelled=doc_id in labelled_ids,
+            evidence=Evidence(
+                scope="rows",
+                filters=((DOC_ID, doc_id),),
+                count=1,
+                describe=f"{label}: {measure} {value:g}; {tool.length_label} {length:g}",
+            ),
         )
+        for doc_id, doc_name, raw_val, raw_len in zip(
+            usable[DOC_ID].astype(str).tolist(),
+            usable[DOC].tolist(),
+            usable[measure].tolist(),
+            usable[tool.length_column].tolist(),
+            strict=True,
+        )
+    ]
 
     prepared = PreparedPanel(
         panel=definition.name,
@@ -913,28 +926,35 @@ def _facet_marks(  # noqa: PLR0913 - one facet of one set of documents
     """One facet's document points and rolling median, for one set of documents (points group, median group)."""
     points_group, median_group = groups
     facet_frame = usable.assign(_value=pd.to_numeric(usable[facet], errors="coerce")).dropna(subset=["_value"])
-    marks: list[PanelMark] = []
-    for _, row in facet_frame.iterrows():
-        doc_id = str(row[DOC_ID])
-        label = labels[str(row[DOC])]
-        value = float(row["_value"])
-        size_text = _fmt_size(row.get(tool.size_column), tool.size_unit)
-        marks.append(
-            PanelMark(
-                key=f"doc:{facet}:{doc_id}",
-                label=label,
-                x=float(row["_year"]),
-                y=value,
-                group=points_group,
-                facet=facet,
-                evidence=Evidence(
-                    scope="rows",
-                    filters=((DOC_ID, doc_id),),
-                    count=1,
-                    describe=f"{label}: {facet} {value:g}{size_text}",
-                ),
-            )
+    size_col = (
+        facet_frame[tool.size_column].tolist()
+        if tool.size_column and tool.size_column in facet_frame.columns
+        else [None] * len(facet_frame)
+    )
+    marks: list[PanelMark] = [
+        PanelMark(
+            key=f"doc:{facet}:{doc_id}",
+            label=(label := labels[str(doc_name)]),
+            x=float(year),
+            y=(value := float(raw_val)),
+            group=points_group,
+            facet=facet,
+            evidence=Evidence(
+                scope="rows",
+                filters=((DOC_ID, doc_id),),
+                count=1,
+                describe=f"{label}: {facet} {value:g}{_fmt_size(raw_size, tool.size_unit)}",
+            ),
         )
+        for doc_id, doc_name, raw_val, year, raw_size in zip(
+            facet_frame[DOC_ID].astype(str).tolist(),
+            facet_frame[DOC].tolist(),
+            facet_frame["_value"].tolist(),
+            facet_frame["_year"].tolist(),
+            size_col,
+            strict=True,
+        )
+    ]
     if window <= len(facet_frame) and window >= 3:
         sortable = sorted(
             zip(facet_frame["_year"], facet_frame["_value"], facet_frame[DOC_ID].astype(str), strict=True)
@@ -1502,26 +1522,29 @@ def readability_grade_comparison(
 
     y_categories = tuple(short for _, short in _GRADE_METRICS)
 
+    has_doc_id = DOC_ID in working.columns
+    doc_ids = working[DOC_ID].astype(str).tolist() if has_doc_id else [""] * len(working)
+    doc_names = working[DOC].astype(str).tolist() if DOC in working.columns else doc_ids
+
     marks: list[PanelMark] = []
     for y_idx, (col, short) in enumerate(_GRADE_METRICS):
-        for _, row in working.iterrows():
-            val = row[col]
+        y_float = float(y_idx)
+        for val, doc_id, doc_name in zip(working[col].tolist(), doc_ids, doc_names, strict=True):
             if pd.isna(val):
                 continue
-            doc_id = str(row.get(DOC_ID, ""))
-            doc_name = str(row.get(DOC, doc_id))
             doc_disp = labels.get(doc_name, doc_name)
+            fval = float(val)
             marks.append(
                 PanelMark(
                     key=f"{doc_id}:{short}",
                     label=doc_disp,
-                    x=float(val),
-                    y=float(y_idx),
+                    x=fval,
+                    y=y_float,
                     evidence=Evidence(
                         scope="rows",
-                        filters=((DOC_ID, doc_id),) if DOC_ID in working.columns else (),
+                        filters=((DOC_ID, doc_id),) if has_doc_id else (),
                         count=1,
-                        describe=f"{doc_disp}: {short} grade level = {float(val):.1f}",
+                        describe=f"{doc_disp}: {short} grade level = {fval:.1f}",
                     ),
                 )
             )

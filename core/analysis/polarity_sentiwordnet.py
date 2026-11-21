@@ -9,6 +9,7 @@ so unit tests use a hand-built map; production resolves through NLTK.
 from __future__ import annotations
 
 from collections.abc import Callable
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -100,34 +101,53 @@ def sentiwordnet(
         if resolve is None:
             return Result.failure(*diags)
 
+    from core.conll.frames import col_str_list
+
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
+    doc_ids = frame[Col.DOCUMENT_ID.value].tolist()
+    doc_names = col_str_list(frame, doc_col) if doc_col is not None else [""] * len(frame)
+    raw_fields = frame[field.value].tolist()
+    pos_list = [v.strip().upper() for v in col_str_list(frame, Col.POS)]
+
+    doc_buckets: dict[object, list[int]] = {}
+    for idx, did in enumerate(doc_ids):
+        doc_buckets.setdefault(did, []).append(idx)
+
+    swn_memo: dict[tuple[str, str], tuple[str, float, float] | None] = {}
     rows: list[dict[str, object]] = []
-    for doc_id, group in frame.groupby(Col.DOCUMENT_ID.value, sort=False):
-        doc = str(group[doc_col].iloc[0]) if doc_col is not None else ""
-        scored: list[tuple[float, float]] = []
+    for doc_id, indices in doc_buckets.items():
+        doc = doc_names[indices[0]] if doc_col is not None else ""
+        pos_sum = 0.0
+        neg_sum = 0.0
+        hits = 0
         tokens = 0
-        for _, row in group.iterrows():
-            raw = row[field.value]
-            if raw is None:
+        for idx in indices:
+            raw = raw_fields[idx]
+            if raw is None or raw is pd.NA:
                 continue
-            try:
-                if bool(pd.isna(raw)):
-                    continue
-            except (TypeError, ValueError):
-                pass
+            if isinstance(raw, float) and math.isnan(raw):
+                continue
             text = str(raw).strip().lower()
             if not text or not text.isalpha():
                 continue
             tokens += 1
-            pos = str(row[Col.POS.value]).strip().upper()
-            if pos not in _SCORED_POS:
+            pos = pos_list[idx]
+            wn_pos = _UNIVERSAL_TO_WN.get(pos)
+            if wn_pos is None:
                 continue
-            hit = resolve(text, _UNIVERSAL_TO_WN[pos])
+            mkey = (text, wn_pos)
+            if mkey in swn_memo:
+                hit = swn_memo[mkey]
+            else:
+                hit = resolve(text, wn_pos)
+                swn_memo[mkey] = hit
             if hit is not None:
-                scored.append((hit[1], hit[2]))
-        if scored:
-            pos_mean = sum(p for p, _n in scored) / len(scored)
-            neg_mean = sum(n for _p, n in scored) / len(scored)
+                pos_sum += hit[1]
+                neg_sum += hit[2]
+                hits += 1
+        if hits:
+            pos_mean = pos_sum / hits
+            neg_mean = neg_sum / hits
             obj = 1.0 - pos_mean - neg_mean
             net = pos_mean - neg_mean
         else:
@@ -138,7 +158,7 @@ def sentiwordnet(
                 "Document ID": str(doc_id),
                 "Document": doc,
                 "Tokens": tokens,
-                "Hits": len(scored),
+                "Hits": hits,
                 "Pos": round(pos_mean, 4),
                 "Neg": round(neg_mean, 4),
                 "Obj": round(obj, 4),

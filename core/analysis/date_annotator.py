@@ -308,7 +308,7 @@ def annotate_corpus(
                 max_year=max_year,
             )
         )
-    rows: list[dict[str, object]] = []
+    frames: list[pd.DataFrame] = []
     diags: list[Diagnostic] = []
     next_id = date_id_start
     for entry in docs:
@@ -328,10 +328,12 @@ def annotate_corpus(
         if result.value is None:
             return Result.failure(*result.diagnostics)
         frame = result.unwrap()
-        rows.extend(frame.to_dict("records"))
+        if not frame.empty:
+            frames.append(frame)
         diags.extend(result.diagnostics)
         next_id += len(frame)
-    return Result.success(pd.DataFrame(rows, columns=_COLUMNS), *diags)
+    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_COLUMNS)
+    return Result.success(combined, *diags)
 
 
 def summarize_dates(annotated: pd.DataFrame) -> Result[pd.DataFrame]:

@@ -17,6 +17,8 @@ import re
 from typing import TYPE_CHECKING, Any
 import unicodedata
 
+import numpy as np
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pandas as pd
 
@@ -986,10 +988,16 @@ def track_phrase(  # noqa: PLR0913 - the evidence, the question, and the rules t
         occurrences.extend(found)
         doc_words[source_id] = total_words
         tracks.append(_document_track(doc, found, total_words, query.position_bins))
-        for word_index in range(total_words):
-            bin_index = _position_bin(word_index, total_words, query.position_bins)
-            position_exposure[bin_index] += 1
-            position_documents[bin_index].add(source_id)
+        if total_words > 0:
+            bins = query.position_bins
+            bin_indices = np.minimum(
+                ((np.arange(total_words, dtype=np.float64) / total_words) * bins).astype(np.int64), bins - 1
+            )
+            counts = np.bincount(bin_indices, minlength=bins)
+            for bin_index, bin_count in enumerate(counts.tolist()):
+                if bin_count:
+                    position_exposure[bin_index] += int(bin_count)
+                    position_documents[bin_index].add(source_id)
 
         count = len(found)
         doc_occurrences[source_id] = count

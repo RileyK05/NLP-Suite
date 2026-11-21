@@ -102,6 +102,15 @@ class TestKwic:
     def test_empty_query(self) -> None:
         assert not concordance(_frame(), "").ok
 
+    def test_a_missing_token_is_blank_not_the_word_none(self) -> None:
+        frame = _frame()
+        frame.loc[1, "Form"] = None  # "loved" in Alice's first sentence
+        result = concordance(frame, "Paris", window=2)
+        assert result.ok
+        first = result.unwrap().iloc[0]
+        assert first["Left Context"] == "Alice"
+        assert "None" not in first["Left Context"]
+
 
 class TestKeyness:
     def test_pattern_splits_groups_and_scores(self) -> None:

@@ -45,7 +45,7 @@ concept.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from itertools import pairwise
 import math
 
@@ -91,8 +91,11 @@ class _TooManyPairs(Exception):
 
 def _sentences(frame: pd.DataFrame, field_col: str) -> Iterator[list[str]]:
     """Token strings per sentence, in row order. Pairs never cross a sentence."""
-    for _key, group in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        yield [str(x) for x in group[field_col].tolist()]
+    from core.conll.frames import col_str_list, sentence_indices
+
+    tokens = col_str_list(frame, field_col)
+    for sent_rows in sentence_indices(frame).values():
+        yield [tokens[i] for i in sent_rows]
 
 
 def _keep(token: str, stopwords: frozenset[str], min_length: int) -> bool:
@@ -101,7 +104,7 @@ def _keep(token: str, stopwords: frozenset[str], min_length: int) -> bool:
 
 
 def _count_pairs(
-    sentences: list[list[str]],
+    sentences: Iterable[list[str]],
     *,
     span: str,
     window: int,
@@ -161,10 +164,13 @@ def _count_pairs(
                 if left in frequent and right in frequent:
                     pairs[(left, right)] += 1
             continue
+        n_kept = len(kept)
         for i, left in enumerate(kept):
             if left not in frequent:
                 continue
-            for right in kept[i + 1 : i + 1 + window]:
+            limit = min(n_kept, i + 1 + window)
+            for j in range(i + 1, limit):
+                right = kept[j]
                 if right not in frequent:
                     continue
                 pairs[(left, right) if left <= right else (right, left)] += 1
@@ -240,7 +246,7 @@ def collocations(
     normalized_stopwords = frozenset(w if case_sensitive else w.casefold() for w in stopwords)
     try:
         unigrams, pairs, total = _count_pairs(
-            list(_sentences(frame, field.value)),
+            _sentences(frame, field.value),
             span=span,
             window=window,
             stopwords=normalized_stopwords,

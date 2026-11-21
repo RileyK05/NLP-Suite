@@ -47,6 +47,34 @@ def reuse_key(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+_STAT_DIGEST_CACHE: dict[str, tuple[tuple[tuple[str, int, int], ...], str]] = {}
+_CORE_PACKAGES = ("numpy", "pandas", "scipy", "scikit-learn")
+
+
+def _package_versions() -> dict[str, str]:
+    return {package: version(package) for package in _CORE_PACKAGES}
+
+
+def _core_source_fingerprint() -> str:
+    """Digest of every core Python file, re-hashed only when file stats change."""
+    source_root = Path(__file__).resolve().parents[1]
+    stats: list[tuple[str, int, int, Path]] = []
+    for source in sorted(source_root.rglob("*.py")):
+        st = source.stat()
+        stats.append((source.relative_to(source_root).as_posix(), st.st_size, st.st_mtime_ns, source))
+    signature = tuple((rel, size, mtime) for rel, size, mtime, _ in stats)
+    cached = _STAT_DIGEST_CACHE.get("core")
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    source_hash = hashlib.sha256()
+    for rel, _, _, source in stats:
+        source_hash.update(rel.encode("utf-8"))
+        source_hash.update(hash_file(source).encode("ascii"))
+    digest = source_hash.hexdigest()
+    _STAT_DIGEST_CACHE["core"] = (signature, digest)
+    return digest
+
+
 def current_key(tool: str, params: Mapping[str, object], corpus: Corpus | None) -> str | None:
     """Reuse key for *tool* as it would run right now."""
     spec = get_tool(tool)
@@ -61,16 +89,9 @@ def current_key(tool: str, params: Mapping[str, object], corpus: Corpus | None) 
         or (tool == "search" and params.get("mode") != "text")
     ):
         return None
-    versions: dict[str, str] = {}
     try:
-        for package in ("numpy", "pandas", "scipy", "scikit-learn"):
-            versions[package] = version(package)
-        source_root = Path(__file__).resolve().parents[1]
-        source_hash = hashlib.sha256()
-        for source in sorted(source_root.rglob("*.py")):
-            source_hash.update(source.relative_to(source_root).as_posix().encode("utf-8"))
-            source_hash.update(hash_file(source).encode("ascii"))
-        versions["core-source"] = source_hash.hexdigest()
+        versions = _package_versions()
+        versions["core-source"] = _core_source_fingerprint()
         for param in spec.params:
             path = params.get(param.name)
             if param.type == "path" and path is not None:

@@ -15,6 +15,9 @@ import { PanelSection } from "./PanelSection";
 import type { Selection } from "./ChartCanvas";
 import type { Settings } from "./chartLayout";
 import { when, type Table, type TableSource } from "./api";
+import { firstWorthOpening, orderSources, sourceKey } from "./tableSources";
+
+export { firstWorthOpening, orderSources, sourceKey };
 import {
   filtersFor,
   fromViewSettings,
@@ -57,14 +60,6 @@ import {
  */
 export type Mode = "live" | "results";
 
-/** Results first: a run's input manifest is a record, not a finding. */
-export function orderSources(sources: TableSource[]): TableSource[] {
-  return [
-    ...sources.filter((source) => !source.manifest),
-    ...sources.filter((source) => source.manifest),
-  ];
-}
-
 /**
  * What to call a table in the picker.
  *
@@ -75,14 +70,6 @@ export function orderSources(sources: TableSource[]): TableSource[] {
 export function sourceLabel(source: TableSource): string {
   return `${source.label} — ${source.path} · ${when(source.created)}`;
 }
-
-/** The table to land on when the page opens with nothing chosen yet. */
-export function firstWorthOpening(sources: TableSource[]): TableSource | null {
-  return orderSources(sources)[0] ?? null;
-}
-
-export const sourceKey = (source: TableSource): string =>
-  `${source.job}:${source.index}`;
 
 /**
  * The tables worth comparing a choice against, in picking order.

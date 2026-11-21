@@ -33,7 +33,7 @@ from core.result import Diagnostic, Result
 from core.viz.kit import Canvas, canvas
 from core.viz.panelspec import Source
 
-__all__ = ["SHOWCASES", "Showcase", "render_showcase", "showcase_for", "showcases_for"]
+__all__ = ["SHOWCASES", "Showcase", "render_showcase", "render_showcase_multi", "showcase_for", "showcases_for"]
 
 #: The provenance line a showcase's footers carry.
 LIBRARY = "NLP Suite figure kit (matplotlib)"
@@ -1730,6 +1730,63 @@ def showcase_for(name: str) -> Showcase | None:
     return next((showcase for showcase in SHOWCASES if showcase.name == name), None)
 
 
+def render_showcase_multi(  # noqa: PLR0913 - provenance travels as keywords, like render_bundle
+    showcase: Showcase,
+    frames: Mapping[str, pd.DataFrame],
+    formats: tuple[str, ...] = ("png", "svg"),
+    *,
+    source: str = "",
+    settings: Mapping[str, Any] | None = None,
+    sha256: str = "",
+    dpi: int = 200,
+    events: Sequence[tuple[float, str]] = (),
+) -> Result[dict[str, bytes]]:
+    """Build and lint a showcase figure once, then export every requested format."""
+    from core.viz.static import STATIC_FORMATS
+    from core.viz.static.style import house_style
+
+    for fmt in formats:
+        if fmt not in STATIC_FORMATS:
+            return Result.failure(Diagnostic.error("STATIC_BAD_FORMAT", f"format must be one of {STATIC_FORMATS}"))
+    try:
+        finished = showcase.build(frames, events)
+    except (ValueError, KeyError) as exc:
+        return Result.failure(Diagnostic.info("SHOWCASE_NOT_DRAWN", f"{showcase.title}: {exc}", showcase=showcase.name))
+    except Exception as exc:  # a drawing bug must not take the caller down (R4)
+        return Result.failure(
+            Diagnostic.error("SHOWCASE_FAILED", f"{showcase.name}: {type(exc).__name__}: {exc}", showcase=showcase.name)
+        )
+    source_table = next((name for name in showcase.tables if name in frames), "")
+    digest = sha256 or (
+        hashlib.sha256(frames[source_table].to_csv(index=False).encode()).hexdigest() if source_table else ""
+    )
+    finished.source = Source(path=source or source_table, sha256=digest, settings=dict(settings or {}))
+    rendered: dict[str, bytes] = {}
+    try:
+        fig = finished.done()
+        from core.viz.static.lint import lint_figure
+
+        problems = lint_figure(fig)
+        with house_style():
+            for fmt in formats:
+                buffer = io.BytesIO()
+                metadata = {"svg": {"Date": None}, "pdf": {"CreationDate": None, "ModDate": None}}.get(fmt, {})
+                fig.savefig(buffer, format=fmt, dpi=dpi, bbox_inches="tight", pad_inches=0.3, metadata=metadata)
+                saved = buffer.getvalue()
+                rendered[fmt] = _stable_svg_ids(saved) if fmt == "svg" else saved
+    except Exception as exc:
+        return Result.failure(
+            Diagnostic.error("SHOWCASE_FAILED", f"{showcase.name}: save failed: {type(exc).__name__}: {exc}")
+        )
+    return Result.success(
+        rendered,
+        *(
+            Diagnostic.warning(f"STATIC_{problem.code}", f"{showcase.name}: {problem.message}", showcase=showcase.name)
+            for problem in problems
+        ),
+    )
+
+
 def render_showcase(  # noqa: PLR0913 - provenance travels as keywords, like render_bundle
     showcase: Showcase,
     frames: Mapping[str, pd.DataFrame],
@@ -1749,45 +1806,19 @@ def render_showcase(  # noqa: PLR0913 - provenance travels as keywords, like ren
     exception: the run's tables are the result and they stand without their
     picture (R4).
     """
-    from core.viz.static import STATIC_FORMATS
-    from core.viz.static.style import house_style
-
-    if fmt not in STATIC_FORMATS:
-        return Result.failure(Diagnostic.error("STATIC_BAD_FORMAT", f"format must be one of {STATIC_FORMATS}"))
-    try:
-        finished = showcase.build(frames, events)
-    except (ValueError, KeyError) as exc:
-        return Result.failure(Diagnostic.info("SHOWCASE_NOT_DRAWN", f"{showcase.title}: {exc}", showcase=showcase.name))
-    except Exception as exc:  # a drawing bug must not take the caller down (R4)
-        return Result.failure(
-            Diagnostic.error("SHOWCASE_FAILED", f"{showcase.name}: {type(exc).__name__}: {exc}", showcase=showcase.name)
-        )
-    source_table = next((name for name in showcase.tables if name in frames), "")
-    digest = sha256 or (
-        hashlib.sha256(frames[source_table].to_csv(index=False).encode()).hexdigest() if source_table else ""
+    rendered = render_showcase_multi(
+        showcase,
+        frames,
+        (fmt,),
+        source=source,
+        settings=settings,
+        sha256=sha256,
+        dpi=dpi,
+        events=events,
     )
-    finished.source = Source(path=source or source_table, sha256=digest, settings=dict(settings or {}))
-    try:
-        fig = finished.done()
-        from core.viz.static.lint import lint_figure
-
-        problems = lint_figure(fig)
-        buffer = io.BytesIO()
-        metadata = {"svg": {"Date": None}, "pdf": {"CreationDate": None, "ModDate": None}}.get(fmt, {})
-        with house_style():
-            fig.savefig(buffer, format=fmt, dpi=dpi, bbox_inches="tight", pad_inches=0.3, metadata=metadata)
-    except Exception as exc:
-        return Result.failure(
-            Diagnostic.error("SHOWCASE_FAILED", f"{showcase.name}: save failed: {type(exc).__name__}: {exc}")
-        )
-    saved = buffer.getvalue()
-    return Result.success(
-        _stable_svg_ids(saved) if fmt == "svg" else saved,
-        *(
-            Diagnostic.warning(f"STATIC_{problem.code}", f"{showcase.name}: {problem.message}", showcase=showcase.name)
-            for problem in problems
-        ),
-    )
+    if rendered.value is None:
+        return Result.failure(*rendered.diagnostics)
+    return Result.success(rendered.unwrap()[fmt], *rendered.diagnostics)
 
 
 #: matplotlib's SVG clip-path ids: "p" and ten hex digits of a hash of the clip

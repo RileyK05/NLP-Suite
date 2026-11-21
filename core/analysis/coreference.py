@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from core.analysis.postags import is_noun_tag
+from core.analysis.postags import NOUN_TAGS
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
 __all__ = ["run"]
 
-
-def _is_noun(pos: str) -> bool:
-    # Nouns plus PRON on purpose: a coreference chain runs through pronouns,
-    # which is one tag wider than the analysis noun rule (postags.py).
-    return is_noun_tag(pos) or pos in ("PRON",)
+_COLUMNS = ["Cluster ID", "Mention", "Lemma", "Sentence ID", "Document ID", "Document"]
 
 
 def run(
@@ -37,48 +33,50 @@ def run(
         if need not in frame.columns:
             return Result.failure(Diagnostic.error("COREF_MISSING_COLUMN", f"missing {need!r}"))
     if frame.empty:
-        return Result.success(
-            pd.DataFrame(columns=["Cluster ID", "Mention", "Lemma", "Sentence ID", "Document ID", "Document"])
-        )
+        return Result.success(pd.DataFrame(columns=_COLUMNS))
 
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
+    from core.conll.frames import col_str_list
 
-    # Collect noun mentions per lemma
-    mentions: dict[str, list[tuple[str, object, object, str]]] = {}
-    for _, row in frame.iterrows():
-        pos = str(row[Col.POS.value])
-        if not _is_noun(pos):
-            continue
-        lemma = str(row[field.value]).strip()
-        if not lemma or lemma.lower() in ("nan", "none", ""):
-            continue
-        key = lemma.lower()
-        form = str(row[Col.FORM.value])
-        sid = row[Col.SENTENCE_ID.value]
-        did = row[Col.DOCUMENT_ID.value]
-        doc = str(row[doc_col]) if doc_col is not None else ""
-        mentions.setdefault(key, []).append((form, sid, did, doc))
-
-    rows: list[dict[str, object]] = []
-    for cluster_id, (lemma, occs) in enumerate(sorted(mentions.items()), start=1):
-        for form, sid, did, doc in occs:
-            rows.append(
-                {
-                    "Cluster ID": cluster_id,
-                    "Mention": form,
-                    "Lemma": lemma,
-                    "Sentence ID": sid,
-                    "Document ID": str(did),
-                    "Document": doc,
-                }
-            )
-
-    if not rows:
-        df = pd.DataFrame(columns=["Cluster ID", "Mention", "Lemma", "Sentence ID", "Document ID", "Document"])
-    else:
-        df = pd.DataFrame(
-            rows,
-            columns=["Cluster ID", "Mention", "Lemma", "Sentence ID", "Document ID", "Document"],
-        )
-        df = df.sort_values(["Cluster ID", "Document ID", "Sentence ID"]).reset_index(drop=True)
-    return Result.success(df)
+    # One columnar frame instead of one dict per mention: a 600k-token table
+    # made hundreds of thousands of short-lived dicts, and the old noun test
+    # called ``str``/``strip``/``upper`` on every token from Python.
+    work = pd.DataFrame(
+        {
+            "_pos": col_str_list(frame, Col.POS),
+            "_lemma": col_str_list(frame, field),
+            "_form": col_str_list(frame, Col.FORM),
+            "_sid": frame[Col.SENTENCE_ID.value].to_numpy(),
+            "_did": frame[Col.DOCUMENT_ID.value].to_numpy(),
+            "_doc": col_str_list(frame, doc_col) if doc_col is not None else [""] * len(frame),
+        }
+    )
+    tags = work["_pos"].str.strip().str.upper()
+    # Nouns plus PRON on purpose: a coreference chain runs through pronouns,
+    # one tag wider than the analysis noun rule (postags.py).
+    is_noun = tags.str.startswith("NN") | tags.isin(NOUN_TAGS) | tags.eq("PRON")
+    nouns = work.loc[is_noun].copy()
+    if nouns.empty:
+        return Result.success(pd.DataFrame(columns=_COLUMNS))
+    lemmas = nouns["_lemma"].str.strip()
+    folded = lemmas.str.lower()
+    keep = lemmas.ne("") & ~folded.isin(("nan", "none"))
+    nouns = nouns.loc[keep].copy()
+    if nouns.empty:
+        return Result.success(pd.DataFrame(columns=_COLUMNS))
+    nouns["_lemma"] = lemmas.loc[keep].str.lower()
+    # ``sort=True`` numbers clusters in lexicographic lemma order, as the
+    # sorted dict did; ngroup keeps the original row order within a cluster.
+    cluster_ids = nouns.groupby("_lemma", sort=True).ngroup() + 1
+    out = pd.DataFrame(
+        {
+            "Cluster ID": cluster_ids.to_numpy(),
+            "Mention": nouns["_form"].to_numpy(),
+            "Lemma": nouns["_lemma"].to_numpy(),
+            "Sentence ID": nouns["_sid"].to_numpy(),
+            "Document ID": nouns["_did"].astype(str).to_numpy(),
+            "Document": nouns["_doc"].to_numpy(),
+        },
+        columns=_COLUMNS,
+    )
+    return Result.success(out.sort_values(["Cluster ID", "Document ID", "Sentence ID"]).reset_index(drop=True))

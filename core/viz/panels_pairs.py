@@ -34,10 +34,12 @@ filesystem, no corpus access.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 import math
 import re
 from typing import Any
+import weakref
 
 import numpy as np
 import pandas as pd
@@ -236,6 +238,22 @@ def _finite(value: Any) -> bool:
 # --------------------------------------------------------- ngram_cooccurrence --
 
 
+_MarginalsEntry = tuple[
+    "weakref.ref[pd.DataFrame]",
+    tuple[int, int, tuple[str, ...]],
+    pd.DataFrame,
+    int,
+    float,
+]
+_MARGINALS_CACHE: dict[int, _MarginalsEntry] = {}
+
+
+def _evict_marginal_entry(ref: weakref.ref[pd.DataFrame], frame_id: int) -> None:
+    entry = _MARGINALS_CACHE.get(frame_id)
+    if entry is not None and entry[0] is ref:
+        _MARGINALS_CACHE.pop(frame_id, None)
+
+
 def _pair_marginals(frame: pd.DataFrame) -> tuple[pd.DataFrame, int, float]:
     """Aggregate cooccurrences.csv to one row per pair, with PPMI.
 
@@ -251,7 +269,12 @@ def _pair_marginals(frame: pd.DataFrame) -> tuple[pd.DataFrame, int, float]:
     every marginal a little; callers surface that with
     ``PANEL_TRUNCATED_MARGINALS``, this function does not judge it.
     """
-    working = frame.copy()
+    sig = (frame.shape[0], frame.shape[1], tuple(str(c) for c in frame.columns))
+    frame_id = id(frame)
+    cached = _MARGINALS_CACHE.get(frame_id)
+    if cached is not None and cached[0]() is frame and cached[1] == sig:
+        return cached[2].copy(), cached[3], cached[4]
+    working = frame[[WORD_1, WORD_2, COUNT, DOC_ID]].copy()
     working[WORD_1] = working[WORD_1].astype(str)
     working[WORD_2] = working[WORD_2].astype(str)
     working[COUNT] = pd.to_numeric(working[COUNT], errors="coerce").fillna(0)
@@ -280,7 +303,20 @@ def _pair_marginals(frame: pd.DataFrame) -> tuple[pd.DataFrame, int, float]:
     # Total >= 1, and a word's marginal is at least the Total of the one
     # pair being evaluated, so log2 never sees zero or a negative ratio.
     grouped["PPMI"] = np.maximum(0.0, np.log2(p_pair / (p1 * p2)))
-    return grouped, total_docs, float(working[COUNT].min()) if len(working) else 1.0
+    smallest = float(working[COUNT].min()) if len(working) else 1.0
+    if len(_MARGINALS_CACHE) >= 8:
+        _MARGINALS_CACHE.pop(next(iter(_MARGINALS_CACHE)), None)
+
+    def _clear_cache_entry(ref: weakref.ref[pd.DataFrame]) -> None:
+        _evict_marginal_entry(ref, frame_id)
+
+    try:
+        frame_ref = weakref.ref(frame, _clear_cache_entry)
+    except TypeError:
+        frame_ref = None
+    if frame_ref is not None:
+        _MARGINALS_CACHE[frame_id] = (frame_ref, sig, grouped, total_docs, smallest)
+    return grouped.copy(), total_docs, smallest
 
 
 def ngram_cooccurrence_association(
@@ -866,31 +902,35 @@ def _heatmap_marks(  # noqa: PLR0913, PLR0917 - both pair heatmaps share this; e
     exactly it -- the mirrored-cell (j, i) reads the same underlying row as
     (i, j), which is correct: they are one measured relationship.
     """
-    lookup: dict[frozenset[str], pd.Series] = {}
-    for _, row in working.iterrows():
-        lookup[frozenset((str(row[a_col]), str(row[b_col])))] = row
-    index = {name: position for position, name in enumerate(ordered)}
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for rec in working.to_dict("records"):
+        la = str(rec[a_col])
+        lb = str(rec[b_col])
+        lookup[(la, lb) if la <= lb else (lb, la)] = rec
     marks: list[PanelMark] = []
-    for row_name in ordered:
-        for col_name in ordered:
+    for row_idx, row_name in enumerate(ordered):
+        row_label = labels[row_name]
+        for col_idx, col_name in enumerate(ordered):
             if row_name == col_name:
                 continue
-            row = lookup.get(frozenset((row_name, col_name)))
+            pair_key = (row_name, col_name) if row_name <= col_name else (col_name, row_name)
+            row = lookup.get(pair_key)
             if row is None:
                 continue
             value = float(row[value_col])
+            col_label = labels[col_name]
             marks.append(
                 PanelMark(
-                    key=f"{index[row_name]}:{index[col_name]}",
-                    label=f"{labels[row_name]} / {labels[col_name]}",
-                    x=float(index[col_name]),
-                    y=float(index[row_name]),
+                    key=f"{row_idx}:{col_idx}",
+                    label=f"{row_label} / {col_label}",
+                    x=float(col_idx),
+                    y=float(row_idx),
                     value=value,
                     evidence=Evidence(
                         scope="documents",
                         filters=((a_col, str(row[a_col])), (b_col, str(row[b_col]))),
                         count=1,
-                        describe=describe(labels[row_name], labels[col_name], row),
+                        describe=describe(row_label, col_label, row),
                     ),
                 )
             )
@@ -979,43 +1019,57 @@ def _neighbours_network(  # noqa: PLR0913 - shared by the similarity and SVO net
     """
     mirrored = _mirror(working, a_col, b_col, (value_col,))
     names = sorted({*working[a_col], *working[b_col]})
-    edges_seen: dict[frozenset[str], tuple[str, str, float]] = {}
+    edges_seen: dict[tuple[str, str], tuple[str, str, float]] = {}
+    best_partner: dict[str, tuple[str, float]] = {}
+    partner_counts: dict[str, int] = {}
     for name, group_rows in mirrored.groupby("Word", sort=False):
-        top = group_rows.sort_values([value_col, "Partner"], ascending=[False, True]).head(k)
-        for record in top.to_dict("records"):
+        name_key = str(name)
+        partner_counts[name_key] = len(group_rows)
+        ordered = group_rows.sort_values([value_col, "Partner"], ascending=[False, True])
+        if not ordered.empty:
+            first = ordered.iloc[0]
+            best_partner[name_key] = (str(first["Partner"]), float(first[value_col]))
+        for record in ordered.head(k).to_dict("records"):
             other = str(record["Partner"])
-            key = frozenset((name, other))
+            pair_key = (name_key, other) if name_key <= other else (other, name_key)
             value = float(record[value_col])
-            existing = edges_seen.get(key)
+            existing = edges_seen.get(pair_key)
             if existing is None or value > existing[2]:
-                edges_seen[key] = (str(name), other, value)
+                edges_seen[pair_key] = (name_key, other, value)
 
     if not edges_seen:
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", f"no neighbour links at k={k}"))
+
+    edge_degree: dict[str, int] = {}
+    for a, b, _ in edges_seen.values():
+        edge_degree[a] = edge_degree.get(a, 0) + 1
+        if b != a:
+            edge_degree[b] = edge_degree.get(b, 0) + 1
 
     layout = force_layout(names, list(edges_seen.values()))
     marks: list[PanelMark] = []
     for name in names:
         x, y = layout[name]
-        own = mirrored[mirrored["Word"] == name]
-        if own.empty:
+        best = best_partner.get(name)
+        if best is None:
             nearest = "n/a"
         else:
-            best = own.sort_values(value_col, ascending=False).iloc[0]
-            nearest = f"{labels.get(str(best['Partner']), best['Partner'])} ({float(best[value_col]):.1f})"
+            best_other, best_val = best
+            nearest = f"{labels.get(best_other, best_other)} ({best_val:.1f})"
+        own_count = partner_counts.get(name, 0)
         marks.append(
             PanelMark(
                 key=name,
                 label=labels.get(name, name),
                 x=x,
                 y=y,
-                size=float(1 + sum(1 for a, b, _ in edges_seen.values() if name in (a, b))),
+                size=float(1 + edge_degree.get(name, 0)),
                 group=node_group.get(name, ""),
                 evidence=Evidence(
                     scope="documents",
                     filters=(("Word", name),),
-                    count=len(own),
-                    describe=f"{labels.get(name, name)}: compared with {len(own)} other document(s); nearest is {nearest}",
+                    count=own_count,
+                    describe=f"{labels.get(name, name)}: compared with {own_count} other document(s); nearest is {nearest}",
                 ),
             )
         )

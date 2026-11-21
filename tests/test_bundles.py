@@ -9,6 +9,7 @@ lint as every panel's publication figure.
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 import pandas as pd
@@ -22,10 +23,15 @@ from core.viz.static.bundles import BUNDLES, Bundle, bundles_for, render_bundle
 FIXTURES = Path(__file__).parent / "fixtures" / "figures"
 
 
+@cache
+def _cached_tool_frames(tool: str) -> dict[str, pd.DataFrame]:
+    return {path.stem: pd.read_parquet(path) for path in sorted(FIXTURES.glob(f"{tool}__*.parquet"))}
+
+
 def fixture_for(bundle: Bundle) -> pd.DataFrame | None:
-    frames = {path.stem: pd.read_parquet(path) for path in FIXTURES.glob(f"{bundle.tool}__*.parquet")}
+    frames = _cached_tool_frames(bundle.tool)
     chosen = best_table(bundle, [(name, list(f.columns)) for name, f in frames.items() if not f.empty])
-    return frames[chosen] if chosen else None
+    return frames[chosen].copy(deep=False) if chosen else None
 
 
 DRAWABLE = [bundle for bundle in BUNDLES if fixture_for(bundle) is not None]

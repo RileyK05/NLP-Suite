@@ -33,6 +33,7 @@ from typing import Any
 
 import numpy as np
 
+from core.hardware import onnx_execution_providers, onnx_tuning
 from core.models.align import plan_requests
 from core.models.locate import model_dir, status
 from core.models.registry import ModelSpec, get_model
@@ -48,12 +49,12 @@ __all__ = [
     "runtime_missing",
 ]
 
-#: Padded tokens per batch. Token models return every hidden state, so a
-#: batch costs hidden_states x budget x dims floats (13 x 4096 x 768 = 160 MB).
+#: Default padded tokens per batch; scaled dynamically per host memory via core.hardware.
 _TOKEN_BUDGET = 4096
 _MAX_BATCH = 64
 
 _sessions: dict[str, Any] = {}
+_session_inputs: dict[str, set[str]] = {}
 _tokenizers: dict[str, Any] = {}
 _lock = threading.Lock()
 
@@ -77,12 +78,34 @@ def _session(path: Path) -> Any:
             return cached
         import onnxruntime as ort
 
+        tuning = onnx_tuning()
         options = ort.SessionOptions()
         options.log_severity_level = 3
-        # ONNX Runtime's default intra-op pool is one thread per physical core.
-        session = ort.InferenceSession(key, sess_options=options, providers=["CPUExecutionProvider"])
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        options.intra_op_num_threads = tuning.intra_op_threads
+        options.inter_op_num_threads = tuning.inter_op_threads
+        options.enable_mem_pattern = tuning.enable_mem_pattern
+        providers = list(onnx_execution_providers(ort.get_available_providers()))
+        try:
+            session = ort.InferenceSession(key, sess_options=options, providers=providers)
+        except Exception:
+            if providers != ["CPUExecutionProvider"]:
+                session = ort.InferenceSession(key, sess_options=options, providers=["CPUExecutionProvider"])
+            else:
+                raise
         _sessions[key] = session
+        _session_inputs[key] = {item.name for item in session.get_inputs()}
         return session
+
+
+def _session_input_names(path: Path, session: Any) -> set[str]:
+    key = str(path)
+    with _lock:
+        names = _session_inputs.get(key)
+        if names is None:
+            names = {item.name for item in session.get_inputs()}
+            _session_inputs[key] = names
+        return names
 
 
 def _tokenizer(path: Path, max_tokens: int) -> Any:
@@ -104,7 +127,7 @@ def forget(folder: Path) -> None:
     """Drop cached sessions and tokenizers of one model folder (before deleting it)."""
     prefix = str(folder)
     with _lock:
-        for cache in (_sessions, _tokenizers):
+        for cache in (_sessions, _session_inputs, _tokenizers):
             for key in [key for key in cache if key.startswith(prefix)]:
                 del cache[key]
 
@@ -122,9 +145,13 @@ class _Runner:
     def __init__(self, spec: ModelSpec, folder: Path) -> None:
         self.spec = spec
         self.folder = folder
+        model_path = folder / "model.onnx"
         self._tokenizer = _tokenizer(folder / "tokenizer.json", spec.max_tokens)
-        self._session = _session(folder / "model.onnx")
-        self._inputs = {item.name for item in self._session.get_inputs()}
+        self._session = _session(model_path)
+        self._inputs = _session_input_names(model_path, self._session)
+        tuning = onnx_tuning()
+        self._token_budget = tuning.token_budget
+        self._max_batch = tuning.max_batch
         #: Inputs cut at the model's window since this backend was made.
         self.truncated = 0
 
@@ -149,7 +176,7 @@ class _Runner:
         current: list[int] = []
         for index in order:
             length = max(1, len(encodings[index].ids))
-            if current and (length * (len(current) + 1) > _TOKEN_BUDGET or len(current) >= _MAX_BATCH):
+            if current and (length * (len(current) + 1) > self._token_budget or len(current) >= self._max_batch):
                 groups.append(current)
                 current = []
             current.append(index)

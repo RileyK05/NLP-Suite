@@ -41,7 +41,7 @@ import time
 import traceback
 from typing import Any, TextIO
 
-__all__ = ["CellResult", "OutputSink", "display_value", "kernel_loop", "run_cell"]
+__all__ = ["CellResult", "OutputSink", "display_value", "execution_id", "kernel_loop", "run_cell"]
 
 #: Text a single cell may print before the rest is dropped (with a note).
 MAX_CELL_TEXT = 1_000_000
@@ -61,6 +61,35 @@ class CellResult:
     ok: bool
     seconds: float
     error: dict[str, Any] | None = None
+
+
+def execution_id(message: object) -> int | None:
+    """The exec number in a protocol message, or None when it is unusable.
+
+    The protocol is line-delimited JSON, and a line this process cannot read
+    must be ignored: killing the kernel over one malformed message would lose
+    the notebook's variables and leave the page polling a dead process.
+    """
+    if not isinstance(message, dict):
+        return None
+    raw = message.get("id")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _exec_request(message: object) -> tuple[int, str, object] | None:
+    """``(exec id, code, cell)`` for an exec message, or None for anything else."""
+    if not isinstance(message, dict) or message.get("op") != "exec":
+        return None
+    exec_id = execution_id(message)
+    if exec_id is None:
+        return None
+    return exec_id, str(message.get("code", "")), message.get("cell") or exec_id
 
 
 def _cell_frames(tb: Any) -> list[str]:
@@ -117,8 +146,11 @@ def run_cell(code: str, namespace: dict[str, Any], filename: str, display: Calla
             },
         )
     except BaseException as exc:
-        if isinstance(exc, KeyboardInterrupt):
-            raise
+        # A cell may raise anything, including KeyboardInterrupt or a
+        # BaseException subclass of its own. Ending the process here would
+        # lose every variable in the notebook over one cell; the page shows
+        # it as this cell's error instead. (Stop still ends the process from
+        # the manager, which is where an interruption is a real request.)
         return CellResult(False, round(time.perf_counter() - started, 3), _describe_error(exc))
     return CellResult(True, round(time.perf_counter() - started, 3))
 
@@ -269,6 +301,36 @@ def _report_scratch(send: Callable[[dict[str, Any]], None], exec_id: int, writte
     )
 
 
+def _serve_cell(  # noqa: PLR0913, PLR0917 - the one caller passes the kernel's live state
+    send: Callable[[dict[str, Any]], None],
+    session: Any,
+    namespace: dict[str, Any],
+    sink: OutputSink,
+    scratch: Path,
+    exec_id: int,
+    code: str,
+    cell: object,
+) -> None:
+    """Run one cell, stream its output, and send its ``done`` event."""
+    sink.exec_id = exec_id
+    session.start_cell()
+    before = set(os.listdir(scratch))
+    out, err = _Stream("stdout", send, exec_id), _Stream("stderr", send, exec_id)
+    sys.stdout, sys.stderr = out, err
+    try:
+        result = run_cell(code, namespace, f"<cell {cell}>", display_value)
+        try:
+            keep_open_figures()
+        except Exception as exc:
+            err.write(f"A figure could not be kept: {exc}\n")
+    finally:
+        out.flush()
+        err.flush()
+        sys.stdout, sys.stderr = sys.__stderr__, sys.__stderr__
+    _report_scratch(send, exec_id, sorted(set(os.listdir(scratch)) - before))
+    send({"event": "done", "id": exec_id, "ok": result.ok, "seconds": result.seconds, "error": result.error})
+
+
 def kernel_loop(root: Path, project_id: str, session_dir: Path, parser: str) -> int:
     """Serve cells from stdin until told to stop or the parent goes away."""
     protocol: TextIO = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
@@ -301,29 +363,14 @@ def kernel_loop(root: Path, project_id: str, session_dir: Path, parser: str) -> 
             message = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(message, dict):
+            continue
         if message.get("op") == "shutdown":
             break
-        if message.get("op") != "exec":
+        request = _exec_request(message)
+        if request is None:
             continue
-        exec_id = int(message["id"])
-        sink.exec_id = exec_id
-        session.start_cell()
-        before = set(os.listdir(scratch))
-        out, err = _Stream("stdout", send, exec_id), _Stream("stderr", send, exec_id)
-        sys.stdout, sys.stderr = out, err
-        try:
-            result = run_cell(
-                str(message.get("code", "")), namespace, f"<cell {message.get('cell', exec_id)}>", display_value
-            )
-            try:
-                keep_open_figures()
-            except Exception as exc:
-                err.write(f"A figure could not be kept: {exc}\n")
-        finally:
-            out.flush()
-            err.flush()
-            sys.stdout, sys.stderr = sys.__stderr__, sys.__stderr__
-        _report_scratch(send, exec_id, sorted(set(os.listdir(scratch)) - before))
-        send({"event": "done", "id": exec_id, "ok": result.ok, "seconds": result.seconds, "error": result.error})
+        exec_id, code, cell = request
+        _serve_cell(send, session, namespace, sink, scratch, exec_id, code, cell)
     protocol.close()
     return 0

@@ -10,6 +10,7 @@ rule. Timings are recorded per tool for the report child.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import date
 import json
@@ -68,6 +69,7 @@ from core.analysis.word_embeddings import project_tsne, train as train_w2v
 from core.conll.schema import Col
 from core.corpus_axis import Axis, axis_of
 from core.file_ops.search import search_in_text
+from core.hardware import executor_max_workers
 from core.io.document_fields import DETAIL_PREFIX, document_order
 from core.io.reader import Corpus, display_names
 from core.narrative.arcs import emotion_arc, length_arc
@@ -191,12 +193,14 @@ def _document_details(corpus: Corpus | None) -> dict[str, dict[str, str]]:
     }
 
 
-def _detailed(
+def _detailed(  # noqa: PLR0913 -- carries optional precomputed detail_names to avoid repeating set union across batch tools
     frame: pd.DataFrame,
     orders: dict[str, float],
     axis: Axis | None,
     details: dict[str, dict[str, str]],
     renamed: set[str],
+    *,
+    detail_names: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """One per-document frame with Order, Position and the documents' details beside Date and Year.
 
@@ -220,7 +224,11 @@ def _detailed(
         if not positions.isna().all():
             added.append((POSITION, [None if pd.isna(v) else float(v) for v in positions]))
             added.append((POSITION_LABEL, list(keys.map(axis.labels).where(positions.notna(), None))))
-    names = sorted({name for mine in details.values() for name in mine}, key=str.casefold)
+    names = (
+        list(detail_names)
+        if detail_names is not None
+        else sorted({name for mine in details.values() for name in mine}, key=str.casefold)
+    )
     shown: list[str] = []
     for name in names:
         values = [details.get(key, {}).get(name) for key in keys]
@@ -249,30 +257,50 @@ def _detailed(
     return out
 
 
-def _with_details(
-    frames: dict[str, pd.DataFrame], corpus: Corpus | None, axis: Axis | None
-) -> tuple[dict[str, pd.DataFrame], tuple[Diagnostic, ...]]:
-    """Every per-document frame a tool produced, with what the corpus knows about each document.
+@dataclass(frozen=True, slots=True)
+class _CorpusMeta:
+    """Precomputed corpus document metadata shared across every tool outcome in one batch."""
 
-    ``Date`` and ``Year`` exactly as before (:func:`_dated`), then ``Order``,
-    ``Position`` and ``Position label`` (one column a figure can put on x,
-    whatever the axis), then one column per detail -- Speaker, Kind, Party --
-    so any table can be grouped by any detail without a join.
-    """
-    dates = _document_dates(corpus)
-    if dates:
-        frames = {name: _dated(frame, dates) for name, frame in frames.items()}
-    orders: dict[str, float] = {}
-    if corpus is not None:
-        for doc in corpus.docs:
-            value = document_order(doc.details)
-            if value is not None:
-                orders[str(doc.doc_id)] = value
-    details = _document_details(corpus)
-    if not orders and not details and (axis is None or not axis.placed):
+    dates: dict[str, date]
+    orders: dict[str, float]
+    details: dict[str, dict[str, str]]
+    detail_names: tuple[str, ...]
+    axis: Axis | None
+
+    @classmethod
+    def build(cls, corpus: Corpus | None, axis: Axis | None) -> _CorpusMeta:
+        dates = _document_dates(corpus)
+        orders: dict[str, float] = {}
+        if corpus is not None:
+            for doc in corpus.docs:
+                value = document_order(doc.details)
+                if value is not None:
+                    orders[str(doc.doc_id)] = value
+        details = _document_details(corpus)
+        detail_names = tuple(sorted({name for mine in details.values() for name in mine}, key=str.casefold))
+        return cls(dates=dates, orders=orders, details=details, detail_names=detail_names, axis=axis)
+
+
+def _with_details_meta(
+    frames: dict[str, pd.DataFrame],
+    meta: _CorpusMeta,
+) -> tuple[dict[str, pd.DataFrame], tuple[Diagnostic, ...]]:
+    if meta.dates:
+        frames = {name: _dated(frame, meta.dates) for name, frame in frames.items()}
+    if not meta.orders and not meta.details and (meta.axis is None or not meta.axis.placed):
         return frames, ()
     renamed: set[str] = set()
-    out = {name: _detailed(frame, orders, axis, details, renamed) for name, frame in frames.items()}
+    out = {
+        name: _detailed(
+            frame,
+            meta.orders,
+            meta.axis,
+            meta.details,
+            renamed,
+            detail_names=meta.detail_names,
+        )
+        for name, frame in frames.items()
+    }
     notes: tuple[Diagnostic, ...] = ()
     if renamed:
         listed = ", ".join(sorted(renamed))
@@ -284,6 +312,19 @@ def _with_details(
             ),
         )
     return out, notes
+
+
+def _with_details(
+    frames: dict[str, pd.DataFrame], corpus: Corpus | None, axis: Axis | None
+) -> tuple[dict[str, pd.DataFrame], tuple[Diagnostic, ...]]:
+    """Every per-document frame a tool produced, with what the corpus knows about each document.
+
+    ``Date`` and ``Year`` exactly as before (:func:`_dated`), then ``Order``,
+    ``Position`` and ``Position label`` (one column a figure can put on x,
+    whatever the axis), then one column per detail -- Speaker, Kind, Party --
+    so any table can be grouped by any detail without a join.
+    """
+    return _with_details_meta(frames, _CorpusMeta.build(corpus, axis))
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,11 +452,12 @@ def _adapt_doc_similarity(ctx: BatchContext, params: dict[str, object]) -> Resul
     pairs = pairwise_similarity(ctx.corpus, stopwords)
     if pairs.value is None:
         return Result.failure(*pairs.diagnostics)
-    dupes = find_duplicates(ctx.corpus, _float(params, "threshold", 80.0), stopwords)
+    pair_value = pairs.unwrap()
+    dupes = find_duplicates(ctx.corpus, _float(params, "threshold", 80.0), stopwords, pairs=pair_value)
     if dupes.value is None:
         return Result.failure(*dupes.diagnostics)
     return Result.success(
-        {"doc_pairs.csv": pairs.unwrap().to_frame(), "duplicates.csv": dupes.unwrap().to_frame()},
+        {"doc_pairs.csv": pair_value.to_frame(), "duplicates.csv": dupes.unwrap().to_frame()},
         *pairs.diagnostics,
         *dupes.diagnostics,
     )
@@ -2182,7 +2224,7 @@ def _adapt_document_embeddings(ctx: BatchContext, params: dict[str, object]) -> 
     diags = list(embedded.diagnostics)
     query = params.get("query")
     if isinstance(query, str) and query.strip():
-        found = semantic_search(ctx.table, query, model=model)
+        found = semantic_search(ctx.table, query, model=model, shas=shas, cache=ctx.vectors)
         diags.extend(found.diagnostics)
         if found.value is None:
             return Result.failure(*diags)
@@ -2313,7 +2355,106 @@ ADAPTER_NEEDS: dict[str, Needs] = {
     "geocode": frozenset({"table"}),
     "svo_map": frozenset({"table"}),
     "word_vectors_bert": frozenset({"table"}),
+    "document_embeddings": frozenset({"table"}),
 }
+
+# Pure, stateless Python/NumPy/SciPy/pandas/VADER adapters safe to run in parallel
+# across threads without mutating shared C/NLTK/Matplotlib/ONNX/SQLite globals.
+_THREAD_SAFE_TOOLS: frozenset[str] = frozenset(
+    {
+        "readability",
+        "lexical_diversity",
+        "doc_similarity",
+        "doc_duplicates",
+        "spellcheck",
+        "search",
+        "sentence_complexity",
+        "polarity_vader",
+        "valence_anew",
+        "happiness_hedonometer",
+        "emotion_nrc",
+        "style",
+        "coreference",
+        "narrative_arc",
+        "clause_svo",
+        "ner",
+        "ngrams",
+        "phrase_distribution",
+        "contrast",
+        "ngram_cooccurrence",
+        "conll_wordlist",
+        "corpus_statistics",
+        "k_sentences",
+        "svo_compare",
+        "text_statistics",
+        "table_search",
+        "shapes",
+        "kwic",
+        "dispersion",
+        "tfidf",
+        "collocations",
+        "keyness",
+        "lexicon_series",
+        "gender_annotator",
+        "date_annotator",
+        "quote_annotator",
+        "gender_guess",
+        "verb_analysis",
+        "ngram_viewer",
+        "story_shape_hc",
+        "story_shape_svd",
+        "story_shape_nmf",
+    }
+)
+
+
+def _run_tool(ctx: BatchContext, meta: _CorpusMeta, tool: object) -> ToolOutcome:
+    name = tool.name  # type: ignore[attr-defined]
+    params = tool.params  # type: ignore[attr-defined]
+    adapter = ADAPTERS.get(name)
+    if adapter is None:
+        return ToolOutcome(
+            name=name,
+            ok=False,
+            diagnostics=(Diagnostic.error("PROFILER_NO_ADAPTER", f"no batch adapter for {name!r}", tool=name),),
+        )
+    missing = [need for need in sorted(ADAPTER_NEEDS.get(name, frozenset())) if getattr(ctx, need) is None]
+    if missing:
+        need = missing[0]
+        return ToolOutcome(
+            name=name,
+            ok=False,
+            diagnostics=(
+                Diagnostic.error(
+                    "PROFILER_NO_TABLE" if need == "table" else "PROFILER_NO_CORPUS",
+                    f"{name} needs {need}, which the batch did not provide",
+                    tool=name,
+                ),
+            ),
+        )
+    start = time.perf_counter()
+    try:
+        result = adapter(ctx, params)
+    except Exception as exc:
+        return ToolOutcome(
+            name=name,
+            ok=False,
+            seconds=round(time.perf_counter() - start, 3),
+            diagnostics=(
+                Diagnostic.error("PROFILER_TOOL_CRASH", f"{name} raised {type(exc).__name__}: {exc}", tool=name),
+            ),
+        )
+    seconds = round(time.perf_counter() - start, 3)
+    if result.value is None:
+        return ToolOutcome(name=name, ok=False, seconds=seconds, diagnostics=tuple(result.diagnostics))
+    frames, notes = _with_details_meta(dict(result.value), meta)
+    return ToolOutcome(
+        name=name,
+        ok=result.ok,
+        frames=frames,
+        seconds=seconds,
+        diagnostics=(*result.diagnostics, *notes),
+    )
 
 
 def execute(  # noqa: PLR0913 -- keyword-only inputs of one batch, each optional
@@ -2338,77 +2479,39 @@ def execute(  # noqa: PLR0913 -- keyword-only inputs of one batch, each optional
     if axis is None:
         axis = axis_of(corpus)
     ctx = BatchContext(corpus=corpus, table=table, tokenizer=tokenizer, axis=axis, vectors=vectors)
-    outcomes: list[ToolOutcome] = []
-    for tool in plan.tools:
-        adapter = ADAPTERS.get(tool.name)
-        if adapter is None:
-            outcomes.append(
-                ToolOutcome(
-                    name=tool.name,
-                    ok=False,
-                    diagnostics=(
-                        Diagnostic.error("PROFILER_NO_ADAPTER", f"no batch adapter for {tool.name!r}", tool=tool.name),
-                    ),
-                )
-            )
-            continue
-        missing = [need for need in sorted(ADAPTER_NEEDS.get(tool.name, frozenset())) if getattr(ctx, need) is None]
-        if missing:
-            need = missing[0]
-            outcomes.append(
-                ToolOutcome(
-                    name=tool.name,
-                    ok=False,
-                    diagnostics=(
-                        Diagnostic.error(
-                            "PROFILER_NO_TABLE" if need == "table" else "PROFILER_NO_CORPUS",
-                            f"{tool.name} needs {need}, which the batch did not provide",
-                            tool=tool.name,
-                        ),
-                    ),
-                )
-            )
-            continue
-        start = time.perf_counter()
-        try:
-            result = adapter(ctx, tool.params)
-        except Exception as exc:
-            outcomes.append(
-                ToolOutcome(
-                    name=tool.name,
-                    ok=False,
-                    seconds=round(time.perf_counter() - start, 3),
-                    diagnostics=(
-                        Diagnostic.error(
-                            "PROFILER_TOOL_CRASH", f"{tool.name} raised {type(exc).__name__}: {exc}", tool=tool.name
-                        ),
-                    ),
-                )
-            )
-            continue
-        seconds = round(time.perf_counter() - start, 3)
-        if result.value is None:
-            outcomes.append(
-                ToolOutcome(name=tool.name, ok=False, seconds=seconds, diagnostics=tuple(result.diagnostics))
-            )
-        else:
-            frames, notes = _with_details(dict(result.value), corpus, axis)
-            outcomes.append(
-                ToolOutcome(
-                    name=tool.name,
-                    ok=result.ok,
-                    frames=frames,
-                    seconds=seconds,
-                    diagnostics=(*result.diagnostics, *notes),
-                )
-            )
+    meta = _CorpusMeta.build(corpus, axis)
+    total = len(plan.tools)
+    outcomes: list[ToolOutcome | None] = [None] * total
+    concurrent_indices = [idx for idx, tool in enumerate(plan.tools) if tool.name in _THREAD_SAFE_TOOLS]
+    sequential_indices = [idx for idx, tool in enumerate(plan.tools) if tool.name not in _THREAD_SAFE_TOOLS]
+
+    workers = executor_max_workers(len(concurrent_indices)) if len(concurrent_indices) > 1 else 1
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_run_tool, ctx, meta, plan.tools[idx]): idx for idx in concurrent_indices}
+            for future, idx in futures.items():
+                outcomes[idx] = future.result()
+    else:
+        for idx in concurrent_indices:
+            outcomes[idx] = _run_tool(ctx, meta, plan.tools[idx])
+
+    for idx in sequential_indices:
+        outcomes[idx] = _run_tool(ctx, meta, plan.tools[idx])
+
     parsed_names = {tool.name for tool in plan.tools if tool.requires_parse}
     parse_failed = any(diag.severity.value == "ERROR" for diag in parse_diagnostics)
-    return BatchResult(
-        outcomes=tuple(
-            replace(outcome, ok=outcome.ok and not parse_failed, diagnostics=(*outcome.diagnostics, *parse_diagnostics))
-            if outcome.name in parsed_names
-            else outcome
-            for outcome in outcomes
-        )
-    )
+    final_outcomes = []
+    for outcome in outcomes:
+        if outcome is None:
+            continue
+        if outcome.name in parsed_names:
+            final_outcomes.append(
+                replace(
+                    outcome,
+                    ok=outcome.ok and not parse_failed,
+                    diagnostics=(*outcome.diagnostics, *parse_diagnostics),
+                )
+            )
+        else:
+            final_outcomes.append(outcome)
+    return BatchResult(outcomes=tuple(final_outcomes))

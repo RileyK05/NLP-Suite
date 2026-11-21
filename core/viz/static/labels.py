@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -40,7 +40,10 @@ class LabelRequest:
 
 # Offsets as multiples of (radius + gap), with alignment: above, below,
 # right, left, then the four diagonals -- the app's order.
-_CANDIDATES: tuple[tuple[float, float, str, str], ...] = (
+_HAlign = Literal["left", "center", "right"]
+_VAlign = Literal["bottom", "baseline", "center", "center_baseline", "top"]
+
+_CANDIDATES: tuple[tuple[float, float, _HAlign, _VAlign], ...] = (
     (0.0, 1.0, "center", "bottom"),
     (0.0, -1.0, "center", "top"),
     (1.0, 0.0, "left", "center"),
@@ -82,44 +85,50 @@ def place_labels(  # noqa: PLR0913 - keyword-only drawing options
     dropped = 0
     for index, request in enumerate(requests):
         gap = request.radius + 2.5
-        chosen = None
-        fallback = None
-        for dx, dy, ha, va in _CANDIDATES:
-            text = ax.annotate(
-                request.text,
-                (request.x, request.y),
-                xytext=(dx * gap, dy * gap),
-                textcoords="offset points",
-                ha=ha,
-                va=va,
-                fontsize=fontsize,
-                color=color,
-                annotation_clip=False,
-                zorder=6,
-            )
+        dx0, dy0, ha0, va0 = _CANDIDATES[0]
+        # Reuse a single Annotation artist across candidate offsets rather than
+        # constructing and removing up to 8 matplotlib artists per label.
+        text = ax.annotate(
+            request.text,
+            (request.x, request.y),
+            xytext=(dx0 * gap, dy0 * gap),
+            textcoords="offset points",
+            ha=ha0,
+            va=va0,
+            fontsize=fontsize,
+            color=color,
+            annotation_clip=False,
+            zorder=6,
+        )
+        chosen_box: Bbox | None = None
+        fallback: tuple[float, float, _HAlign, _VAlign, Bbox] | None = None
+        for cand_idx, (dx, dy, ha, va) in enumerate(_CANDIDATES):
+            if cand_idx > 0:
+                text.xyann = (dx * gap, dy * gap)
+                text.set_horizontalalignment(ha)
+                text.set_verticalalignment(va)
             box = text.get_window_extent(renderer).expanded(1.04, 1.1)
             inside = box.x0 >= area.x0 and box.x1 <= area.x1 and box.y0 >= area.y0 and box.y1 <= area.y1
             clear = inside and not any(box.overlaps(other) for other in placed)
             if not clear:
-                text.remove()
                 continue
             covers_point = any(box.overlaps(point) for other, point in enumerate(point_boxes) if other != index)
             if not covers_point:
-                if fallback is not None:
-                    fallback[0].remove()
-                chosen = (text, box)
+                chosen_box = box
                 break
             if fallback is None:
-                fallback = (text, box)
-            else:
+                fallback = (dx * gap, dy * gap, ha, va, box)
+        if chosen_box is None:
+            if fallback is None:
                 text.remove()
-        if chosen is None:
-            chosen = fallback
-        if chosen is None:
-            dropped += 1
-            continue
-        placed.append(chosen[1])
-        kept.append(chosen[1])
+                dropped += 1
+                continue
+            fx, fy, fha, fva, chosen_box = fallback
+            text.xyann = (fx, fy)
+            text.set_horizontalalignment(fha)
+            text.set_verticalalignment(fva)
+        placed.append(chosen_box)
+        kept.append(chosen_box)
     return dropped, kept
 
 

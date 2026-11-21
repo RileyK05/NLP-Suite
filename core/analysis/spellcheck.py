@@ -69,7 +69,21 @@ def validate_threshold(threshold: float) -> Diagnostic | None:
     return None
 
 
-def check_text(text: str, vocab: frozenset[str], threshold: float) -> list[dict[str, object]]:
+def _bucket_vocab(vocab: frozenset[str]) -> dict[int, list[str]]:
+    buckets: dict[int, list[str]] = {}
+    for entry in sorted(vocab):
+        buckets.setdefault(len(entry), []).append(entry)
+    return buckets
+
+
+def check_text(
+    text: str,
+    vocab: frozenset[str],
+    threshold: float,
+    *,
+    buckets: dict[int, list[str]] | None = None,
+    memo: dict[str, tuple[str, float] | None] | None = None,
+) -> list[dict[str, object]]:
     """One row per distinct unknown word: Word, Count, Suggestion, Score.
 
     Performance invariant (review finding S2): the vocabulary is bucketed by
@@ -81,15 +95,19 @@ def check_text(text: str, vocab: frozenset[str], threshold: float) -> list[dict[
     identical to an unfiltered scan.
     """
     counts = Counter(w.casefold() for w in tokenize_words(text))
-    buckets: dict[int, list[str]] = {}
-    for entry in sorted(vocab):
-        buckets.setdefault(len(entry), []).append(entry)
+    if buckets is None:
+        buckets = _bucket_vocab(vocab)
     rows: list[dict[str, object]] = []
     for word in sorted(counts):
         if word in vocab:
             continue
-        candidates = _plausible_candidates(word, buckets, threshold)
-        match = _best_match_budget(word, candidates, threshold)
+        if memo is not None and word in memo:
+            match = memo[word]
+        else:
+            candidates = _plausible_candidates(word, buckets, threshold)
+            match = _best_match_budget(word, candidates, threshold)
+            if memo is not None:
+                memo[word] = match
         rows.append(
             {
                 "Word": word,
@@ -285,11 +303,13 @@ def run(corpus: Corpus, vocab: frozenset[str], threshold: float = 80.0) -> Resul
     import unicodedata
 
     normalized_vocab = frozenset(unicodedata.normalize("NFKC", w.casefold()) for w in vocab)
+    buckets = _bucket_vocab(normalized_vocab)
+    memo: dict[str, tuple[str, float] | None] = {}
     rows: list[dict[str, object]] = []
     names = display_names(corpus.docs)
     for doc in corpus.docs:
         text = unicodedata.normalize("NFKC", doc.text)
-        for finding in check_text(text, normalized_vocab, threshold):
+        for finding in check_text(text, normalized_vocab, threshold, buckets=buckets, memo=memo):
             rows.append({"Document": names[doc.doc_id], **finding})
     out = pd.DataFrame(rows, columns=["Document", "Word", "Count", "Suggestion", "Score"])
     return Result.success(FindingsResult(frame=out))

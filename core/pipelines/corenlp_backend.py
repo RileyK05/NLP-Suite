@@ -17,7 +17,7 @@ import urllib.request
 
 import pandas as pd
 
-from core.conll.schema import Col
+from core.conll.builder import ConllTableBuilder
 from core.io.reader import Corpus, display_names
 from core.result import Diagnostic, Result
 
@@ -75,11 +75,12 @@ class CoreNLPPipeline:
         probed = probe_server(self.server_url)
         if probed.value is None:
             return Result.failure(*probed.diagnostics)
-        rows: list[dict[str, object]] = []
-        record_id = 1
+        builder = ConllTableBuilder()
         diags: list[Diagnostic] = list(probed.diagnostics)
         names = display_names(corpus.docs)
         for doc in corpus:
+            doc_id_str = str(doc.doc_id)
+            doc_name = names[doc.doc_id]
             annotated = self._annotate(doc.text)
             if annotated.value is None:
                 return Result.failure(*diags, *annotated.diagnostics)
@@ -108,25 +109,20 @@ class CoreNLPPipeline:
                         continue
                     index = int(token.get("index", 0))
                     dep = deps.get(index, {})
-                    rows.append(
-                        {
-                            Col.ID.value: index,
-                            Col.FORM.value: str(token.get("word", "")),
-                            Col.LEMMA.value: str(token.get("lemma", "") or token.get("word", "")),
-                            Col.POS.value: str(token.get("pos", "")),
-                            Col.NER.value: str(token.get("ner", "O") or "O"),
-                            Col.HEAD.value: int(dep.get("governor", 0)),
-                            Col.DEPREL.value: str(dep.get("dep", "root" if index == 1 else "")),
-                            Col.DEPS.value: "_",
-                            Col.CLAUSE_TAG.value: "",
-                            Col.RECORD_ID.value: record_id,
-                            Col.SENTENCE_ID.value: sent_idx,
-                            Col.DOCUMENT_ID.value: str(doc.doc_id),
-                            Col.DOCUMENT.value: names[doc.doc_id],
-                        }
+                    word = str(token.get("word", ""))
+                    builder.append(
+                        token_id=index,
+                        form=word,
+                        lemma=str(token.get("lemma", "") or word),
+                        pos=str(token.get("pos", "")),
+                        ner=str(token.get("ner", "O") or "O"),
+                        head=int(dep.get("governor", 0)),
+                        deprel=str(dep.get("dep", "root" if index == 1 else "")),
+                        sentence_id=sent_idx,
+                        document_id=doc_id_str,
+                        document=doc_name,
                     )
-                    record_id += 1
-        return Result.success(pd.DataFrame(rows), *diags)
+        return Result.success(builder.to_frame(), *diags)
 
     def _annotate(self, text: str) -> Result[dict[str, object]]:
         """POST one document to the server; network failures stay loud."""

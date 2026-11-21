@@ -25,7 +25,7 @@
  *   `panelLayout.test.ts` pins this one independently.
  */
 
-import { OKABE_ITO } from "./chartLayout";
+import { OKABE_ITO, extent, maxOf, minOf } from "./chartLayout";
 import type {
   PanelAnnotation,
   PanelEvidence,
@@ -182,7 +182,7 @@ function layoutGeographic(
   const cellDegrees = prepared.mapCellDegrees ?? 0;
   const weight = (mark: PanelMark) =>
     (cellDegrees ? mark.value : mark.size) ?? 0;
-  const maximum = Math.max(0, ...prepared.marks.map(weight));
+  const maximum = Math.max(0, maxOf(prepared.marks.map(weight)));
   return {
     shape: "geographic",
     groups: [],
@@ -462,8 +462,8 @@ function layoutRankedBars(prepared: PreparedPanel): PanelLayout {
         .map((mark) => placed(mark, group, color, index));
     }),
   }));
-  const valueMin = Math.min(...prepared.marks.map((mark) => mark.x), 0);
-  const valueMax = Math.max(...prepared.marks.map((mark) => mark.x), 0);
+  const valueMin = Math.min(minOf(prepared.marks.map((mark) => mark.x)), 0);
+  const valueMax = Math.max(maxOf(prepared.marks.map((mark) => mark.x)), 0);
   return {
     shape: "ranked_bars",
     rows: laidOut,
@@ -550,7 +550,7 @@ function layoutRibbon(prepared: PreparedPanel): PanelLayout {
     }))
     .sort((a, b) => a.row - b.row);
   const positionMax = Math.max(
-    ...prepared.marks.map((mark) => mark.x + (mark.size ?? 0)),
+    maxOf(prepared.marks.map((mark) => mark.x + (mark.size ?? 0))),
     0,
   );
   // The builder stretches bands to one length in relative alignment; the
@@ -587,10 +587,10 @@ const EDGE_MAX_PX = 6;
 export function heatDomain(values: number[], scale: string): [number, number] {
   if (!values.length) return [0, 0];
   if (scale === "diverging") {
-    const largest = Math.max(...values.map((value) => Math.abs(value)));
+    const largest = maxOf(values.map((value) => Math.abs(value)));
     return [-largest, largest];
   }
-  return [Math.min(...values), Math.max(...values)];
+  return extent(values);
 }
 
 /** A value's colour: linear in RGB between evenly spaced stops, half-up
@@ -747,8 +747,8 @@ function layoutDistribution(prepared: PreparedPanel): PanelLayout {
   return {
     shape: "distribution",
     rows,
-    valueMin: Math.min(...xs),
-    valueMax: Math.max(...xs),
+    valueMin: minOf(xs),
+    valueMax: maxOf(xs),
     groups: groupOrder(prepared).ordered,
   };
 }
@@ -772,8 +772,8 @@ function layoutPositions(prepared: PreparedPanel): PanelLayout {
   return {
     shape: "positions",
     rows,
-    positionMin: Math.min(0, ...xs),
-    positionMax: Math.max(1, ...xs),
+    positionMin: Math.min(0, minOf(xs)),
+    positionMax: Math.max(1, maxOf(xs)),
     groups: groupOrder(prepared).ordered,
   };
 }
@@ -791,7 +791,7 @@ function layoutNetwork(prepared: PreparedPanel): PanelLayout {
   }
   const byKey = new Map(nodes.map((node) => [node.key, node]));
   const links = prepared.edges ?? [];
-  const heaviest = Math.max(0, ...links.map((edge) => edge.weight));
+  const heaviest = Math.max(0, maxOf(links.map((edge) => edge.weight)));
   const style = prepared.edgeStyle ?? "straight";
   const edges: PlacedEdge[] = [];
   for (const edge of links) {
@@ -844,8 +844,8 @@ function layoutSmallMultiples(prepared: PreparedPanel): PanelLayout {
       name,
       marks,
       series,
-      yMin: ys.length ? Math.min(...ys) : 0,
-      yMax: ys.length ? Math.max(...ys) : 1,
+      yMin: ys.length ? minOf(ys) : 0,
+      yMax: ys.length ? maxOf(ys) : 1,
     };
   });
   const xs = prepared.marks.map((mark) => mark.x);
@@ -855,8 +855,8 @@ function layoutSmallMultiples(prepared: PreparedPanel): PanelLayout {
     facets,
     columns,
     rows,
-    xMin: Math.min(...xs),
-    xMax: Math.max(...xs),
+    xMin: minOf(xs),
+    xMax: maxOf(xs),
     groups: ordered,
   };
 }

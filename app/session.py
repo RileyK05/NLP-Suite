@@ -9,8 +9,15 @@ from __future__ import annotations
 import streamlit as st
 
 from app.state import DEFAULT_STATE, AppState
+from core.pipelines.cache import PipelineCache
 
-__all__ = ["render_shared_sidebar"]
+__all__ = ["get_pipeline_cache", "render_shared_sidebar"]
+
+
+@st.cache_resource(show_spinner=False)
+def get_pipeline_cache() -> PipelineCache:
+    """Process-wide pipeline cache so loaded NLP models survive Streamlit reruns."""
+    return PipelineCache()
 
 
 def render_shared_sidebar() -> AppState:

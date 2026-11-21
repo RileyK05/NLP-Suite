@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 
 import pandas as pd
 
-from core.conll.schema import Col, canonical_columns
+from core.conll.builder import ConllTableBuilder
 from core.deps import OptionalDependencyError, import_optional
 from core.io.reader import Corpus, display_names
 from core.pipelines.quiet import CapturedLogs, captured_logs
 from core.result import Diagnostic, Result
 
 __all__ = ["StanzaPipeline", "build_stanza_pipeline"]
-
-_CANONICAL = canonical_columns()
 
 
 def _word_id(token: object) -> int | None:
@@ -79,65 +78,103 @@ class StanzaPipeline:
         document = self._nlp(text)  # type: ignore[operator]
         return tuple(word.text for sentence in document.sentences for word in sentence.words)
 
+    def _append_doc(
+        self,
+        builder: ConllTableBuilder,
+        stanza_doc: object,
+        doc_id: str,
+        doc_name: str,
+    ) -> None:
+        record_fallback = len(builder) + 1
+        for sent_idx, sent in enumerate(stanza_doc.sentences, start=1):  # type: ignore[attr-defined]
+            # NER lives on tokens (BIOES spans), not words: map word id -> tag.
+            ner_by_word: dict[int, str] = {}
+            for parent in sent.tokens:
+                tag = _canonical_ner(str(getattr(parent, "ner", "O") or "O"))
+                for sub in parent.words:
+                    wid = _word_id(sub)
+                    if wid is not None:
+                        ner_by_word[wid] = tag
+            for token in sent.words:
+                wid = _word_id(token)
+                word_text = str(getattr(token, "text", ""))
+                lemma = str(getattr(token, "lemma", "") or word_text)
+                pos = str(getattr(token, "xpos", "") or getattr(token, "upos", "") or "")
+                head = _word_int(getattr(token, "head", 0))
+                deprel = str(getattr(token, "deprel", "") or "")
+                builder.append(
+                    token_id=wid if wid is not None else record_fallback,
+                    form=word_text,
+                    lemma=lemma,
+                    pos=pos,
+                    ner=ner_by_word.get(wid, "O") if wid is not None else "O",
+                    head=head,
+                    deprel=deprel,
+                    sentence_id=sent_idx,
+                    document_id=doc_id,
+                    document=doc_name,
+                )
+                record_fallback += 1
+
     def parse(self, corpus: Corpus) -> Result[pd.DataFrame]:
         nlp = self._nlp
-        rows: list[dict[str, object]] = []
+        builder = ConllTableBuilder()
         diagnostics: list[Diagnostic] = []
-        record_id = 1
         names = display_names(corpus.docs)
+
+        non_empty = []
         for doc in corpus.docs:
             if not doc.text.strip():
                 diagnostics.append(
                     Diagnostic.warning("EMPTY_DOC", f"{names[doc.doc_id]} has no content", doc_id=doc.doc_id)
                 )
-                continue
+            else:
+                non_empty.append(doc)
+
+        parsed_docs: dict[int, object] = {}
+        stanza_mod = sys.modules.get("stanza")
+        stanza_doc_cls = getattr(stanza_mod, "Document", None) if stanza_mod is not None else None
+        can_bulk = (
+            len(non_empty) > 1
+            and callable(stanza_doc_cls)
+            and getattr(type(nlp), "__module__", "").startswith("stanza")
+            and callable(getattr(nlp, "bulk_process", None))
+        )
+        if can_bulk and callable(stanza_doc_cls):
             try:
-                stanza_doc = nlp(doc.text)  # type: ignore[operator]
-            except Exception as exc:
-                diagnostics.append(
-                    Diagnostic.error("PARSE_FAILED", f"Stanza failed on {names[doc.doc_id]}: {exc}", doc_id=doc.doc_id)
-                )
-                continue
-            for sent_idx, sent in enumerate(stanza_doc.sentences, start=1):
-                # NER lives on tokens (BIOES spans), not words: map word id -> tag.
-                ner_by_word: dict[int, str] = {}
-                for parent in sent.tokens:
-                    tag = _canonical_ner(str(getattr(parent, "ner", "O") or "O"))
-                    for sub in parent.words:
-                        wid = _word_id(sub)
-                        if wid is not None:
-                            ner_by_word[wid] = tag
-                for token in sent.words:
-                    wid = _word_id(token)
-                    word_text = str(getattr(token, "text", ""))
-                    lemma = str(getattr(token, "lemma", "") or word_text)
-                    pos = str(getattr(token, "xpos", "") or getattr(token, "upos", "") or "")
-                    head = _word_int(getattr(token, "head", 0))
-                    deprel = str(getattr(token, "deprel", "") or "")
-                    rows.append(
-                        {
-                            Col.ID.value: wid if wid is not None else record_id,
-                            Col.FORM.value: word_text,
-                            Col.LEMMA.value: lemma,
-                            Col.POS.value: pos,
-                            Col.NER.value: ner_by_word.get(wid, "O") if wid is not None else "O",
-                            Col.HEAD.value: head,
-                            Col.DEPREL.value: deprel,
-                            Col.DEPS.value: "_",
-                            Col.CLAUSE_TAG.value: "",
-                            Col.RECORD_ID.value: record_id,
-                            Col.SENTENCE_ID.value: sent_idx,
-                            Col.DOCUMENT_ID.value: str(doc.doc_id),
-                            Col.DOCUMENT.value: names[doc.doc_id],
-                        }
+                raw_docs = [stanza_doc_cls([], text=doc.text) for doc in non_empty]
+                processed = nlp.bulk_process(raw_docs)  # type: ignore[attr-defined]
+                if len(processed) != len(non_empty):
+                    raise RuntimeError("bulk_process document count mismatch")
+                for doc, stanza_doc in zip(non_empty, processed, strict=True):
+                    parsed_docs[doc.doc_id] = stanza_doc
+            except Exception:
+                parsed_docs.clear()
+
+        if len(parsed_docs) != len(non_empty):
+            for doc in non_empty:
+                if doc.doc_id in parsed_docs:
+                    continue
+                try:
+                    parsed_docs[doc.doc_id] = nlp(doc.text)  # type: ignore[operator]
+                except Exception as exc:
+                    diagnostics.append(
+                        Diagnostic.error(
+                            "PARSE_FAILED", f"Stanza failed on {names[doc.doc_id]}: {exc}", doc_id=doc.doc_id
+                        )
                     )
-                    record_id += 1
-        if not rows:
-            frame = pd.DataFrame(columns=list(_CANONICAL))
+
+        for doc in non_empty:
+            stanza_doc = parsed_docs.get(doc.doc_id)
+            if stanza_doc is None:
+                continue
+            self._append_doc(builder, stanza_doc, str(doc.doc_id), names[doc.doc_id])
+
+        frame = builder.to_frame()
+        if not len(builder):
             if diagnostics:
                 return Result[pd.DataFrame](frame, tuple(diagnostics))
             return Result.success(frame, *diagnostics)
-        frame = pd.DataFrame(rows, columns=list(_CANONICAL))
         return Result.success(frame, *diagnostics)
 
 

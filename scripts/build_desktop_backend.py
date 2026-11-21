@@ -132,6 +132,12 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
         "nltk.test",
         "nltk.app",
         "nltk.twitter",
+        "numpy.testing",
+        "pandas.tests",
+        "scipy._lib._testutils",
+        "matplotlib.tests",
+        "PIL.Tests",
+        "pyarrow.tests",
     ]
     if not with_parser:
         excluded.extend(["spacy", "gensim", "nltk"])

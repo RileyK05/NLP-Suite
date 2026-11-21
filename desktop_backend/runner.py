@@ -529,7 +529,9 @@ class Runner:
                 (job_id, project_id, tool, now(), json.dumps(request)),
             )
         self.pool.submit(self._dispatch, job_id)
-        return next(j for j in self.workspace.jobs(project_id) if j["id"] == job_id)
+        created_job = self.workspace.job(project_id, job_id)
+        assert created_job is not None  # noqa: S101
+        return created_job
 
     def submit_contrast(
         self, project_id: str, definition: Any, parser: str, *, name: str = "", comparison_id: str = ""
@@ -576,7 +578,9 @@ class Runner:
                 (job_id, project_id, CONTRAST_SPEC.name, now(), json.dumps(request)),
             )
         self.pool.submit(self._dispatch, job_id)
-        return next(j for j in self.workspace.jobs(project_id) if j["id"] == job_id)
+        created_job = self.workspace.job(project_id, job_id)
+        assert created_job is not None  # noqa: S101
+        return created_job
 
     def submit_notebook(self, project_id: str, notebook_id: str, parser: str) -> dict[str, Any]:
         """Queue "Run and save": every cell of the notebook's saved revision, in a fresh namespace.
@@ -620,7 +624,9 @@ class Runner:
                 (job_id, project_id, NOTEBOOK_TOOL, now(), json.dumps(request)),
             )
         self.pool.submit(self._dispatch, job_id)
-        return next(j for j in self.workspace.jobs(project_id) if j["id"] == job_id)
+        created_job = self.workspace.job(project_id, job_id)
+        assert created_job is not None  # noqa: S101
+        return created_job
 
     def cancel(self, project_id: str, job_id: str) -> dict[str, Any]:
         """Cancel only a job belonging to this project; terminal results are retained.
@@ -630,7 +636,7 @@ class Runner:
         the worker's pipes interrupts that read promptly.
         """
         with self.lock:
-            job = next((j for j in self.workspace.jobs(project_id) if j["id"] == job_id), None)
+            job = self.workspace.job(project_id, job_id, include_trashed=False)
             if job is None:
                 raise KeyError("Run not found")
             with self.workspace.connect() as db:
@@ -645,7 +651,9 @@ class Runner:
                 self._stop_worker()
                 self._worker_busy = False
                 self._worker_job_id = None
-            return next(j for j in self.workspace.jobs(project_id) if j["id"] == job_id)
+            updated = self.workspace.job(project_id, job_id, include_trashed=False)
+            assert updated is not None  # noqa: S101
+            return updated
 
     def close(self) -> None:
         # Pending/running work finishes before a graceful server shutdown.

@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from conftest import has_spacy_model
+from conftest import has_spacy_model, parsed_mini_corpus
 from core.analysis import (
     csv_stats as csv_mod,
     happiness_hedonometer as hedo_mod,
@@ -19,22 +19,13 @@ from core.analysis import (
     valence_anew as anew_mod,
 )
 from core.conll.schema import Col
-from core.io.reader import read_corpus
-from core.pipelines.cache import PipelineCache
-from core.pipelines.spacy_backend import build_spacy_pipeline, spacy_model_name
-
-FIXTURE = Path(__file__).parent / "fixtures" / "mini-corpus"
+from core.pipelines.spacy_backend import spacy_model_name
 
 
 def _parsed_frame() -> pd.DataFrame:
     if not has_spacy_model():
         pytest.skip(f"spaCy model not installed — run: python -m spacy download {spacy_model_name('en')}")
-    result = read_corpus(FIXTURE)
-    assert result.ok
-    corpus = result.unwrap()
-    cache = PipelineCache()
-    cache.register("spacy", build_spacy_pipeline)  # type: ignore[arg-type]
-    return cache.get("spacy", "en").unwrap().parse(corpus).unwrap()
+    return parsed_mini_corpus()
 
 
 def test_csv_stats_describe_and_correlation() -> None:

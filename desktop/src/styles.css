@@ -5214,3 +5214,21 @@ dialog.guide-dialog {
   background: var(--paper);
   min-width: 0;
 }
+
+.analysis-grid,
+.doc-list,
+.run-list {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

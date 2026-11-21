@@ -26,7 +26,15 @@ import warnings
 from core.result import Diagnostic, Result
 from core.viz.panelspec import PreparedPanel
 
-__all__ = ["LIBRARY", "STATIC_FORMATS", "StaticFormat", "add_chrome", "draw_static", "render_static"]
+__all__ = [
+    "LIBRARY",
+    "STATIC_FORMATS",
+    "StaticFormat",
+    "add_chrome",
+    "draw_static",
+    "render_static",
+    "render_static_multi",
+]
 
 StaticFormat = Literal["png", "svg", "pdf"]
 STATIC_FORMATS: tuple[str, ...] = ("png", "svg", "pdf")
@@ -67,23 +75,19 @@ def draw_static(prepared: PreparedPanel, *, notes: bool = False, dpi: int = 100)
     return fig, lines, problems
 
 
-def render_static(
+def render_static_multi(
     prepared: PreparedPanel,
-    fmt: str = "png",
+    formats: tuple[str, ...] = ("png", "svg"),
     *,
     dpi: int = 200,
     notes: bool = False,
-) -> Result[bytes]:
-    """PNG, SVG or PDF bytes of a publication figure, or diagnostics.
-
-    ``notes`` adds the panel's "what this can and cannot show" list under the
-    caption. Overlapping text is reported as a warning, not a failure: the
-    figure is still worth having, and the audit script lists every one.
-    """
-    if fmt not in STATIC_FORMATS:
-        return Result.failure(
-            Diagnostic.error("STATIC_BAD_FORMAT", f"format must be one of {STATIC_FORMATS}, got {fmt!r}")
-        )
+) -> Result[dict[str, bytes]]:
+    """Render one prepared figure once and serialize it into every requested format."""
+    for fmt in formats:
+        if fmt not in STATIC_FORMATS:
+            return Result.failure(
+                Diagnostic.error("STATIC_BAD_FORMAT", f"format must be one of {STATIC_FORMATS}, got {fmt!r}")
+            )
     try:
         fig, _, problems = draw_static(prepared, notes=notes, dpi=dpi)
     except ImportError as exc:
@@ -104,15 +108,43 @@ def render_static(
         )
     from core.viz.static.style import house_style
 
-    buffer = io.BytesIO()
-    metadata: dict[str, Any] = {"svg": {"Date": None}, "pdf": {"CreationDate": None, "ModDate": None}}.get(fmt, {})
-    with house_style():
-        fig.savefig(buffer, format=fmt, dpi=fig.dpi, bbox_inches="tight", pad_inches=0.3, metadata=metadata)
+    rendered: dict[str, bytes] = {}
+    try:
+        with house_style():
+            for fmt in formats:
+                buffer = io.BytesIO()
+                metadata: dict[str, Any] = {
+                    "svg": {"Date": None},
+                    "pdf": {"CreationDate": None, "ModDate": None},
+                }.get(fmt, {})
+                fig.savefig(buffer, format=fmt, dpi=fig.dpi, bbox_inches="tight", pad_inches=0.3, metadata=metadata)
+                rendered[fmt] = buffer.getvalue()
+    finally:
+        fig.clear()
     notices = [
         Diagnostic.warning(f"STATIC_{problem.code}", f"{prepared.panel}: {problem.message}", panel=prepared.panel)
         for problem in problems
     ]
-    return Result.success(buffer.getvalue(), *notices)
+    return Result.success(rendered, *notices)
+
+
+def render_static(
+    prepared: PreparedPanel,
+    fmt: str = "png",
+    *,
+    dpi: int = 200,
+    notes: bool = False,
+) -> Result[bytes]:
+    """PNG, SVG or PDF bytes of a publication figure, or diagnostics.
+
+    ``notes`` adds the panel's "what this can and cannot show" list under the
+    caption. Overlapping text is reported as a warning, not a failure: the
+    figure is still worth having, and the audit script lists every one.
+    """
+    rendered = render_static_multi(prepared, (fmt,), dpi=dpi, notes=notes)
+    if rendered.value is None:
+        return Result.failure(*rendered.diagnostics)
+    return Result.success(rendered.unwrap()[fmt], *rendered.diagnostics)
 
 
 def _clean(text: str) -> str:

@@ -21,7 +21,7 @@ import type {
   ViolinGroup,
   WaffleSquare,
 } from "./chartLayout";
-import { formatNumber } from "./chartLayout";
+import { extent, formatNumber } from "./chartLayout";
 import { fitText, textWidth } from "./panelTicks";
 import {
   IDENTITY,
@@ -365,10 +365,11 @@ export function ChartCanvas({
   const clipId = useId();
   const [colorMin, colorMax] = useMemo(() => {
     const values = layout.cells.map((cell) => cell.value);
-    const min = layout.calendar?.min ?? Math.min(...values);
-    const max = layout.calendar?.max ?? Math.max(...values);
-    const extent = Math.max(-min, max);
-    return min < 0 && max > 0 ? [-extent, extent] : [min, max];
+    const [low, high] = extent(values);
+    const min = layout.calendar?.min ?? low;
+    const max = layout.calendar?.max ?? high;
+    const reach = Math.max(-min, max);
+    return min < 0 && max > 0 ? [-reach, reach] : [min, max];
   }, [layout]);
 
   // A new arrangement is a new picture: keeping an old window onto different

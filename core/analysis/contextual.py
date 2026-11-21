@@ -283,20 +283,26 @@ def contextual_vectors(
     if resolved is None:
         return Result.failure(*diags)
 
+    from core.conll.frames import col_str_list, sentence_indices
+
+    doc_raw = frame[Col.DOCUMENT_ID.value].tolist()
+    sent_raw = frame[Col.SENTENCE_ID.value].tolist()
+    form_col = col_str_list(frame, Col.FORM)
+    field_col = col_str_list(frame, field)
+    lemma_col = col_str_list(frame, Col.LEMMA) if Col.LEMMA.value in frame.columns else [""] * len(frame)
+
     sent_text: dict[tuple[object, object], str] = {}
-    for (did, sid), group in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        sent_text[(did, sid)] = " ".join(str(x) for x in group[Col.FORM.value].tolist())
+    for sent_rows in sentence_indices(frame).values():
+        first_idx = sent_rows[0]
+        sent_text[(doc_raw[first_idx], sent_raw[first_idx])] = " ".join(form_col[i] for i in sent_rows)
 
     forms: list[str] = []
     metas: list[tuple[str, str, object, object]] = []  # word, lemma, sid, did
-    for _, row in frame.iterrows():
-        word = str(row[field.value])
+    for word, form, lemma, sid, did in zip(field_col, form_col, lemma_col, sent_raw, doc_raw, strict=True):
         if not word.strip() or word.lower() in ("nan", "none"):
             continue
-        did = row[Col.DOCUMENT_ID.value]
-        sid = row[Col.SENTENCE_ID.value]
-        forms.append(str(row[Col.FORM.value]).lower())
-        metas.append((word, str(row[Col.LEMMA.value]) if Col.LEMMA.value in row else "", sid, did))
+        forms.append(form.lower())
+        metas.append((word, lemma, sid, did))
     if not forms:
         return Result.success(pd.DataFrame(columns=_VECTOR_COLUMNS), *diags)
     try:
@@ -414,26 +420,26 @@ def wsi_senses(
         if str(lemma).lower() in STOPWORDS or not str(lemma).isalpha():
             continue
         if group["Sentence ID"].nunique() < 2:
-            for _, row in group.iterrows():
+            for sid, did in zip(group["Sentence ID"].tolist(), group["Document ID"].tolist(), strict=True):
                 rows.append(
                     {
                         "Lemma": lemma,
                         "Sense": 1,
                         "Separation": 0.0,
-                        "Sentence ID": row["Sentence ID"],
-                        "Document ID": row["Document ID"],
+                        "Sentence ID": sid,
+                        "Document ID": did,
                     }
                 )
             continue
         senses, separation = _split([[float(v) for v in str(text).split(",")] for text in group["Vector"]])
-        for (_, row), sense in zip(group.iterrows(), senses, strict=True):
+        for sid, did, sense in zip(group["Sentence ID"].tolist(), group["Document ID"].tolist(), senses, strict=True):
             rows.append(
                 {
                     "Lemma": lemma,
                     "Sense": sense,
                     "Separation": separation,
-                    "Sentence ID": row["Sentence ID"],
-                    "Document ID": row["Document ID"],
+                    "Sentence ID": sid,
+                    "Document ID": did,
                 }
             )
 

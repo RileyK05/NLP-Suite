@@ -79,7 +79,11 @@ def search_csv_frame(
     case_sensitive: bool = False,
     use_regex: bool = False,
 ) -> Result[CsvHitsResult]:
-    """Search every cell of a plain CSV frame (no CoNLL schema required)."""
+    """Search every cell of a plain CSV frame (no CoNLL schema required).
+
+    Hits are row-major (row 1's columns in table order, then row 2). A missing
+    cell is blank, not the text ``"nan"``/``"None"``.
+    """
     if not query:
         return Result.failure(Diagnostic.error("SEARCH_EMPTY_QUERY", "query must be non-empty"))
     pattern: re.Pattern[str] | None = None
@@ -89,17 +93,38 @@ def search_csv_frame(
         except re.error as exc:
             return Result.failure(Diagnostic.error("SEARCH_BAD_REGEX", f"invalid regex: {exc}"))
     needle = query if case_sensitive else query.lower()
-    rows: list[dict[str, object]] = []
-    for row_idx, (_, record) in enumerate(frame.iterrows(), start=1):
-        for column in frame.columns:
-            raw = record[column]
-            cell = "" if raw is None or bool(pd.isna(raw)) else str(raw)
-            if pattern is not None:
-                matched = pattern.search(cell) is not None
-            else:
-                haystack = cell if case_sensitive else cell.lower()
-                matched = needle in haystack
-            if matched:
-                rows.append({"Row": row_idx, "Column": str(column), "Value": cell})
-    out = pd.DataFrame(rows, columns=["Row", "Column", "Value"])
-    return Result.success(CsvHitsResult(frame=out))
+    # One string conversion and one mask per column, then gather the matching
+    # cells. The old loop materialized a pandas Series per row and lowered
+    # every cell one at a time; a 100,000-row CSV paid Python overhead for
+    # every cell even when the query matched a handful.
+    pieces: list[pd.DataFrame] = []
+    for column_index, column in enumerate(frame.columns):
+        texts = frame[column].astype("string").fillna("").astype(str)
+        if pattern is not None:
+            mask = texts.str.contains(pattern, na=False)
+        elif case_sensitive:
+            mask = texts.str.contains(needle, regex=False, na=False)
+        else:
+            mask = texts.str.lower().str.contains(needle, regex=False, na=False)
+        positions = mask.to_numpy().nonzero()[0]
+        if not positions.size:
+            continue
+        pieces.append(
+            pd.DataFrame(
+                {
+                    "Row": positions + 1,
+                    "_column": column_index,
+                    "Column": str(column),
+                    "Value": texts.to_numpy()[positions],
+                }
+            )
+        )
+    if not pieces:
+        return Result.success(CsvHitsResult(frame=pd.DataFrame(columns=["Row", "Column", "Value"])))
+    out = (
+        pd.concat(pieces, ignore_index=True)
+        .sort_values(["Row", "_column"], kind="stable")
+        .drop(columns="_column")
+        .reset_index(drop=True)
+    )
+    return Result.success(CsvHitsResult(frame=out[["Row", "Column", "Value"]]))

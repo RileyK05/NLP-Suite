@@ -43,6 +43,10 @@ def _timestamp() -> str:
     return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
+def _is_relative_to_resolved(child: Path, parent: Path) -> bool:
+    return child == parent or parent in child.parents
+
+
 def is_inside(child: Path, parent: Path) -> bool:
     """Whether *child* is inside *parent* (or equal to it)."""
     try:
@@ -217,17 +221,25 @@ class OutputWriter:
         self._published_envelope: Envelope | None = None
         corpus_paths = {Path(ref.path).resolve() for ref in _corpus_refs(corpus) if ref.path}
         input_paths = [Path(ref.path) for ref in self._inputs if ref.path]
+        resolved_output = self.output_root.resolve()
+        resolved_staging = self._staging.resolve()
+        checked_dirs: set[Path] = set()
         for input_path in input_paths:
-            if is_inside(self._staging, input_path) or is_inside(input_path, self._staging):
+            resolved_input = input_path.resolve()
+            if _is_relative_to_resolved(resolved_staging, resolved_input) or _is_relative_to_resolved(
+                resolved_input, resolved_staging
+            ):
                 raise ValueError(f"run directory {self._staging} may not be inside input {input_path}")
-            if Path(input_path).resolve() == self.output_root.resolve():
+            if resolved_input == resolved_output:
                 raise ValueError(f"output_root {self.output_root} may not be an input path {input_path}")
             # R3: never write into a directory the run reads *as a whole* --
             # a corpus directory, or a directory named as an input. Output
             # landing there would be picked up as corpus content by the next
             # run over the same folder.
-            if input_path.is_dir():
-                if is_inside(input_path, self.output_root) or is_inside(input_path, self._staging):
+            if resolved_input.is_dir():
+                if _is_relative_to_resolved(resolved_input, resolved_output) or _is_relative_to_resolved(
+                    resolved_input, resolved_staging
+                ):
                     raise ValueError(f"output_root {self.output_root} may not be inside input directory {input_path}")
                 continue  # a dir input's parent is not a file holder
             # A corpus document stands for the directory it was discovered in,
@@ -239,10 +251,15 @@ class OutputWriter:
             # narrower protections above already stop a run from landing on the
             # file itself, and a run directory is freshly named, so it cannot
             # collide with anything already there.
-            if input_path.resolve() not in corpus_paths:
+            if resolved_input not in corpus_paths:
                 continue
-            input_dir = input_path.parent.resolve()
-            if is_inside(self.output_root, input_dir) or is_inside(self._staging, input_dir):
+            input_dir = resolved_input.parent
+            if input_dir in checked_dirs:
+                continue
+            checked_dirs.add(input_dir)
+            if _is_relative_to_resolved(resolved_output, input_dir) or _is_relative_to_resolved(
+                resolved_staging, input_dir
+            ):
                 raise ValueError(f"output_root {self.output_root} may not be inside input directory {input_dir}")
         try:
             self._staging.mkdir(parents=True, exist_ok=False)
@@ -394,7 +411,7 @@ class OutputWriter:
         target = checked.unwrap()
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            rounded = _round_floats(json.loads(json.dumps(data, ensure_ascii=False)))
+            rounded = _round_floats(data)
             target.write_text(json.dumps(rounded, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         except OSError as exc:
             return Result.failure(

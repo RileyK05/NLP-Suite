@@ -108,7 +108,7 @@ def audit_triple(root: Path = ROOT) -> list[str]:
     for name in tool_names():
         if name not in guide:
             failures.append(f"registry tool missing from migration guide: {name}")
-    cli_names = {path.stem for path in (root / "tools").glob("*.py") if path.stem not in {"_cli", "__init__"}}
+    cli_names = {path.stem for path in (root / "tools").glob("*.py") if not path.stem.startswith("_")}
     covered = set(tool_names()) | {name for name, _reason in TOOL_REGISTRY_EXCLUSIONS}
     for name in sorted(cli_names - covered):
         failures.append(f"CLI neither registered nor excluded: {name}")

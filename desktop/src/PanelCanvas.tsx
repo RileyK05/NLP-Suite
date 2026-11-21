@@ -16,7 +16,7 @@ import {
   type PlacedMark,
   type PanelLayout,
 } from "./panelLayout";
-import { formatNumber } from "./chartLayout";
+import { extent, formatNumber, maxOf, minOf } from "./chartLayout";
 import {
   axisTicks,
   fitText,
@@ -689,14 +689,11 @@ export function PanelCanvas({
             onClick={() => {
               const xs = layout.marks.map((mark) => (mark.x + 180) / 360);
               const ys = layout.marks.map((mark) => (mark.y + 90) / 180);
+              const [x0, x1] = extent(xs);
+              const [y0, y1] = extent(ys);
               zoomTo(
                 mapWindow(
-                  {
-                    x0: Math.min(...xs),
-                    x1: Math.max(...xs),
-                    y0: Math.min(...ys),
-                    y1: Math.max(...ys),
-                  },
+                  { x0, x1, y0, y1 },
                   Math.max(0.04, layout.cellDegrees / 270),
                 ),
               );
@@ -1162,15 +1159,17 @@ function ScatterFigure({
     ...prepared.marks.map((m) => m.y),
     ...annotations.filter((a) => a.kind === "hline").map((a) => a.value),
   ];
-  const xOptions = xTickOptions(prepared, Math.min(...xs), Math.max(...xs));
+  const xLow = minOf(xs);
+  const xHigh = maxOf(xs);
+  const xOptions = xTickOptions(prepared, xLow, xHigh);
   const baseX = linearScale(
-    Math.min(...xs),
-    Math.max(...xs),
+    xLow,
+    xHigh,
     0.06,
     5,
     xOptions,
   );
-  const baseY = linearScale(Math.min(...ys), Math.max(...ys), 0.08);
+  const baseY = linearScale(minOf(ys), maxOf(ys), 0.08);
   const x = zoom ? zoomScale(baseX, zoom.x0, zoom.x1, xOptions) : baseX;
   const y = zoom ? zoomScale(baseY, zoom.y0, zoom.y1) : baseY;
   const inView = (mark: PlacedMark) =>
@@ -1178,7 +1177,7 @@ function ScatterFigure({
   const xAt = (value: number) => PAD.left + x.at(value) * PLOT.width;
   const yAt = (value: number) =>
     PAD.top + PLOT.height - y.at(value) * PLOT.height;
-  const largest = Math.max(...prepared.marks.map((m) => m.size ?? 0), 0);
+  const largest = Math.max(maxOf(prepared.marks.map((m) => m.size ?? 0)), 0);
   // Many points share the area: past 300, the biggest bubble shrinks with
   // the count, as the publication figure's does (`shapes.draw_scatter`),
   // so 1,500 pairs are points rather than one blue mass.
@@ -1302,8 +1301,7 @@ function LineSeriesFigure({
   const xOptions = xTickOptions(prepared, first, last);
   const baseX = linearScale(first, last, 0.015, 5, xOptions);
   const x = zoom ? zoomScale(baseX, zoom.x0, zoom.x1, xOptions) : baseX;
-  const minY = Math.min(...layout.marks.map((mark) => mark.y));
-  const maxY = Math.max(...layout.marks.map((mark) => mark.y));
+  const [minY, maxY] = extent(layout.marks.map((mark) => mark.y));
   // Zero stays on the axis only when the data comes near it (lowest value
   // within 35% of the highest): TTR between 0.12 and 0.37 keeps its zero,
   // MTLD between 55 and 120 does not spend half the plot on empty space.
@@ -1514,7 +1512,7 @@ function StreamFigure({
 }) {
   const { PLOT } = useCanvas();
   const axis = layout.axis;
-  const totalMax = Math.max(...layout.totals, 0) || 1;
+  const totalMax = Math.max(maxOf(layout.totals), 0) || 1;
   const xAt = (index: number) =>
     PAD.left +
     (axis.length === 1 ? 0.5 : index / (axis.length - 1)) * PLOT.width;
@@ -2030,7 +2028,7 @@ function NetworkFigure({
   };
   const xAt = (value: number) => area.left + value * area.width;
   const yAt = (value: number) => area.top + value * area.height;
-  const largest = Math.max(...layout.nodes.map((m) => m.size ?? 0), 0);
+  const largest = Math.max(maxOf(layout.nodes.map((m) => m.size ?? 0)), 0);
   // The same area-proportional sizing as the scatter.
   const radius = (mark: PlacedMark) =>
     mark.size === null || largest === 0

@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from desktop_backend.kernel import run_cell
+from desktop_backend.kernel import execution_id, run_cell
 from desktop_backend.kernels import KernelManager, kernel_command
 from desktop_backend.store import Workspace
 
@@ -47,11 +47,26 @@ class TestRunCell:
         result = run_cell("exit()", {}, "<cell 1>", print)
         assert result.error is not None and "ends nothing" in result.error["message"]
 
+    def test_an_interrupt_is_the_cells_error_not_the_kernels_end(self) -> None:
+        result = run_cell("raise KeyboardInterrupt", {}, "<cell 1>", print)
+        assert not result.ok and result.error is not None
+        assert result.error["type"] == "KeyboardInterrupt"
+
     def test_suite_errors_read_as_the_suites(self) -> None:
         result = run_cell("import nlpsuite as nlp\nnlp.corpus()", {}, "<cell 1>", print)
         assert result.error is not None
         assert result.error["type"] == "NLP Suite"
         assert "not connected" in result.error["message"]
+
+
+def test_execution_id_ignores_what_is_not_an_exec_message() -> None:
+    assert execution_id({"op": "exec", "id": 3}) == 3
+    assert execution_id({"id": "4"}) == 4
+    assert execution_id({"id": "four"}) is None
+    assert execution_id({"id": 0}) is None
+    assert execution_id({}) is None
+    assert execution_id({"id": None}) is None
+    assert execution_id([]) is None
 
 
 def test_the_kernel_is_never_handed_the_access_token(tmp_path: Path) -> None:
@@ -110,6 +125,19 @@ def test_cells_run_print_and_show_tables(kernel: Any) -> None:
 
     third = manager.execute(*key, "c3", "x + 1")
     events = _wait(manager, key, third["exec"], third["after"])
+    assert [e["text"] for e in events if e.get("kind") == "text"] == ["42"]
+
+
+def test_malformed_protocol_lines_do_not_end_the_kernel(kernel: Any) -> None:
+    """A bad line is a bad line, not a reason to lose the notebook's variables."""
+    manager, key = kernel
+    running = manager.kernel(*key)
+    assert running.process.stdin is not None
+    running.process.stdin.write('[]\n{"op": "exec"}\n{"op": "exec", "id": "nope"}\nnot json at all\n')
+    running.process.stdin.flush()
+    started = manager.execute(*key, "c1", "x = 20\nx + 22")
+    events = _wait(manager, key, started["exec"], started["after"])
+    assert events[-1]["ok"] is True
     assert [e["text"] for e in events if e.get("kind") == "text"] == ["42"]
 
 

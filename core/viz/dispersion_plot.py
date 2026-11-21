@@ -79,25 +79,28 @@ def occurrence_offsets(
         return Result.success(pd.DataFrame(columns=columns))
 
     has_document = Col.DOCUMENT.value in frame.columns
-    rows: list[dict[str, object]] = []
-    for offset, (_index, row) in enumerate(frame.iterrows()):
-        token = str(row[field.value]).casefold()
-        if token not in wanted:
-            continue
-        rows.append(
-            {
-                "Term": token,
-                "Offset": offset,
-                "Document": str(row[Col.DOCUMENT.value]) if has_document else "",
-                "Sentence ID": row[Col.SENTENCE_ID.value],
-            }
-        )
-    out = pd.DataFrame(rows, columns=columns)
-    if out.empty:
+    # One casefold + membership mask over the column; the old loop built a
+    # dict per token and casefolded every token in Python. Missing token text
+    # is blank, not the literal "nan".
+    tokens = frame[field.value].astype("string").fillna("").astype(str).str.casefold()
+    mask = tokens.isin(wanted)
+    offsets = mask.to_numpy().nonzero()[0]
+    if not offsets.size:
         return Result.success(
-            out,
+            pd.DataFrame(columns=columns),
             Diagnostic.warning("DISPPLOT_NO_MATCHES", "none of the requested terms occur in this corpus"),
         )
+    docs = frame[Col.DOCUMENT.value].astype(str) if has_document else pd.Series([""] * len(frame), index=frame.index)
+    sents = frame[Col.SENTENCE_ID.value].to_numpy()
+    out = pd.DataFrame(
+        {
+            "Term": tokens.to_numpy()[offsets],
+            "Offset": offsets,
+            "Document": docs.to_numpy()[offsets],
+            "Sentence ID": sents[offsets],
+        },
+        columns=columns,
+    )
     return Result.success(out)
 
 
@@ -134,15 +137,16 @@ def _thin(offsets: list[int]) -> list[int]:
 
 def _document_boundaries(frame: pd.DataFrame) -> list[tuple[int, str]]:
     """(offset, document name) for the first token of each document."""
-    if Col.DOCUMENT_ID.value not in frame.columns:
+    if Col.DOCUMENT_ID.value not in frame.columns or frame.empty:
         return []
     has_name = Col.DOCUMENT.value in frame.columns
+    doc_ids = frame[Col.DOCUMENT_ID.value].tolist()
+    doc_names = frame[Col.DOCUMENT.value].astype(str).tolist() if has_name else None
     boundaries: list[tuple[int, str]] = []
     previous: object = object()
-    for offset, (_index, row) in enumerate(frame.iterrows()):
-        current = row[Col.DOCUMENT_ID.value]
+    for offset, current in enumerate(doc_ids):
         if current != previous:
-            name = str(row[Col.DOCUMENT.value]) if has_name else str(current)
+            name = doc_names[offset] if doc_names is not None else str(current)
             boundaries.append((offset, name))
             previous = current
     return boundaries

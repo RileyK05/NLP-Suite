@@ -48,18 +48,24 @@ def bar_chart_html(
     # Fallback: simple HTML table + inline bar widths
     try:
         y_vals = pd.to_numeric(frame[y], errors="coerce").fillna(0).tolist()
-        max_v = max(y_vals) if y_vals else 1
-        rows_html = ""
-        for (_, row), y_raw in zip(frame.iterrows(), y_vals, strict=True):
+        x_vals = frame[x].tolist()
+        # Bar length shows magnitude. The old divisor was the largest signed
+        # value, so an all-negative column drew its smallest value as a full
+        # bar and a mixed column could exceed the track (a -8 against a 4 gave
+        # -200%).
+        largest = max((abs(float(value)) for value in y_vals), default=0.0)
+        row_chunks: list[str] = []
+        for x_raw, y_raw in zip(x_vals, y_vals, strict=True):
             # Reuse the coerced value: a per-row ``nan or 0`` fallback does not
             # work — NaN is truthy, so the "or" never fired.
             yv = float(y_raw) if pd.notna(y_raw) else 0.0
-            xv = html_lib.escape(str(row[x]))
-            pct = (yv / max_v * 100) if max_v else 0
-            rows_html += (
+            xv = html_lib.escape(str(x_raw))
+            pct = (abs(yv) / largest * 100) if largest else 0
+            row_chunks.append(
                 f'<tr><td>{xv}</td><td style="width:60%"><div style="background:#378ADD;height:16px;width:{pct:.1f}%"></div></td>'
                 f"<td>{yv:.2f}</td></tr>"
             )
+        rows_html = "".join(row_chunks)
         title_html = f"<h3>{html_lib.escape(title)}</h3>" if title else ""
         html_str = (
             f"{title_html}<table border='1' cellpadding='4' style='border-collapse:collapse;width:100%'>"

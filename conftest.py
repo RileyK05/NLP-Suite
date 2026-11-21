@@ -11,6 +11,7 @@ import atexit
 from collections.abc import Sequence
 from functools import cache
 import hashlib
+import importlib.util
 import math
 import os
 from pathlib import Path
@@ -73,13 +74,35 @@ def has_spacy_model() -> bool:
     so integration tests that need a real parse skip with a pointer to the
     fix instead of failing on an environment problem.
     """
+    model = spacy_model_name("en")
+    if importlib.util.find_spec("spacy") is None or importlib.util.find_spec(model) is None:
+        return False
     try:
         import spacy  # allowed late: optional dep, probe runs at test time
 
-        spacy.load(spacy_model_name("en"))
+        spacy.load(model)
         return True
     except Exception:
         return False
+
+
+@cache
+def _cached_mini_corpus_frame() -> pd.DataFrame:
+    from core.io.reader import read_corpus
+    from core.pipelines.cache import PipelineCache
+    from core.pipelines.spacy_backend import build_spacy_pipeline
+
+    result = read_corpus(ROOT / "tests" / "fixtures" / "mini-corpus")
+    if not result.ok:
+        raise AssertionError(result.diagnostics)
+    cache = PipelineCache()
+    cache.register("spacy", build_spacy_pipeline)  # type: ignore[arg-type]
+    return cache.get("spacy", "en").unwrap().parse(result.unwrap()).unwrap()
+
+
+def parsed_mini_corpus() -> pd.DataFrame:
+    """Return a cached spaCy parse of ``tests/fixtures/mini-corpus`` for unit tests."""
+    return _cached_mini_corpus_frame().copy(deep=True)
 
 
 @pytest.fixture(scope="session")

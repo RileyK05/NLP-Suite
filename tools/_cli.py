@@ -63,6 +63,13 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
             "and says so)"
         ),
     )
+    parser.add_argument(
+        "--no-parse-cache",
+        dest="parse_cache",
+        action="store_false",
+        default=True,
+        help="ignore cached parses and run the parser fresh",
+    )
 
 
 def build_common_parser(description: str) -> argparse.ArgumentParser:
@@ -181,6 +188,10 @@ def get_pipeline(cache: PipelineCache, config: NLPConfig, args: argparse.Namespa
     # attaches it to every parse it performs (core.pipelines.resolve).
     if args is not None and getattr(args, "parser", None) != pipeline.backend:
         args.parser = pipeline.backend
+    if getattr(args, "parse_cache", True):
+        from tools._parse_cache import CachedPipeline
+
+        return CachedPipeline(pipeline)
     return pipeline
 
 

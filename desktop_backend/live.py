@@ -49,6 +49,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from core.hardware import held_corpora_limit
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pandas as pd
 
@@ -317,7 +319,8 @@ class Bench:
         return next((warm for warm in self._held if warm.key == key), None)
 
     def _hold(self, warm: Warm) -> Warm:
-        self._held = [warm, *(held for held in self._held if held.key != warm.key)][:HELD_CORPORA]
+        limit = max(HELD_CORPORA, held_corpora_limit())
+        self._held = [warm, *(held for held in self._held if held.key != warm.key)][:limit]
         return warm
 
     def warm(self, corpus: Corpus, parser: str, *, stage: Stage | None = None) -> Warm:

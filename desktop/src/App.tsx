@@ -1,12 +1,6 @@
 import { Notices } from "./Notices";
 import { UpdateBanner } from "./UpdateBanner";
-import { Learn } from "./Learn";
-import { Models } from "./Models";
-import { Compare } from "./Compare";
-import { CorpusDetails } from "./CorpusDetails";
-import { Glance } from "./Glance";
 import { ProjectManager } from "./ProjectManager";
-import { useChartSettings, Workbench } from "./Workbench";
 import { CorpusScope } from "./CorpusScope";
 import {
   allDocuments,
@@ -14,10 +8,9 @@ import {
   selectedDocuments,
   selectionError,
 } from "./corpusSelection";
-import { Explore, firstWorthOpening, sourceKey } from "./Explore";
+import { firstWorthOpening, sourceKey } from "./tableSources";
 import { publishParams, type Settings as ChartSettings } from "./chartLayout";
 import {
-  publicationGaps,
   toViewSettings,
   type ChartContract,
   type RowFilter,
@@ -25,7 +18,6 @@ import {
 } from "./views";
 import { ParamFields, type Params } from "./ParamFields";
 import { ResultTable } from "./ResultTable";
-import { LiveBench } from "./LiveBench";
 import { COLD, type LiveAnswer, type LiveState } from "./live";
 import type {
   PhraseAnswer,
@@ -34,11 +26,9 @@ import type {
   SavedPhraseQuestion,
   SourcePassage,
 } from "./phrase";
-import { VisualizeDialog, type ChartSeed } from "./VisualizeDialog";
-import { Visualizations } from "./Visualizations";
-import { ArtifactViewer, viewableArtifact } from "./ArtifactViewer";
+import type { ChartSeed } from "./VisualizeDialog";
+import { viewableArtifact } from "./artifactUtils";
 import { InsightPanel } from "./InsightPanel";
-import { PanelSection } from "./PanelSection";
 import { FAMILY_ORDER, ToolCard } from "./ToolCard";
 import { Badge, Diagnostics } from "./RunStatus";
 import {
@@ -49,6 +39,7 @@ import {
   useContext,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -124,6 +115,50 @@ import {
 // in-body consts, so a top-level use of `lazy` above them is a TDZ error.
 const Scripts = lazy(() =>
   import("./Scripts").then((module) => ({ default: module.Scripts })),
+);
+const Learn = lazy(() =>
+  import("./Learn").then((module) => ({ default: module.Learn })),
+);
+const Models = lazy(() =>
+  import("./Models").then((module) => ({ default: module.Models })),
+);
+const Compare = lazy(() =>
+  import("./Compare").then((module) => ({ default: module.Compare })),
+);
+const CorpusDetails = lazy(() =>
+  import("./CorpusDetails").then((module) => ({
+    default: module.CorpusDetails,
+  })),
+);
+const Glance = lazy(() =>
+  import("./Glance").then((module) => ({ default: module.Glance })),
+);
+const Explore = lazy(() =>
+  import("./Explore").then((module) => ({ default: module.Explore })),
+);
+const LiveBench = lazy(() =>
+  import("./LiveBench").then((module) => ({ default: module.LiveBench })),
+);
+const VisualizeDialog = lazy(() =>
+  import("./VisualizeDialog").then((module) => ({
+    default: module.VisualizeDialog,
+  })),
+);
+const Visualizations = lazy(() =>
+  import("./Visualizations").then((module) => ({
+    default: module.Visualizations,
+  })),
+);
+const ArtifactViewer = lazy(() =>
+  import("./ArtifactViewer").then((module) => ({
+    default: module.ArtifactViewer,
+  })),
+);
+const PanelSection = lazy(() =>
+  import("./PanelSection").then((module) => ({ default: module.PanelSection })),
+);
+const RunWorkbench = lazy(() =>
+  import("./RunWorkbench").then((module) => ({ default: module.RunWorkbench })),
 );
 
 type Page =
@@ -332,39 +367,6 @@ function Dialog({
  * owns its settings instead, because a saved view has to be able to set them.
  * The hook is the shared half, so neither place invents its own reset rule.
  */
-function RunWorkbench({
-  table,
-  artifactPath,
-  contract,
-  canPublish,
-  onPublish,
-  onHandOff,
-}: {
-  table: Table;
-  artifactPath: string;
-  contract: ChartContract;
-  canPublish: boolean;
-  onPublish: (settings: ChartSettings) => void;
-  onHandOff?: (seed: ChartSeed) => void;
-}) {
-  const { settings, setSettings, selected, setSelected } =
-    useChartSettings(table);
-  return (
-    <Workbench
-      table={table}
-      artifactPath={artifactPath}
-      settings={settings}
-      onSettings={setSettings}
-      selected={selected}
-      onSelect={setSelected}
-      canPublish={canPublish}
-      onPublish={onPublish}
-      gaps={publicationGaps(contract, settings)}
-      onHandOff={onHandOff}
-    />
-  );
-}
-
 export default function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -378,6 +380,10 @@ export default function App() {
   const [trashedDocuments, setTrashedDocuments] = useState<Document[]>([]);
   const [showTrash, setShowTrash] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const hasActiveJobsRef = useRef(false);
+  useEffect(() => {
+    hasActiveJobsRef.current = jobs.some(active);
+  }, [jobs]);
   const [trashedJobs, setTrashedJobs] = useState<Job[]>([]);
   const [showRunTrash, setShowRunTrash] = useState(false);
   const [tools, setToolCatalog] = useState<Tool[]>([]);
@@ -528,6 +534,7 @@ export default function App() {
     if (!projectId) return;
     localStorage.setItem("nlp-project", projectId);
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () =>
       Promise.all([
         api<Document[]>(`/projects/${projectId}/documents`),
@@ -538,6 +545,7 @@ export default function App() {
       ])
         .then(([d, td, j, tj, p]) => {
           if (alive) {
+            hasActiveJobsRef.current = j.some(active);
             setDocuments(d);
             setTrashedDocuments(td);
             setJobs(j);
@@ -548,11 +556,27 @@ export default function App() {
         .catch((e) => {
           if (alive) setError(e.message);
         });
-    void refresh();
-    const timer = setInterval(refresh, 2000);
+    const schedule = () => {
+      if (!alive || document.hidden) return;
+      timer = setTimeout(
+        () => {
+          void refresh().finally(schedule);
+        },
+        hasActiveJobsRef.current ? 2000 : 10000,
+      );
+    };
+    const onVisibility = () => {
+      if (!document.hidden && alive) {
+        if (timer !== undefined) clearTimeout(timer);
+        void refresh().finally(schedule);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    void refresh().finally(schedule);
     return () => {
       alive = false;
-      clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [projectId]);
 
@@ -1357,9 +1381,26 @@ export default function App() {
       controller.abort();
     };
   }, [projectId, comparisonKey]);
-  const filtered = (showTrash ? trashedDocuments : documents).filter((d) =>
-    d.name.toLowerCase().includes(query.toLowerCase()),
-  );
+  const filtered = useMemo(() => {
+    const list = showTrash ? trashedDocuments : documents;
+    const needle = query.toLowerCase();
+    return needle
+      ? list.filter((d) => d.name.toLowerCase().includes(needle))
+      : list;
+  }, [showTrash, trashedDocuments, documents, query]);
+  const toolFamilies = useMemo(() => {
+    const words = toolQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    return FAMILY_ORDER.map((family) => {
+      const shown = tools.filter(
+        (tool) =>
+          (tool.family ?? "") === family &&
+          words.every((word) =>
+            `${tool.label} ${tool.description}`.toLowerCase().includes(word),
+          ),
+      );
+      return { family, shown };
+    }).filter((entry) => entry.shown.length > 0);
+  }, [tools, toolQuery]);
   const runList = (list: Job[], trashed = false) =>
     list.length ? (
       <div className="run-list">
@@ -1482,61 +1523,79 @@ export default function App() {
    * two copies would drift.
    */
   const exploreView = (locked: "live" | "results") => (
-    <Explore
-      projectId={projectId}
-      lockedMode={locked}
-      embedded={locked === "results"}
-      sources={sources}
-      loading={sourcesLoading}
-      selected={source}
-      onSelect={(chosen) => {
-        setSource(chosen);
-        setCompareSource(null);
-      }}
-      table={sourceTable}
-      tableLoading={sourceLoading}
-      compareSource={compareSource}
-      onCompareSource={setCompareSource}
-      compare={comparison?.key === comparisonKey ? comparison.table : null}
-      compareLoading={!!compareSource && comparison?.key !== comparisonKey}
-      canPublish={!busy && !!projectId}
-      onPublish={(chosen, settings) =>
-        publishChart(chosen.job, chosen.index, chosen.path, settings)
+    <Suspense
+      fallback={
+        <div className="working" role="status">
+          <LoaderCircle size={15} className="spin" />
+          Opening view…
+        </div>
       }
-      onBrowseAnalyses={() => setPage("studio")}
-      liveBench={
-        <LiveBench
-          projectId={projectId}
-          tools={tools}
-          state={live}
-          contract={contract}
-          onWarm={warmCorpus}
-          onAnalyse={askLive}
-          onAbort={abortLive}
-          onTrackPhrase={trackPhrase}
-          onReadSource={readSourcePassage}
-          savedQuestions={savedQuestions}
-          onSaveQuestion={savePhraseQuestion}
-          onOpenQuestion={openPhraseQuestion}
-          onDuplicateQuestion={duplicatePhraseQuestion}
-          onDeleteQuestion={deletePhraseQuestion}
-          onPublishQuestion={publishPhraseQuestion}
-          busy={!!busy}
-          canPublish={!busy && !!projectId}
-          onPublish={publishLive}
-        />
-      }
-      views={views}
-      contract={contract}
-      onSaveView={(name, chosen, settings, filters) =>
-        saveView(null, name, chosen, settings, filters)
-      }
-      onUpdateView={(view, chosen, settings, filters) =>
-        saveView(view, view.name, chosen, settings, filters)
-      }
-      onDuplicateView={duplicateView}
-      onDeleteView={deleteView}
-    />
+    >
+      <Explore
+        projectId={projectId}
+        lockedMode={locked}
+        embedded={locked === "results"}
+        sources={sources}
+        loading={sourcesLoading}
+        selected={source}
+        onSelect={(chosen) => {
+          setSource(chosen);
+          setCompareSource(null);
+        }}
+        table={sourceTable}
+        tableLoading={sourceLoading}
+        compareSource={compareSource}
+        onCompareSource={setCompareSource}
+        compare={comparison?.key === comparisonKey ? comparison.table : null}
+        compareLoading={!!compareSource && comparison?.key !== comparisonKey}
+        canPublish={!busy && !!projectId}
+        onPublish={(chosen, settings) =>
+          publishChart(chosen.job, chosen.index, chosen.path, settings)
+        }
+        onBrowseAnalyses={() => setPage("studio")}
+        liveBench={
+          <Suspense
+            fallback={
+              <div className="working" role="status">
+                <LoaderCircle size={15} className="spin" />
+                Opening Interactive bench…
+              </div>
+            }
+          >
+            <LiveBench
+              projectId={projectId}
+              tools={tools}
+              state={live}
+              contract={contract}
+              onWarm={warmCorpus}
+              onAnalyse={askLive}
+              onAbort={abortLive}
+              onTrackPhrase={trackPhrase}
+              onReadSource={readSourcePassage}
+              savedQuestions={savedQuestions}
+              onSaveQuestion={savePhraseQuestion}
+              onOpenQuestion={openPhraseQuestion}
+              onDuplicateQuestion={duplicatePhraseQuestion}
+              onDeleteQuestion={deletePhraseQuestion}
+              onPublishQuestion={publishPhraseQuestion}
+              busy={!!busy}
+              canPublish={!busy && !!projectId}
+              onPublish={publishLive}
+            />
+          </Suspense>
+        }
+        views={views}
+        contract={contract}
+        onSaveView={(name, chosen, settings, filters) =>
+          saveView(null, name, chosen, settings, filters)
+        }
+        onUpdateView={(view, chosen, settings, filters) =>
+          saveView(view, view.name, chosen, settings, filters)
+        }
+        onDuplicateView={duplicateView}
+        onDeleteView={deleteView}
+      />
+    </Suspense>
   );
 
   return (
@@ -1682,7 +1741,7 @@ export default function App() {
               <span />
               Local workspace <ShieldCheck size={14} />
             </div>
-            <small>Desktop beta · 0.5.2</small>
+            <small>Desktop beta · 0.5.3</small>
           </div>
         </aside>
         <div className="main-shell">
@@ -1987,11 +2046,13 @@ export default function App() {
                       </button>
                     </div>
                     {projectId && (
-                      <Glance
-                        projectId={projectId}
-                        parser={parser}
-                        hasDocuments={documents.length > 0}
-                      />
+                      <Suspense fallback={null}>
+                        <Glance
+                          projectId={projectId}
+                          parser={parser}
+                          hasDocuments={documents.length > 0}
+                        />
+                      </Suspense>
                     )}
                     <section className="dropzone">
                       <span className="upload-icon">
@@ -2187,11 +2248,13 @@ export default function App() {
                       )}
                     </section>
                     {projectId && !showTrash && documents.length > 0 && (
-                      <CorpusDetails
-                        projectId={projectId}
-                        documents={documents}
-                        onChanged={() => void refreshCorpus()}
-                      />
+                      <Suspense fallback={null}>
+                        <CorpusDetails
+                          projectId={projectId}
+                          documents={documents}
+                          onChanged={() => void refreshCorpus()}
+                        />
+                      </Suspense>
                     )}
                   </>
                 )}
@@ -2247,23 +2310,7 @@ export default function App() {
                         syllabus tool, never merged: the rubric compares
                         MALLET against Gensim and CBOW against skip-gram, so
                         a combined card would hide the comparison. */}
-                    {FAMILY_ORDER.map((family) => {
-                      const shown = tools.filter(
-                        (tool) =>
-                          (tool.family ?? "") === family &&
-                          // Every word, in any order: "bert sentiment" finds
-                          // "Sentiment: per sentence, BERT classifier".
-                          toolQuery
-                            .toLowerCase()
-                            .split(/\s+/)
-                            .filter(Boolean)
-                            .every((word) =>
-                              `${tool.label} ${tool.description}`
-                                .toLowerCase()
-                                .includes(word),
-                            ),
-                      );
-                      if (!shown.length) return null;
+                    {toolFamilies.map(({ family, shown }) => {
                       return (
                         <section
                           key={family}
@@ -2317,14 +2364,23 @@ export default function App() {
                 )}
                 {page === "interactive" && exploreView("live")}
                 {page === "models" && (
-                  <Models
-                    onChanged={() =>
-                      void api<Tool[]>("/tools").then((catalog) => {
-                        rememberLabels(catalog);
-                        setTools(catalog);
-                      })
+                  <Suspense
+                    fallback={
+                      <div className="working" role="status">
+                        <LoaderCircle size={15} className="spin" />
+                        Opening Models…
+                      </div>
                     }
-                  />
+                  >
+                    <Models
+                      onChanged={() =>
+                        void api<Tool[]>("/tools").then((catalog) => {
+                          rememberLabels(catalog);
+                          setTools(catalog);
+                        })
+                      }
+                    />
+                  </Suspense>
                 )}
                 {page === "scripts" &&
                   (projectId ? (
@@ -2357,13 +2413,22 @@ export default function App() {
                   ))}
                 {page === "compare" &&
                   (projectId ? (
-                    <Compare
-                      projectId={projectId}
-                      projects={projects}
-                      parser={parser}
-                      jobs={jobs}
-                      onOpenJob={inspectJob}
-                    />
+                    <Suspense
+                      fallback={
+                        <div className="working" role="status">
+                          <LoaderCircle size={15} className="spin" />
+                          Opening Compare…
+                        </div>
+                      }
+                    >
+                      <Compare
+                        projectId={projectId}
+                        projects={projects}
+                        parser={parser}
+                        jobs={jobs}
+                        onOpenJob={inspectJob}
+                      />
+                    </Suspense>
                   ) : (
                     <section className="panel">
                       <h2>Compare</h2>
@@ -2374,27 +2439,45 @@ export default function App() {
                     </section>
                   ))}
                 {page === "visualizations" && (
-                  <Visualizations
-                    onExplore={() => setPage("interactive")}
-                    onRuns={() => setPage("runs")}
-                    tools={tools}
-                    onAnalysis={openAnalysis}
-                  />
+                  <Suspense
+                    fallback={
+                      <div className="working" role="status">
+                        <LoaderCircle size={15} className="spin" />
+                        Opening Visualizations…
+                      </div>
+                    }
+                  >
+                    <Visualizations
+                      onExplore={() => setPage("interactive")}
+                      onRuns={() => setPage("runs")}
+                      tools={tools}
+                      onAnalysis={openAnalysis}
+                    />
+                  </Suspense>
                 )}
                 {page === "learn" && (
-                  <Learn
-                    tools={tools}
-                    onChoose={openAnalysis}
-                    canRun={!busy}
-                    onScriptHelp={
-                      projectId
-                        ? () => {
-                            setScriptGuide(true);
-                            setPage("scripts");
-                          }
-                        : undefined
+                  <Suspense
+                    fallback={
+                      <div className="working" role="status">
+                        <LoaderCircle size={15} className="spin" />
+                        Opening Learn…
+                      </div>
                     }
-                  />
+                  >
+                    <Learn
+                      tools={tools}
+                      onChoose={openAnalysis}
+                      canRun={!busy}
+                      onScriptHelp={
+                        projectId
+                          ? () => {
+                              setScriptGuide(true);
+                              setPage("scripts");
+                            }
+                          : undefined
+                      }
+                    />
+                  </Suspense>
                 )}
                 {page === "runs" && (
                   <>
@@ -2598,48 +2681,60 @@ export default function App() {
                               viewableArtifact(
                                 envelope.artifacts[artifactIndex].path,
                               ) && (
-                                <ArtifactViewer
-                                  path={envelope.artifacts[artifactIndex].path}
-                                  fetchUrl={`/projects/${projectId}/jobs/${selectedJob.id}/artifacts/${artifactIndex}`}
-                                />
+                                <Suspense
+                                  fallback={
+                                    <p role="status">Loading viewer…</p>
+                                  }
+                                >
+                                  <ArtifactViewer
+                                    path={
+                                      envelope.artifacts[artifactIndex].path
+                                    }
+                                    fetchUrl={`/projects/${projectId}/jobs/${selectedJob.id}/artifacts/${artifactIndex}`}
+                                  />
+                                </Suspense>
                               )}
                             {tableLoading && (
                               <p role="status">Loading result table…</p>
                             )}
                             {projectId && (
-                              <PanelSection
-                                projectId={projectId}
-                                jobId={selectedJob.id}
-                                selectedColumns={table?.columns}
-                                requested={figureRequest}
-                                fallback={
-                                  table ? (
-                                    <RunWorkbench
-                                      key={`${selectedJob.id}-${artifactIndex}`}
-                                      table={table}
-                                      contract={contract}
-                                      artifactPath={
-                                        envelope.artifacts[artifactIndex]
-                                          ?.path ?? ""
-                                      }
-                                      canPublish={!busy && !!projectId}
-                                      onPublish={(settings) =>
-                                        publishChart(
-                                          selectedJob.id,
-                                          artifactIndex,
-                                          envelope.artifacts[artifactIndex]
-                                            ?.path ?? "",
-                                          settings,
-                                        )
-                                      }
-                                      onHandOff={(seed) => {
-                                        setChartSeed(seed);
-                                        setVisualizing(true);
-                                      }}
-                                    />
-                                  ) : undefined
-                                }
-                              />
+                              <Suspense fallback={null}>
+                                <PanelSection
+                                  projectId={projectId}
+                                  jobId={selectedJob.id}
+                                  selectedColumns={table?.columns}
+                                  requested={figureRequest}
+                                  fallback={
+                                    table ? (
+                                      <Suspense fallback={null}>
+                                        <RunWorkbench
+                                          key={`${selectedJob.id}-${artifactIndex}`}
+                                          table={table}
+                                          contract={contract}
+                                          artifactPath={
+                                            envelope.artifacts[artifactIndex]
+                                              ?.path ?? ""
+                                          }
+                                          canPublish={!busy && !!projectId}
+                                          onPublish={(settings) =>
+                                            publishChart(
+                                              selectedJob.id,
+                                              artifactIndex,
+                                              envelope.artifacts[artifactIndex]
+                                                ?.path ?? "",
+                                              settings,
+                                            )
+                                          }
+                                          onHandOff={(seed) => {
+                                            setChartSeed(seed);
+                                            setVisualizing(true);
+                                          }}
+                                        />
+                                      </Suspense>
+                                    ) : undefined
+                                  }
+                                />
+                              </Suspense>
                             )}
                             {table && (
                               <>
@@ -3325,29 +3420,31 @@ export default function App() {
             label="Visualize this result"
             close={() => !busy && setVisualizing(false)}
           >
-            <VisualizeDialog
-              tools={tools}
-              table={table}
-              artifactPath={envelope.artifacts[artifactIndex]?.path ?? ""}
-              canRun={!busy && !!projectId}
-              components={setup?.components ?? []}
-              seed={chartSeed}
-              onSubmit={(tool, vizParams) => {
-                void perform("Building visualization…", async () => {
-                  const job = await post<Job>(
-                    `/projects/${projectId}/jobs/${selectedJob.id}/visualize`,
-                    { tool, index: artifactIndex, params: vizParams },
-                  );
-                  setJobs(await api<Job[]>(`/projects/${projectId}/jobs`));
-                  setVisualizing(false);
-                  setPage("runs");
-                  setSelectedJob(job);
-                  setEnvelope(null);
-                  setTable(null);
-                  setNotice("Visualization submitted. Watch Runs & results.");
-                });
-              }}
-            />
+            <Suspense fallback={<p role="status">Loading chart options…</p>}>
+              <VisualizeDialog
+                tools={tools}
+                table={table}
+                artifactPath={envelope.artifacts[artifactIndex]?.path ?? ""}
+                canRun={!busy && !!projectId}
+                components={setup?.components ?? []}
+                seed={chartSeed}
+                onSubmit={(tool, vizParams) => {
+                  void perform("Building visualization…", async () => {
+                    const job = await post<Job>(
+                      `/projects/${projectId}/jobs/${selectedJob.id}/visualize`,
+                      { tool, index: artifactIndex, params: vizParams },
+                    );
+                    setJobs(await api<Job[]>(`/projects/${projectId}/jobs`));
+                    setVisualizing(false);
+                    setPage("runs");
+                    setSelectedJob(job);
+                    setEnvelope(null);
+                    setTable(null);
+                    setNotice("Visualization submitted. Watch Runs & results.");
+                  });
+                }}
+              />
+            </Suspense>
           </Dialog>
         )}
       </div>

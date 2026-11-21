@@ -21,6 +21,7 @@ can carry meaning, and guessing is how a cleaner destroys evidence.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from functools import lru_cache
 import re
 
 __all__ = ["KNOWN_STAGE_WORDS", "count_stage_directions", "strip_stage_directions"]
@@ -91,6 +92,13 @@ def _is_stage_direction(inner: str, vocabulary: frozenset[str]) -> bool:
     return known
 
 
+@lru_cache(maxsize=64)
+def _vocabulary(extra: tuple[str, ...]) -> frozenset[str]:
+    if not extra:
+        return KNOWN_STAGE_WORDS
+    return KNOWN_STAGE_WORDS | frozenset(word for term in extra for word in _WORD.findall(term.casefold()))
+
+
 def strip_stage_directions(text: str, extra: Sequence[str] = ()) -> tuple[str, int]:
     """``(text with stage directions removed, how many were removed)``.
 
@@ -99,7 +107,7 @@ def strip_stage_directions(text: str, extra: Sequence[str] = ()) -> tuple[str, i
     """
     if not text:
         return text, 0
-    vocabulary = KNOWN_STAGE_WORDS | frozenset(word for term in extra for word in _WORD.findall(term.casefold()))
+    vocabulary = _vocabulary(tuple(extra))
     removed = 0
 
     def drop(match: re.Match[str]) -> str:
@@ -120,11 +128,14 @@ def count_stage_directions(texts: Sequence[str], extra: Sequence[str] = ()) -> t
     """
     found = 0
     samples: list[str] = []
+    seen_samples: set[str] = set()
+    vocabulary = _vocabulary(tuple(extra))
     for text in texts:
-        vocabulary = KNOWN_STAGE_WORDS | frozenset(word for term in extra for word in _WORD.findall(term.casefold()))
         for match in _SPAN.finditer(text):
             if _is_stage_direction(match.group(0)[1:-1], vocabulary):
                 found += 1
-                if len(samples) < _MAX_SAMPLES and match.group(0) not in samples:
-                    samples.append(match.group(0))
+                sample = match.group(0)
+                if len(samples) < _MAX_SAMPLES and sample not in seen_samples:
+                    seen_samples.add(sample)
+                    samples.append(sample)
     return found, samples

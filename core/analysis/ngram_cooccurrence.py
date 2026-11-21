@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 from collections import Counter
 
 import pandas as pd
@@ -48,35 +47,33 @@ def run(
         return Result.success(pd.DataFrame(columns=["Word 1", "Word 2", "Count", "Document ID", "Document"]))
 
     pair_counts: Counter[tuple[tuple[str, str], str]] = Counter()
+    from core.conll.frames import col_str_list, sentence_indices
 
-    for (_did, _sid), sent in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
+    tokens_col = col_str_list(frame, field)
+    groups = sentence_indices(frame)
+    for (doc_id, _sent_id), sent_rows in groups.items():
         # Positions over the ORIGINAL token order; only alphabetic tokens can
         # be pair members, but punctuation/digits still consume positions.
         positions: list[tuple[int, str]] = [
-            (idx, str(x).lower())
-            for idx, x in enumerate(sent[field.value].tolist())
-            if str(x).strip() and str(x).isalpha()
+            (pos_idx, tok.lower())
+            for pos_idx, row_idx in enumerate(sent_rows)
+            if (tok := tokens_col[row_idx]).strip() and tok.isalpha()
         ]
-        uniq = sorted({w for _, w in positions})
-        if len(uniq) < 2:
+        n_pos = len(positions)
+        if n_pos < 2:
             continue
-        # Position map for the window check (original sentence coordinates).
-        pos: dict[str, list[int]] = {}
-        for idx, w in positions:
-            pos.setdefault(w, []).append(idx)
-        for w1, w2 in itertools.combinations(uniq, 2):
-            # Any occurrence pair within the window (gap < window)? A window
-            # of 5 admits up to 4 intervening tokens, hence strict <.
-            found = False
-            for p1 in pos[w1]:
-                for p2 in pos[w2]:
-                    if abs(p1 - p2) < window:
-                        found = True
-                        break
-                if found:
+        seen_in_sent: set[tuple[str, str]] = set()
+        for k, (pos_i, w1) in enumerate(positions):
+            m = k + 1
+            while m < n_pos:
+                pos_j, w2 = positions[m]
+                if pos_j - pos_i >= window:
                     break
-            if found:
-                pair_counts[((w1, w2), str(_did))] += 1
+                if w1 != w2:
+                    seen_in_sent.add((w1, w2) if w1 < w2 else (w2, w1))
+                m += 1
+        for pair in seen_in_sent:
+            pair_counts[(pair, doc_id)] += 1
 
     filtered = [(pair, c) for pair, c in pair_counts.items() if c >= min_count]
     if not filtered:

@@ -88,12 +88,29 @@ def lint_figure(fig: Figure, renderer: Any | None = None) -> list[DrawnProblem]:
         # A hair smaller than drawn: glyph boxes include side bearings, and
         # two labels that merely touch are readable.
         boxes.append((text, box.shrunk(0.94, 0.8)))
-    overlaps = []
+    overlaps: list[tuple[str, str]] = []
+    # Spatial grid bucketing avoids O(T^2) comparisons across densely annotated figures.
+    cell = 128.0
+    buckets: dict[tuple[int, int], list[int]] = {}
+    seen_pairs: set[tuple[int, int]] = set()
     for index, (a, box_a) in enumerate(boxes):
-        for b, box_b in boxes[index + 1 :]:
-            if box_a.overlaps(box_b) and _really_overlap(a, b, box_a, box_b, fig.dpi):
-                overlaps.append((a.get_text(), b.get_text()))
+        gx0 = math.floor(box_a.x0 / cell)
+        gx1 = math.floor(box_a.x1 / cell)
+        gy0 = math.floor(box_a.y0 / cell)
+        gy1 = math.floor(box_a.y1 / cell)
+        for gx in range(gx0, gx1 + 1):
+            for gy in range(gy0, gy1 + 1):
+                for other_idx in buckets.get((gx, gy), ()):
+                    pair = (other_idx, index)
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+                    b, box_b = boxes[other_idx]
+                    if box_b.overlaps(box_a) and _really_overlap(b, a, box_b, box_a, fig.dpi):
+                        overlaps.append((b.get_text(), a.get_text()))
+                buckets.setdefault((gx, gy), []).append(index)
     if overlaps:
+        overlaps.sort()
         sample = "; ".join(f"{a[:30]!r} over {b[:30]!r}" for a, b in overlaps[:4])
         problems.append(DrawnProblem("TEXT_OVERLAP", f"{len(overlaps)} overlapping text pair(s): {sample}"))
     negative_zero = sorted(

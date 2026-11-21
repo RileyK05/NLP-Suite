@@ -20,6 +20,7 @@ from collections.abc import Iterator
 
 import pandas as pd
 
+from core.conll.frames import col_str_list, iter_sentence_groups
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
@@ -32,8 +33,14 @@ _MAX_HITS_CAP = 100_000
 
 def _tokens(frame: pd.DataFrame, field_col: str) -> Iterator[tuple[object, object, list[str]]]:
     """Yield (document_id, sentence_id, token strings) per sentence, in row order."""
-    for (did, sid), group in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        yield did, sid, [str(x) for x in group[field_col].tolist()]
+    # Positions from the shared O(n) index, strings extracted once. The old
+    # groupby materialized a Series per sentence and called str() per token.
+    tokens = col_str_list(frame, field_col)
+    doc_ids = frame[Col.DOCUMENT_ID.value].to_numpy()
+    sent_ids = frame[Col.SENTENCE_ID.value].to_numpy()
+    for _doc_key, _sent_key, rows in iter_sentence_groups(frame):
+        first = rows[0]
+        yield doc_ids[first], sent_ids[first], [tokens[index] for index in rows if tokens[index].strip()]
 
 
 def concordance(

@@ -95,15 +95,28 @@ def _chain_names(node: ast.AST) -> list[str]:
             return names
 
 
+def _parse(code: str) -> tuple[ast.AST | None, list[dict[str, object]]]:
+    """The cell's AST, or the one warning that says why it has none."""
+    try:
+        return ast.parse(code), []
+    except SyntaxError as exc:
+        return None, [{"line": exc.lineno or 0, "message": f"This is not valid Python: {exc.msg}."}]
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        # A cell can hold text ast.parse cannot encode (a lone surrogate
+        # survives JSON) or nesting deeper than the parser allows. Reading it
+        # is a convenience; it must answer, not turn the lint request into a
+        # 500. The cell itself will still report its own failure when run.
+        return None, [{"line": 0, "message": f"This cell's text cannot be read as Python: {exc}"}]
+
+
 def lint(code: str) -> list[dict[str, object]]:
     """Warnings for *code*, one per line and kind, in line order.
 
     Each is ``{"line": n, "message": text}``; line 0 means the whole cell.
     """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return [{"line": exc.lineno or 0, "message": f"This is not valid Python: {exc.msg}."}]
+    tree, refused = _parse(code)
+    if tree is None:
+        return refused
     found: dict[tuple[int, str], str] = {}
 
     def warn(node: ast.AST, message: str) -> None:

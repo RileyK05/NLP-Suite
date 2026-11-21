@@ -72,20 +72,15 @@ def wordcloud_html(
     min_w = float(sub[weight_col].min()) or 0.0
     span = max_w - min_w or 1.0
 
-    parts: list[str] = []
-    for _, row in sub.iterrows():
-        w = html_lib.escape(str(row[word_col]))
-        weight = float(row[weight_col])
-        # Font size 12..48
-        size = 12 + (weight - min_w) / span * 36
-        # Simple color interpolation by weight
-        alpha = (weight - min_w) / span
-        # blue -> red
-        r = int(55 + alpha * 180)
-        b = int(200 - alpha * 150)
-        parts.append(
-            f'<span style="font-size:{size:.1f}px;color:rgb({r},60,{b});margin:4px;display:inline-block">{w}</span>'
-        )
+    esc = html_lib.escape
+    words_col = sub[word_col].astype(str).tolist()
+    weights_col = sub[weight_col].astype(float).tolist()
+    parts = [
+        f'<span style="font-size:{12 + (weight - min_w) / span * 36:.1f}px;'
+        f"color:rgb({int(55 + (weight - min_w) / span * 180)},60,{int(200 - (weight - min_w) / span * 150)});"
+        f'margin:4px;display:inline-block">{esc(word)}</span>'
+        for word, weight in zip(words_col, weights_col, strict=True)
+    ]
 
     title_html = f"<h3>{html_lib.escape(title)}</h3>" if title else ""
     html_str = (
@@ -358,11 +353,16 @@ def wordcloud_image(
                 )
             )
 
+        default_color_fn = get_single_color_func("grey")
+        color_by_word = {
+            member: get_single_color_func(colors.get(group, "grey"))
+            for group, members in groups.items()
+            for member in members
+        }
+
         def color_func(word: str, **kwargs: Any) -> str:  # word is the wordcloud API shape
-            for group, members in groups.items():
-                if word in members:
-                    return str(get_single_color_func(colors.get(group, "grey"))(word, **kwargs))
-            return str(get_single_color_func("grey")(word, **kwargs))
+            fn = color_by_word.get(word, default_color_fn)
+            return str(fn(word, **kwargs))
 
     try:
         cloud = resolved(
@@ -433,19 +433,25 @@ def gephi_gexf(
         return Result.failure(Diagnostic.error("GEXF_NO_NODES", "no nodes extracted"))
 
     # Build edges
+    if weight_col is not None and weight_col not in frame.columns:
+        return Result.failure(Diagnostic.error("GEXF_BAD_WEIGHT", f"weight column {weight_col!r} not in frame"))
+    src_vals = frame[source_col].astype(str).tolist()
+    tgt_vals = frame[target_col].astype(str).tolist()
+    weight_vals = frame[weight_col].tolist() if weight_col is not None else None
     edge_lines: list[str] = []
-    for eid, (_, row) in enumerate(frame.iterrows()):
-        src = str(row[source_col]).strip()
-        tgt = str(row[target_col]).strip()
-        if src not in nodes or tgt not in nodes:
+    for eid, (raw_src, raw_tgt) in enumerate(zip(src_vals, tgt_vals, strict=True)):
+        src = raw_src.strip()
+        tgt = raw_tgt.strip()
+        src_id = nodes.get(src)
+        tgt_id = nodes.get(tgt)
+        if src_id is None or tgt_id is None:
             continue
         w = 1.0
-        if weight_col is not None:
-            if weight_col not in frame.columns:
-                return Result.failure(Diagnostic.error("GEXF_BAD_WEIGHT", f"weight column {weight_col!r} not in frame"))
-            weight = _finite_weight(row[weight_col])
-            w = 1.0 if weight is None else weight
-        edge_lines.append(f'    <edge id="{eid}" source="{nodes[src]}" target="{nodes[tgt]}" weight="{w:.4f}" />')
+        if weight_vals is not None:
+            weight = _finite_weight(weight_vals[eid])
+            if weight is not None:
+                w = weight
+        edge_lines.append(f'    <edge id="{eid}" source="{src_id}" target="{tgt_id}" weight="{w:.4f}" />')
 
     node_lines = "\n".join(
         f'    <node id="{nid}" label="{html_lib.escape(label)}" />'

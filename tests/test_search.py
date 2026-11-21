@@ -32,6 +32,20 @@ class TestCsvSearch:
         hits_cs = search_csv_frame(self._frame(), "ALICE", case_sensitive=True).unwrap().to_frame()
         assert hits_cs.empty
 
+    def test_hits_come_row_by_row_across_columns(self) -> None:
+        frame = pd.DataFrame({"A": ["x", None, "y"], "B": ["x", "x", "y"]})
+        hits = search_csv_frame(frame, "x").unwrap().to_frame()
+        assert list(zip(hits["Row"].tolist(), hits["Column"].tolist(), strict=True)) == [
+            (1, "A"),
+            (1, "B"),
+            (2, "B"),
+        ]
+
+    def test_a_blank_cell_is_not_the_word_nan(self) -> None:
+        frame = pd.DataFrame({"A": ["alpha", None, float("nan")]})
+        for query in ("none", "nan", "None"):
+            assert search_csv_frame(frame, query).unwrap().to_frame().empty
+
     def test_bad_regex_and_empty_query(self) -> None:
         assert any(
             d.code == "SEARCH_BAD_REGEX" for d in search_csv_frame(self._frame(), "([", use_regex=True).diagnostics

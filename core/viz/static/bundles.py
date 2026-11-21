@@ -29,7 +29,7 @@ import pandas as pd
 from core.result import Diagnostic, Result
 from core.viz.panelspec import Provenance
 
-__all__ = ["BUNDLES", "Bundle", "bundles_for", "render_bundle"]
+__all__ = ["BUNDLES", "Bundle", "bundles_for", "render_bundle", "render_bundle_multi"]
 
 #: The Greek letter for Spearman's correlation, spelled out for the linter.
 RHO = chr(0x3C1)
@@ -697,23 +697,24 @@ def get_bundle(name: str) -> Bundle | None:
     return next((bundle for bundle in BUNDLES if bundle.name == name), None)
 
 
-def render_bundle(  # noqa: PLR0913 - provenance travels as keywords
+def render_bundle_multi(  # noqa: PLR0913 - provenance travels as keywords
     bundle: Bundle,
     frame: pd.DataFrame,
-    fmt: str = "png",
+    formats: tuple[str, ...] = ("png", "svg"),
     *,
     source: str = "",
     settings: Mapping[str, Any] | None = None,
     sha256: str = "",
     dpi: int = 200,
-) -> Result[bytes]:
-    """A bundle's figure as PNG/SVG/PDF bytes, with title and provenance."""
+) -> Result[dict[str, bytes]]:
+    """Draw a bundle figure once and export it into every requested format."""
     from core.viz.static import LIBRARY, STATIC_FORMATS, add_chrome
     from core.viz.static.lint import lint_figure
     from core.viz.static.style import house_style
 
-    if fmt not in STATIC_FORMATS:
-        return Result.failure(Diagnostic.error("STATIC_BAD_FORMAT", f"format must be one of {STATIC_FORMATS}"))
+    for fmt in formats:
+        if fmt not in STATIC_FORMATS:
+            return Result.failure(Diagnostic.error("STATIC_BAD_FORMAT", f"format must be one of {STATIC_FORMATS}"))
     missing = [c for c in bundle.requires if c not in frame.columns]
     if missing:
         return Result.failure(Diagnostic.error("BUNDLE_MISSING_COLUMN", f"{bundle.name} needs {missing}"))
@@ -725,6 +726,7 @@ def render_bundle(  # noqa: PLR0913 - provenance travels as keywords
         settings=dict(settings or {}),
         library=LIBRARY,
     )
+    rendered: dict[str, bytes] = {}
     try:
         with house_style():
             fig, subtitle, lines = bundle.draw(frame)
@@ -732,9 +734,11 @@ def render_bundle(  # noqa: PLR0913 - provenance travels as keywords
             fig.canvas.draw()
             add_chrome(fig, bundle.title, subtitle, lines, provenance.caption())
             problems = lint_figure(fig)
-            buffer = io.BytesIO()
-            metadata = {"svg": {"Date": None}, "pdf": {"CreationDate": None, "ModDate": None}}.get(fmt, {})
-            fig.savefig(buffer, format=fmt, dpi=fig.dpi, bbox_inches="tight", pad_inches=0.3, metadata=metadata)
+            for fmt in formats:
+                buffer = io.BytesIO()
+                metadata = {"svg": {"Date": None}, "pdf": {"CreationDate": None, "ModDate": None}}.get(fmt, {})
+                fig.savefig(buffer, format=fmt, dpi=fig.dpi, bbox_inches="tight", pad_inches=0.3, metadata=metadata)
+                rendered[fmt] = buffer.getvalue()
     except (ValueError, KeyError) as exc:
         return Result.failure(Diagnostic.info("BUNDLE_NOT_DRAWN", f"{bundle.title}: {exc}", panel=bundle.name))
     except Exception as exc:  # a drawing bug must not take the caller down (R4)
@@ -742,6 +746,31 @@ def render_bundle(  # noqa: PLR0913 - provenance travels as keywords
             Diagnostic.error("STATIC_RENDER_FAILED", f"{bundle.name}: {type(exc).__name__}: {exc}", panel=bundle.name)
         )
     return Result.success(
-        buffer.getvalue(),
+        rendered,
         *(Diagnostic.warning(f"STATIC_{p.code}", f"{bundle.name}: {p.message}", panel=bundle.name) for p in problems),
     )
+
+
+def render_bundle(  # noqa: PLR0913 - provenance travels as keywords
+    bundle: Bundle,
+    frame: pd.DataFrame,
+    fmt: str = "png",
+    *,
+    source: str = "",
+    settings: Mapping[str, Any] | None = None,
+    sha256: str = "",
+    dpi: int = 200,
+) -> Result[bytes]:
+    """A bundle's figure as PNG/SVG/PDF bytes, with title and provenance."""
+    rendered = render_bundle_multi(
+        bundle,
+        frame,
+        (fmt,),
+        source=source,
+        settings=settings,
+        sha256=sha256,
+        dpi=dpi,
+    )
+    if rendered.value is None:
+        return Result.failure(*rendered.diagnostics)
+    return Result.success(rendered.unwrap()[fmt], *rendered.diagnostics)

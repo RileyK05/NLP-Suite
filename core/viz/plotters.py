@@ -632,16 +632,16 @@ def _fallback_table(prepared: PreparedChart, spec: ChartSpec) -> str:
     frame = prepared.data
     cols = list(frame.columns)
     header = "".join(f"<th>{html_lib.escape(str(c))}</th>" for c in cols)
-    rows_html = ""
-    for _, row in frame.iterrows():
+    row_chunks: list[str] = []
+    for row in frame.itertuples(index=False, name=None):
         cells = []
-        for c in cols:
-            v = row[c]
+        for v in row:
             if isinstance(v, float):
                 cells.append(f"{v:.6g}" if math.isfinite(v) else "—")
             else:
                 cells.append(html_lib.escape(str(v)))
-        rows_html += "<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>"
+        row_chunks.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
+    rows_html = "".join(row_chunks)
     subtitle_html = f"<p><em>{html_lib.escape(spec.subtitle)}</em></p>" if spec.subtitle else ""
     note = f"<p>Chart kind: {html_lib.escape(spec.kind)} (data table fallback — plotly not installed)</p>"
     return (

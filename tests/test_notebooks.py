@@ -181,6 +181,30 @@ class TestRunAndSave:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             assert "charts/shares.html" in archive.namelist()
 
+    def test_a_figure_the_kernel_cannot_keep_does_not_fail_the_run(
+        self, project: tuple[Workspace, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pytest.importorskip("matplotlib")
+        workspace, project_id = project
+        monkeypatch.setenv("NLP_SUITE_RUN_FIGURES", "0")
+
+        def broken() -> None:
+            raise RuntimeError("the SVG backend is missing")
+
+        monkeypatch.setattr("desktop_backend.kernel.keep_open_figures", broken)
+        content = new_notebook(
+            [
+                ("code", "import matplotlib.pyplot as plt\nimport nlpsuite as nlp\nplt.plot([1, 2], [3, 4])"),
+                ("code", "nlp.note('the cells after the figure still run')"),
+            ]
+        )
+        job = _run(workspace, project_id, content, monkeypatch)
+        assert job["state"] == "DONE", job["diagnostics"]
+        run = workspace.project_dir(project_id) / job["run_dir"]
+        notes = (run / "notes.md").read_text(encoding="utf-8")
+        assert "A figure could not be kept" in notes and "SVG backend" in notes
+        assert "the cells after the figure still run" in notes
+
     def test_a_failing_cell_stops_the_run_and_keeps_what_came_before(
         self, project: tuple[Workspace, str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -322,6 +346,12 @@ class TestLint:
 
         [warning] = lint("for x in")
         assert warning["line"] == 1 and "not valid Python" in str(warning["message"])
+
+    def test_text_the_parser_cannot_encode_is_named_not_raised(self) -> None:
+        from core.script.lint import lint
+
+        [warning] = lint("x = '\ud800'")
+        assert warning["line"] == 0 and "cannot be read as Python" in str(warning["message"])
 
 
 def test_every_function_has_an_insertable_call() -> None:

@@ -17,12 +17,15 @@ second, from any of the three doors, reads it back.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
+from core.hardware import io_worker_threads
 from core.io.cleaning import strip_stage_directions
 from core.io.document_fields import document_date
 from core.io.reader import Corpus, Document, corpus_fingerprint, hash_file, hash_text, ordered_fingerprint, read_text
@@ -37,6 +40,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from desktop_backend.store import Workspace
 
 __all__ = ["Parsed", "load_corpus", "parse_cached", "resolve_parser"]
+
+_PARSER_CACHE_LOCK = threading.Lock()
+_SHARED_PIPELINE_CACHE: Any = None
+
+
+def _read_verified_text(path: Path, expected_sha256: str, name: str) -> Result[str]:
+    if hash_file(path) != expected_sha256:
+        raise ValueError(f"Imported document has changed since import: {name}. Reimport it before running.")
+    return read_text(path)
 
 
 def load_corpus(
@@ -64,6 +76,7 @@ def load_corpus(
     """
     documents: list[Document] = []
     diagnostics: list[Diagnostic] = []
+    project_dirs: dict[str, Path] = {}
     rules: dict[str, TextCleaning] = {}
     removed_total = 0
     removed_docs = 0
@@ -74,17 +87,37 @@ def load_corpus(
             rules[home] = TextCleaning(**frozen) if frozen is not None else project_cleaning(workspace, home)
         return rules[home]
 
+    resolved_items: list[tuple[int, dict[str, Any], Path, TextCleaning]] = []
     for index, item in enumerate(items, 1):
         home = str(item.get("project_id") or project_id)
-        path = workspace.project_dir(home) / "corpus" / str(item["stored_name"])
-        if hash_file(path) != item["sha256"]:
-            raise ValueError(f"Imported document has changed since import: {item['name']}. Reimport it before running.")
-        text = read_text(path)
+        project_dir = project_dirs.get(home)
+        if project_dir is None:
+            project_dir = workspace.project_dir(home)
+            project_dirs[home] = project_dir
+        path = project_dir / "corpus" / str(item["stored_name"])
+        resolved_items.append((index, item, path, rule_for(home)))
+
+    workers = io_worker_threads(len(resolved_items))
+    if workers > 1 and len(resolved_items) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            loaded_texts = list(
+                pool.map(
+                    _read_verified_text,
+                    [entry[2] for entry in resolved_items],
+                    [str(entry[1]["sha256"]) for entry in resolved_items],
+                    [str(entry[1]["name"]) for entry in resolved_items],
+                )
+            )
+    else:
+        loaded_texts = [
+            _read_verified_text(entry[2], str(entry[1]["sha256"]), str(entry[1]["name"])) for entry in resolved_items
+        ]
+
+    for (index, item, path, rule), text in zip(resolved_items, loaded_texts, strict=True):
         diagnostics.extend(text.diagnostics)
         if text.value is None:
             continue
         raw = text.unwrap()
-        rule = rule_for(home)
         body, removed = strip_stage_directions(raw, rule.extra_terms) if rule.stage_directions else (raw, 0)
         if removed:
             removed_total += removed
@@ -129,12 +162,17 @@ def resolve_parser(parser: str) -> Result[Any]:
     diagnostics, and :func:`parse_cached` keys the cache by the backend that
     actually ran, so a fallback's table is never mistaken for the requested one.
     """
+    global _SHARED_PIPELINE_CACHE  # noqa: PLW0603
     from core.config import NLPConfig
     from core.pipelines.cache import PipelineCache
     from core.pipelines.resolve import resolve_pipeline
     from desktop_backend.live import as_parser
 
-    return resolve_pipeline(PipelineCache(), NLPConfig(parser=as_parser(parser), language="en"))
+    with _PARSER_CACHE_LOCK:
+        if _SHARED_PIPELINE_CACHE is None:
+            _SHARED_PIPELINE_CACHE = PipelineCache()
+        cache = _SHARED_PIPELINE_CACHE
+    return resolve_pipeline(cache, NLPConfig(parser=as_parser(parser), language="en"))
 
 
 @dataclass(frozen=True)

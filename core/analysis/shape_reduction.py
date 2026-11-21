@@ -153,17 +153,30 @@ def build_shape_matrix(sentences: pd.DataFrame, *, resample: int = _DEFAULT_RESA
         return Result.success(
             ShapeMatrix(documents=(), labels=(), values=np.zeros((0, len(METRICS) * resample)), resample=resample)
         )
-    doc_col = "Document" if "Document" in sentences.columns else None
+    x_target = np.linspace(0.0, 1.0, num=resample)
+    metric_arrays = [
+        pd.to_numeric(sentences[metric], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64) for metric in METRICS
+    ]
+    doc_ids = sentences["Document ID"].tolist()
+    doc_labels = sentences["Document"].astype(str).tolist() if "Document" in sentences.columns else None
+    doc_indices: dict[object, list[int]] = {}
+    for row_idx, did in enumerate(doc_ids):
+        doc_indices.setdefault(did, []).append(row_idx)
+
+    xp_cache: dict[int, np.ndarray] = {}
     documents: list[str] = []
     labels: list[str] = []
     trajectories: list[np.ndarray] = []
-    for doc_id, group in sentences.groupby("Document ID", sort=False):
-        parts: list[np.ndarray] = []
-        for metric in METRICS:
-            series = pd.to_numeric(group[metric], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-            parts.append(_resample(series, resample))
+    for doc_id, idx_list in doc_indices.items():
+        n_pts = len(idx_list)
+        xp = xp_cache.get(n_pts)
+        if xp is None:
+            xp = np.linspace(0.0, 1.0, num=n_pts)
+            xp_cache[n_pts] = xp
+        pos_arr = np.asarray(idx_list, dtype=np.intp)
+        parts = [np.interp(x_target, xp, arr[pos_arr]) for arr in metric_arrays]
         documents.append(str(doc_id))
-        labels.append(str(group[doc_col].iloc[0]) if doc_col is not None else f"doc-{doc_id}")
+        labels.append(doc_labels[idx_list[0]] if doc_labels is not None else f"doc-{doc_id}")
         trajectories.append(np.concatenate(parts))
     if len(trajectories) < 2:
         return Result.failure(

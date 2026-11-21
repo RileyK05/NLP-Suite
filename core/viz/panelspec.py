@@ -427,8 +427,18 @@ class PanelMark:
     def __post_init__(self) -> None:
         if not self.key:
             raise ValueError("PanelMark.key must be a non-empty string")
-        if self.size is not None and self.size < 0:
-            raise ValueError(f"PanelMark.size must not be negative, got {self.size}")
+        # A NaN or infinite coordinate is not a place on a figure: renderers
+        # write it into an SVG attribute (``x="nan"``) and the mark silently
+        # disappears, or a scale built from it poisons every other mark.
+        # Refuse it where it is made, naming the field, rather than let a
+        # downstream lint or a reader discover it.
+        for name, value in (("x", self.x), ("y", self.y)):
+            if not isfinite(value):
+                raise ValueError(f"PanelMark.{name} must be finite, got {value!r} for {self.key!r}")
+        if self.size is not None and (not isfinite(self.size) or self.size < 0):
+            raise ValueError(f"PanelMark.size must be finite and non-negative, got {self.size!r} for {self.key!r}")
+        if self.value is not None and not isfinite(self.value):
+            raise ValueError(f"PanelMark.value must be finite, got {self.value!r} for {self.key!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,8 +462,8 @@ class PanelEdge:
             raise ValueError("PanelEdge.key must be a non-empty string")
         if self.source == self.target:
             raise ValueError(f"edge {self.key!r} joins {self.source!r} to itself")
-        if self.weight < 0:
-            raise ValueError(f"edge weight must not be negative, got {self.weight}")
+        if not isfinite(self.weight) or self.weight < 0:
+            raise ValueError(f"edge weight must be finite and non-negative, got {self.weight!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,6 +484,8 @@ class Annotation:
     def __post_init__(self) -> None:
         if self.kind not in ("vline", "hline", "note"):
             raise ValueError(f"Annotation.kind must be vline, hline or note, got {self.kind!r}")
+        if not isfinite(self.value):
+            raise ValueError(f"Annotation.value must be finite, got {self.value!r}")
 
 
 @dataclass(frozen=True, slots=True)

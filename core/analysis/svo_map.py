@@ -46,22 +46,26 @@ def _resolved_places(locations: pd.DataFrame, geocoded: pd.DataFrame) -> dict[st
     Without a Status column, finite coordinates decide.
     """
     coords: dict[str, tuple[str, float, float]] = {}
-    for _, row in geocoded.iterrows():
-        if "Status" in geocoded.columns and str(row["Status"]) != "OK":
+    statuses = geocoded["Status"].astype(str).tolist() if "Status" in geocoded.columns else None
+    lats = geocoded["Lat"].tolist()
+    lons = geocoded["Lon"].tolist()
+    geo_places = geocoded["Place"].astype(str).tolist()
+    for idx, (place, raw_lat, raw_lon) in enumerate(zip(geo_places, lats, lons, strict=True)):
+        if statuses is not None and statuses[idx] != "OK":
             continue
-        lat = _finite(row["Lat"])
-        lon = _finite(row["Lon"])
+        lat = _finite(raw_lat)
+        lon = _finite(raw_lon)
         if lat is None or lon is None:
             continue
-        place = str(row["Place"])
         coords[place.strip().lower()] = (place, lat, lon)
 
     by_document: dict[str, list[tuple[str, float, float]]] = {}
-    for _, row in locations.iterrows():
-        hit = coords.get(str(row["Place"]).strip().lower())
+    loc_places = locations["Place"].astype(str).tolist()
+    loc_dids = locations["Document ID"].astype(str).tolist()
+    for raw_place, key in zip(loc_places, loc_dids, strict=True):
+        hit = coords.get(raw_place.strip().lower())
         if hit is None:
             continue
-        key = str(row["Document ID"])
         bucket = by_document.setdefault(key, [])
         if hit not in bucket:
             bucket.append(hit)
@@ -100,23 +104,29 @@ def map_svo(
     by_document = _resolved_places(locations, geocoded)
     rows: list[dict[str, object]] = []
     unmatched = 0
-    for _, row in svo_rows.iterrows():
-        hits = by_document.get(str(row["Document ID"]), [])
+    subjs = svo_rows["Subject"].tolist()
+    verbs = svo_rows["Verb"].tolist()
+    objs = svo_rows["Object"].tolist()
+    docs = svo_rows["Document"].tolist()
+    dids = svo_rows["Document ID"].astype(str).tolist()
+    sids = svo_rows["Sentence ID"].tolist()
+    for subj, verb, obj, doc, did, sid in zip(subjs, verbs, objs, docs, dids, sids, strict=True):
+        hits = by_document.get(did)
         if not hits:
             unmatched += 1
             continue
         for place, lat, lon in hits:
             rows.append(
                 {
-                    "Subject": row["Subject"],
-                    "Verb": row["Verb"],
-                    "Object": row["Object"],
+                    "Subject": subj,
+                    "Verb": verb,
+                    "Object": obj,
                     "Place": place,
                     "Lat": lat,
                     "Lon": lon,
-                    "Document": row["Document"],
-                    "Document ID": str(row["Document ID"]),
-                    "Sentence ID": row["Sentence ID"],
+                    "Document": doc,
+                    "Document ID": did,
+                    "Sentence ID": sid,
                 }
             )
     out = pd.DataFrame(rows, columns=_MAPPED_COLUMNS)

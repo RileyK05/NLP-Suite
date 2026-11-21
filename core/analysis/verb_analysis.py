@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from core.conll.frames import col_str_list, sentence_indices
 from core.conll.normalize import parse_feats
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
@@ -194,36 +195,66 @@ def analyze_verbs(frame: pd.DataFrame, *, analysis: str = "all") -> Result[pd.Da
         )
 
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
+    doc_names = col_str_list(frame, doc_col) if doc_col is not None else []
+    doc_ids = col_str_list(frame, Col.DOCUMENT_ID) if Col.DOCUMENT_ID.value in frame.columns else [""] * len(frame)
+    sent_raw = frame[Col.SENTENCE_ID.value].tolist() if Col.SENTENCE_ID.value in frame.columns else [1] * len(frame)
+    pos_list = [v.strip().upper() for v in col_str_list(frame, Col.POS)]
+    form_raw = col_str_list(frame, Col.FORM)
+    form_stripped = [v.strip() for v in form_raw]
+    form_lower = [v.lower() for v in form_stripped]
+    lemma_raw = frame[Col.LEMMA.value].tolist()
+    lemma_lower: list[str] = [
+        ("" if raw is None else str(raw).strip().lower()) or form_lower[idx] for idx, raw in enumerate(lemma_raw)
+    ]
+    deprel_lower = [v.strip().lower() for v in col_str_list(frame, Col.DEPREL)]
+    id_keys = [_key(v) for v in frame[Col.ID.value].tolist()]
+    head_keys = [_key(v) for v in frame[Col.HEAD.value].tolist()]
+    morph_raw = frame[morph_col].tolist() if morph_col is not None else None
+
     rows: list[dict[str, object]] = []
-    for (doc_id, sent_id), sent in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        tokens = [row for _, row in sent.iterrows()]
-        name = str(tokens[0][doc_col]) if doc_col is not None else ""
-        for position, row in enumerate(tokens):
-            pos = str(row[Col.POS.value]).strip().upper()
+    for sent_rows in sentence_indices(frame).values():
+        first_idx = sent_rows[0]
+        name = doc_names[first_idx] if doc_col is not None else ""
+        doc_id = doc_ids[first_idx]
+        sent_id = sent_raw[first_idx]
+
+        children_by_head: dict[str, list[int]] = {}
+        has_any_deprel = False
+        for idx in sent_rows:
+            if deprel_lower[idx]:
+                has_any_deprel = True
+            hkey = head_keys[idx]
+            bucket = children_by_head.get(hkey)
+            if bucket is None:
+                children_by_head[hkey] = [idx]
+            else:
+                bucket.append(idx)
+
+        for position, idx in enumerate(sent_rows):
+            pos = pos_list[idx]
             if not _is_verb(pos):
                 continue
-            form = str(row[Col.FORM.value]).strip()
-            lemma = _lemma(row)
-            feats = parse_feats(row[morph_col]) if morph_col is not None else {}
-            dependents = [
-                other for other in tokens if _key(other[Col.HEAD.value]) == _key(row[Col.ID.value]) and other is not row
-            ]
-            preceding = tokens[position - 1] if position > 0 else None
-            nearby = [*dependents, *([preceding] if preceding is not None else [])]
+            form = form_stripped[idx]
+            lemma = lemma_lower[idx]
+            feats = parse_feats(morph_raw[idx]) if morph_raw is not None else {}
+            tok_key = id_keys[idx]
+            dependents = [other_idx for other_idx in children_by_head.get(tok_key, ()) if other_idx != idx]
+            preceding_idx = sent_rows[position - 1] if position > 0 else -1
+            nearby = [*dependents, preceding_idx] if preceding_idx >= 0 else dependents
 
             # Future first: a will/shall aux overrides whatever morphology says
             # about the lexical verb it governs ("will have walked" is future).
             future_modal = ""
-            for other in nearby:
-                word = _word(other)
-                if word in _FUTURE_MODALS or _lemma(other) in _FUTURE_MODALS:
+            for other_idx in nearby:
+                word = form_lower[other_idx]
+                if word in _FUTURE_MODALS or lemma_lower[other_idx] in _FUTURE_MODALS:
                     future_modal = word
                     break
             modal_word = ""
             modality = "none"
-            for other in nearby:
-                word = _word(other)
-                lemma_word = _lemma(other)
+            for other_idx in nearby:
+                word = form_lower[other_idx]
+                lemma_word = lemma_lower[other_idx]
                 for candidate in (word, lemma_word):
                     if candidate in _MODAL_MAP:
                         modal_word = word or candidate
@@ -237,21 +268,21 @@ def analyze_verbs(frame: pd.DataFrame, *, analysis: str = "all") -> Result[pd.Da
             else:
                 tense = _tense_from_morph(feats) or _POS_TENSE.get(pos, "") or _tense_from_form(form) or "unknown"
 
-            own_rel = _deprel(row)
+            own_rel = deprel_lower[idx]
             passive = any(marker in own_rel for marker in _PASSIVE_MARKERS) or any(
-                marker in _deprel(other) for marker in _PASSIVE_MARKERS for other in dependents
+                marker in deprel_lower[other_idx] for other_idx in dependents for marker in _PASSIVE_MARKERS
             )
             # Degraded passive cue: "was eaten" with no usable DEPREL.
             if (
                 not passive
                 and tense == "participle"
-                and preceding is not None
-                and (_lemma(preceding) in _BE_FORMS or _word(preceding) in _BE_FORMS)
+                and preceding_idx >= 0
+                and (lemma_lower[preceding_idx] in _BE_FORMS or form_lower[preceding_idx] in _BE_FORMS)
             ):
                 passive = True
             if passive:
                 voice = "passive"
-            elif any(_deprel(other) for other in tokens) or pos:
+            elif has_any_deprel or pos:
                 voice = "active"
             else:
                 voice = "unknown"
@@ -259,7 +290,7 @@ def analyze_verbs(frame: pd.DataFrame, *, analysis: str = "all") -> Result[pd.Da
             rows.append(
                 {
                     "Document": name,
-                    "Document ID": str(doc_id),
+                    "Document ID": doc_id,
                     "Sentence ID": sent_id,
                     "Verb": form,
                     "Lemma": lemma,

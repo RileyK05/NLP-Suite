@@ -12,6 +12,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
 from typing import Any
 import uuid
 
@@ -34,6 +35,11 @@ PREVIEW_CHARACTERS = 30000
 # a new terminal state (e.g. PARTIAL) is accepted everywhere at once.
 # PARTIAL is terminal: usable artifacts plus diagnostics the user must read.
 TERMINAL_JOB_STATES = frozenset({"DONE", "PARTIAL", "FAILED", "INTERRUPTED", "CANCELLED"})
+
+_SCHEMA_VERSION = 2
+_SOURCE_DIGEST_CACHE_ENTRIES = 256
+_DIGEST_CACHE_LOCK = threading.Lock()
+_SOURCE_DIGEST_CACHE: dict[str, tuple[int, int, str]] = {}
 
 
 def now() -> str:
@@ -80,6 +86,9 @@ class Workspace:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
+            version_row = db.execute("PRAGMA user_version").fetchone()
+            if version_row is not None and int(version_row[0]) >= _SCHEMA_VERSION:
+                return
             db.executescript("""
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS projects (
@@ -190,12 +199,17 @@ class Workspace:
                 db.execute(
                     "CREATE UNIQUE INDEX documents_identity ON documents(project_id,name,COALESCE(source_sha256,sha256))"
                 )
+            db.execute("CREATE INDEX IF NOT EXISTS jobs_project ON jobs(project_id, trashed, created DESC)")
+            db.execute("CREATE INDEX IF NOT EXISTS documents_project ON documents(project_id, trashed, name, id)")
+            db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         db = sqlite3.connect(self.root / "workspace.sqlite3", timeout=20)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
+        db.execute("PRAGMA synchronous=NORMAL")
+        db.execute("PRAGMA temp_store=MEMORY")
         try:
             with db:
                 yield db
@@ -259,8 +273,19 @@ class Workspace:
             db.execute("UPDATE projects SET name=? WHERE id=?", (name, project_id))
         return self.project(project_id)
 
+    def has_active_jobs(self, project_id: str) -> bool:
+        self.project(project_id)
+        with self.connect() as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM jobs WHERE project_id=? AND state IN ('RUNNING','QUEUED') LIMIT 1",
+                    (project_id,),
+                ).fetchone()
+                is not None
+            )
+
     def archive(self, project_id: str, archived: bool) -> dict[str, Any]:
-        if any(job["state"] in ("RUNNING", "QUEUED") for job in self.jobs(project_id)):
+        if self.has_active_jobs(project_id):
             raise ValueError("Finish or cancel active runs before archiving this project.")
         with self.connect() as db:
             db.execute("UPDATE projects SET archived=? WHERE id=?", (int(archived), project_id))
@@ -268,7 +293,7 @@ class Workspace:
 
     def trash_project(self, project_id: str, trashed: bool) -> dict[str, Any]:
         project = self.project(project_id)
-        if any(job["state"] in ("RUNNING", "QUEUED") for job in self.jobs(project_id, include_trashed=True)):
+        if self.has_active_jobs(project_id):
             raise ValueError("Finish or cancel active runs before deleting this project.")
         trash_root = self.root / "trash"
         if trash_root.is_symlink() or not trash_root.resolve().is_relative_to(self.root.resolve()):
@@ -301,7 +326,7 @@ class Workspace:
         project = self.project(project_id)
         if not project["trashed"]:
             raise ValueError("Move this project to Trash before permanently deleting it.")
-        if any(job["state"] in ("RUNNING", "QUEUED") for job in self.jobs(project_id, include_trashed=True)):
+        if self.has_active_jobs(project_id):
             raise ValueError("Finish or cancel active runs before permanently deleting this project.")
         trash_root = self.root / "trash"
         if trash_root.is_symlink() or not trash_root.resolve().is_relative_to(self.root.resolve()):
@@ -382,7 +407,22 @@ class Workspace:
         # same effective values.
         from desktop_backend.fields import attach_fields  # noqa: PLC0415 -- fields.py reads through this Workspace
 
-        return attach_fields(self, project_id, rows)
+        active_names = [str(row["name"]) for row in rows] if not trashed and not include_trashed else None
+        return attach_fields(self, project_id, rows, active_names=active_names)
+
+    def document(self, project_id: str, document_id: str) -> dict[str, Any] | None:
+        """Fetch one active document row with its effective fields attached."""
+        self.project(project_id)
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM documents WHERE project_id=? AND id=? AND trashed=0",
+                (project_id, document_id),
+            ).fetchone()
+        if row is None:
+            return None
+        from desktop_backend.fields import attach_fields  # noqa: PLC0415 -- fields.py reads through this Workspace
+
+        return attach_fields(self, project_id, [dict(row)])[0]
 
     def trash_document(self, project_id: str, document_id: str, trashed: bool) -> dict[str, Any]:
         """Hide or restore one imported document without moving its identity or files."""
@@ -460,11 +500,13 @@ class Workspace:
             stage.parent.rmdir()
 
     def import_document(self, project_id: str, name: str, data: bytes) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
-        if self.project(project_id)["trashed"]:
+        project = self.project(project_id)
+        if project["trashed"]:
             raise ValueError("Restore this project from Trash before importing documents.")
-        if self.project(project_id)["archived"]:
+        if project["archived"]:
             raise ValueError("Restore this project from the archive before importing documents.")
-        root = self.project_dir(project_id) / "corpus"
+        project_root = self.root / "projects" / project_id
+        root = project_root / "corpus"
         name = name.replace("\\", "/").split("/")[-1].strip()
         suffix = Path(name).suffix.lower()
         if suffix not in supported_suffixes() or len(name) > MAX_FILENAME:
@@ -507,7 +549,7 @@ class Workspace:
                 else f"{identifier[:8]}__{safe_name}"
             )
             target = root / stored
-            original = self.project_dir(project_id) / "originals" / (identifier + suffix)
+            original = project_root / "originals" / (identifier + suffix)
             target.parent.mkdir(parents=True, exist_ok=True)
             created = False
             try:
@@ -543,10 +585,12 @@ class Workspace:
                     target.unlink(missing_ok=True)
                     original.unlink(missing_ok=True)
                 raise
-        return next(doc for doc in self.documents(project_id) if doc["id"] == identifier)
+        imported = self.document(project_id, identifier)
+        assert imported is not None  # noqa: S101
+        return imported
 
     def preview(self, project_id: str, document_id: str) -> dict[str, Any]:
-        doc = next((d for d in self.documents(project_id) if d["id"] == document_id), None)
+        doc = self.document(project_id, document_id)
         if doc is None:
             raise KeyError("Document not found")
         text = read_text(self.project_dir(project_id) / "corpus" / doc["stored_name"]).unwrap()
@@ -558,7 +602,7 @@ class Workspace:
         Parser spacing around punctuation may differ from the original, so a
         word-sequence fallback locates the source span after an exact search.
         """
-        doc = next((d for d in self.documents(project_id) if d["id"] == document_id), None)
+        doc = self.document(project_id, document_id)
         if doc is None:
             raise KeyError("Document not found")
         text = read_text(self.project_dir(project_id) / "corpus" / doc["stored_name"]).unwrap()
@@ -590,10 +634,21 @@ class Workspace:
             )
             return [{**dict(row), "diagnostics": json.loads(row["diagnostics"])} for row in rows]
 
+    def job(self, project_id: str, job_id: str, *, include_trashed: bool = True) -> dict[str, Any] | None:
+        self.project(project_id)
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM jobs WHERE project_id=? AND id=? AND (? OR trashed=0)",
+                (project_id, job_id, int(include_trashed)),
+            ).fetchone()
+            if row is None:
+                return None
+            return {**dict(row), "diagnostics": json.loads(row["diagnostics"])}
+
     def trash_run(self, project_id: str, job_id: str, trashed: bool) -> dict[str, Any]:
         if self.project(project_id)["trashed"]:
             raise ValueError("Restore this project from Trash before changing its runs.")
-        job = next((item for item in self.jobs(project_id, include_trashed=True) if item["id"] == job_id), None)
+        job = self.job(project_id, job_id, include_trashed=True)
         if job is None:
             raise KeyError("Run not found")
         if job["state"] in ("RUNNING", "QUEUED"):
@@ -602,16 +657,7 @@ class Workspace:
             db.execute("UPDATE jobs SET trashed=? WHERE project_id=? AND id=?", (int(trashed), project_id, job_id))
         return {**job, "trashed": int(trashed)}
 
-    def purge_run(self, project_id: str, job_id: str) -> None:  # noqa: PLR0912
-        if self.project(project_id)["trashed"]:
-            raise ValueError("Restore this project from Trash before permanently deleting runs.")
-        job = next((item for item in self.jobs(project_id, include_trashed=True) if item["id"] == job_id), None)
-        if job is None:
-            raise KeyError("Run not found")
-        if not job["trashed"]:
-            raise ValueError("Move this run to Trash before permanently deleting it.")
-        if job["state"] in ("RUNNING", "QUEUED"):
-            raise ValueError("Wait for or cancel this run before permanently deleting it.")
+    def _validate_purge_paths(self, project_id: str, job_id: str, job: dict[str, Any]) -> list[tuple[Path, Path]]:
         project_root = self.project_dir(project_id).resolve()
         if not project_root.is_relative_to(self.root.resolve()):
             raise ValueError("Project storage path is unsafe.")
@@ -620,10 +666,12 @@ class Workspace:
             rel = Path(job["run_dir"])
             if rel.is_absolute() or rel.parent != Path("runs") or rel.name in {".", ".."}:
                 raise ValueError("Run artifact path is unsafe.")
-            if any(
-                other["id"] != job_id and other["run_dir"] == job["run_dir"]
-                for other in self.jobs(project_id, include_trashed=True)
-            ):
+            with self.connect() as db:
+                shared = db.execute(
+                    "SELECT 1 FROM jobs WHERE project_id=? AND id != ? AND run_dir=? LIMIT 1",
+                    (project_id, job_id, job["run_dir"]),
+                ).fetchone()
+            if shared is not None:
                 raise ValueError("Another run still refers to these artifacts; purge refused.")
             paths.append((project_root / rel, project_root))
         paths.extend(
@@ -639,6 +687,19 @@ class Workspace:
                 or not path.resolve(strict=False).is_relative_to(root)
             ):
                 raise ValueError("Run storage path is unsafe.")
+        return paths
+
+    def purge_run(self, project_id: str, job_id: str) -> None:
+        if self.project(project_id)["trashed"]:
+            raise ValueError("Restore this project from Trash before permanently deleting runs.")
+        job = self.job(project_id, job_id, include_trashed=True)
+        if job is None:
+            raise KeyError("Run not found")
+        if not job["trashed"]:
+            raise ValueError("Move this run to Trash before permanently deleting it.")
+        if job["state"] in ("RUNNING", "QUEUED"):
+            raise ValueError("Wait for or cancel this run before permanently deleting it.")
+        paths = self._validate_purge_paths(project_id, job_id, job)
         trash_root = self.root / "trash"
         if trash_root.is_symlink() or not trash_root.resolve().is_relative_to(self.root.resolve()):
             raise ValueError("Run purge staging path is unsafe.")
@@ -685,7 +746,7 @@ class Workspace:
             )
 
     def artifacts(self, project_id: str, job_id: str) -> tuple[Path, Envelope]:
-        job = next((j for j in self.jobs(project_id) if j["id"] == job_id), None)
+        job = self.job(project_id, job_id, include_trashed=False)
         if job is None or not job["run_dir"]:
             raise KeyError("This run has no published results yet")
         root = self.project_dir(project_id).resolve()
@@ -711,23 +772,32 @@ class Workspace:
         claim as "this file is here now" -- and a picker whose entries fail
         when chosen is worse than a shorter picker.
         """
+        project_root = self.project_dir(project_id).resolve()
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id, tool, state, created, run_dir FROM jobs "
+                "WHERE project_id=? AND trashed=0 AND state IN ('DONE','PARTIAL') AND run_dir IS NOT NULL "
+                "ORDER BY created DESC, rowid DESC",
+                (project_id,),
+            ).fetchall()
         found: list[dict[str, Any]] = []
-        for job in self.jobs(project_id):
-            if job["state"] not in ("DONE", "PARTIAL") or not job["run_dir"]:
-                continue
+        for row in rows:
             try:
-                directory, envelope = self.artifacts(project_id, job["id"])
+                directory = (project_root / row["run_dir"]).resolve()
+                if not directory.is_relative_to(project_root):
+                    continue
+                envelope = Envelope.read(directory).unwrap()
             except (KeyError, ValueError, OSError):
                 continue
             found.extend(
                 {
-                    "job": job["id"],
+                    "job": row["id"],
                     "index": index,
-                    "tool": job["tool"],
+                    "tool": row["tool"],
                     "path": artifact.path,
                     "description": artifact.description,
-                    "created": job["created"],
-                    "state": job["state"],
+                    "created": row["created"],
+                    "state": row["state"],
                 }
                 for index, artifact in enumerate(envelope.artifacts)
                 if artifact.path.lower().endswith(".csv") and (directory / artifact.path).is_file()
@@ -754,16 +824,24 @@ class Workspace:
         """
         try:
             path = self.artifact(project_id, job_id, index)
+            stat = path.stat()
         except (KeyError, ValueError, OSError):
             return None
-        digest = hashlib.sha256()
+        key = str(path)
+        with _DIGEST_CACHE_LOCK:
+            cached = _SOURCE_DIGEST_CACHE.get(key)
+            if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+                return cached[2]
         try:
             with path.open("rb") as handle:
-                for block in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(block)
+                hex_digest = hashlib.file_digest(handle, "sha256").hexdigest()
         except OSError:
             return None
-        return digest.hexdigest()
+        with _DIGEST_CACHE_LOCK:
+            if len(_SOURCE_DIGEST_CACHE) >= _SOURCE_DIGEST_CACHE_ENTRIES:
+                _SOURCE_DIGEST_CACHE.pop(next(iter(_SOURCE_DIGEST_CACHE)), None)
+            _SOURCE_DIGEST_CACHE[key] = (stat.st_mtime_ns, stat.st_size, hex_digest)
+        return hex_digest
 
     def _view(self, row: sqlite3.Row, digests: dict[tuple[str, int], str | None] | None = None) -> dict[str, Any]:
         """One stored row as the API shape.

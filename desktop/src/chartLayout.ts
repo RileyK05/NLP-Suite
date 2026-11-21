@@ -61,6 +61,59 @@ export type LiveKind = (typeof LIVE_KINDS)[number];
 export const isLiveKind = (kind: string): kind is LiveKind =>
   (LIVE_KINDS as readonly string[]).includes(kind);
 
+/**
+ * Smallest and largest value, in one pass.
+ *
+ * `Math.min(...values)` / `Math.max(...values)` pass every element as a
+ * function argument, and V8 throws `RangeError: Maximum call stack size
+ * exceeded` at roughly 125,000 of them. A scatter over a large page of rows
+ * reaches that, and the chart disappears with an exception instead of a
+ * sentence. A loop has no such ceiling and is also faster: no argument
+ * flattening, no allocation. `fallback` is returned for an empty list, where
+ * the spread form would return `Infinity`/`-Infinity` and poison every
+ * coordinate downstream.
+ */
+export function extent(
+  values: readonly number[],
+  fallback: readonly [number, number] = [0, 0],
+): [number, number] {
+  if (!values.length) return [fallback[0], fallback[1]];
+  let low = values[0];
+  let high = values[0];
+  for (let index = 1; index < values.length; index++) {
+    const value = values[index];
+    if (value < low) low = value;
+    else if (value > high) high = value;
+  }
+  return [low, high];
+}
+
+/** The smallest value, or `fallback` for an empty list (see {@link extent}). */
+export function minOf(values: readonly number[], fallback = 0): number {
+  let low = fallback;
+  let seen = false;
+  for (const value of values) {
+    if (!seen || value < low) {
+      low = value;
+      seen = true;
+    }
+  }
+  return low;
+}
+
+/** The largest value, or `fallback` for an empty list (see {@link extent}). */
+export function maxOf(values: readonly number[], fallback = 0): number {
+  let high = fallback;
+  let seen = false;
+  for (const value of values) {
+    if (!seen || value > high) {
+      high = value;
+      seen = true;
+    }
+  }
+  return high;
+}
+
 export const usesMeasureOnly = (kind: string) =>
   kind === "histogram" || kind === "ecdf";
 
@@ -705,13 +758,20 @@ function numberAxis(label: string, min: number, max: number): Axis {
 
 const empty = (reason: string): LayoutResult => ({ ok: false, reason });
 
+/** Append a value the first time it is seen; the Set keeps it O(1). */
+function pushOnce<T>(list: T[], seen: Set<T>, value: T): void {
+  if (seen.has(value)) return;
+  seen.add(value);
+  list.push(value);
+}
+
 /** Group values, in first-seen order, so colours stay put between redraws. */
 function groupsOf(rows: { row: Row }[], group: string): string[] {
   if (!group) return [UNGROUPED];
   const seen: string[] = [];
+  const known = new Set<string>();
   for (const { row } of rows) {
-    const name = String(row[group] ?? "");
-    if (!seen.includes(name)) seen.push(name);
+    pushOnce(seen, known, String(row[group] ?? ""));
   }
   return seen;
 }
@@ -727,12 +787,13 @@ function buildCategorical(
 
   const groups = groupsOf(kept, group);
   const order: string[] = [];
+  const knownCategories = new Set<string>();
   const totals = new Map<string, number>();
   const buckets = new Map<string, number[]>();
   for (const { row, value } of kept) {
     const category = String(row[x] ?? "");
     const name = group ? String(row[group] ?? "") : UNGROUPED;
-    if (!order.includes(category)) order.push(category);
+    pushOnce(order, knownCategories, category);
     const key = `${category}\u0000${name}`;
     const bucket = buckets.get(key);
     if (bucket) bucket.push(value);
@@ -778,7 +839,7 @@ function buildCategorical(
   const horizontal =
     shape === "bars" &&
     categories.length > 10 &&
-    Math.max(0, ...categories.map((category) => category.length)) > 9;
+    Math.max(0, maxOf(categories.map((category) => category.length))) > 9;
   return {
     ok: true,
     layout: {
@@ -790,7 +851,7 @@ function buildCategorical(
       columns: [],
       x: categoryAxis(categories, x),
       // Bars and lines over categories are read against zero.
-      y: numberAxis(y, Math.min(0, ...values), Math.max(0, ...values)),
+      y: numberAxis(y, Math.min(0, minOf(values)), Math.max(0, maxOf(values))),
       used: kept.length,
       dropped,
       hidden,
@@ -820,7 +881,7 @@ function buildPoints(rows: Row[], settings: Settings): LayoutResult {
     group,
   );
   const magnitudes = points.map((p) => Math.abs(p.yv));
-  const largest = Math.max(...magnitudes) || 1;
+  const largest = maxOf(magnitudes) || 1;
   const series: Series[] = groups.map((name, index) => ({
     group: name,
     color: colorFor(index),
@@ -839,6 +900,8 @@ function buildPoints(rows: Row[], settings: Settings): LayoutResult {
   }));
   const xs = points.map((p) => p.xv);
   const ys = points.map((p) => p.yv);
+  const [xLow, xHigh] = extent(xs);
+  const [yLow, yHigh] = extent(ys);
   return {
     ok: true,
     layout: {
@@ -848,8 +911,8 @@ function buildPoints(rows: Row[], settings: Settings): LayoutResult {
       cells: [],
       rows: [],
       columns: [],
-      x: numberAxis(x, Math.min(...xs), Math.max(...xs)),
-      y: numberAxis(y, Math.min(...ys), Math.max(...ys)),
+      x: numberAxis(x, xLow, xHigh),
+      y: numberAxis(y, yLow, yHigh),
       used: points.length,
       dropped,
       hidden: 0,
@@ -872,8 +935,7 @@ function buildHistogram(rows: Row[], settings: Settings): LayoutResult {
   if (!kept.length) return empty(`No rows have a number in "${y}".`);
 
   const values = kept.map((k) => k.value);
-  const low = Math.min(...values);
-  const high = Math.max(...values);
+  const [low, high] = extent(values);
   const count =
     high === low
       ? 1
@@ -907,7 +969,7 @@ function buildHistogram(rows: Row[], settings: Settings): LayoutResult {
     };
   });
   const tallest = Math.max(
-    ...series.flatMap((s) => s.marks.map((m) => m.y)),
+    maxOf(series.flatMap((s) => s.marks.map((m) => m.y))),
     1,
   );
   return {
@@ -968,6 +1030,7 @@ function buildEcdf(rows: Row[], settings: Settings): LayoutResult {
     return { group: name, color: colorFor(index), marks };
   });
   const values = kept.map(({ value }) => value);
+  const [valuesLow, valuesHigh] = extent(values);
   return {
     ok: true,
     layout: {
@@ -978,7 +1041,7 @@ function buildEcdf(rows: Row[], settings: Settings): LayoutResult {
       cells: [],
       rows: [],
       columns: [],
-      x: numberAxis(y, Math.min(...values), Math.max(...values)),
+      x: numberAxis(y, valuesLow, valuesHigh),
       y: numberAxis("At or below (%)", 0, 100),
       used: kept.length,
       dropped,
@@ -993,11 +1056,12 @@ function buildBox(rows: Row[], settings: Settings): LayoutResult {
   if (!kept.length) return empty(`No rows have a number in "${y}".`);
 
   const order: string[] = [];
+  const knownCategories = new Set<string>();
   const buckets = new Map<string, number[]>();
   const totals = new Map<string, number>();
   for (const { row, value } of kept) {
     const category = String(row[x] ?? "");
-    if (!order.includes(category)) order.push(category);
+    pushOnce(order, knownCategories, category);
     const bucket = buckets.get(category);
     if (bucket) bucket.push(value);
     else buckets.set(category, [value]);
@@ -1028,6 +1092,8 @@ function buildBox(rows: Row[], settings: Settings): LayoutResult {
   if (!boxes.length) return empty("Nothing left to draw after the limit.");
   const lows = boxes.map((b) => b.min);
   const highs = boxes.map((b) => b.max);
+  const low = minOf(lows);
+  const high = maxOf(highs);
   return {
     ok: true,
     layout: {
@@ -1038,7 +1104,7 @@ function buildBox(rows: Row[], settings: Settings): LayoutResult {
       rows: [],
       columns: [],
       x: categoryAxis(categories, x),
-      y: numberAxis(y, Math.min(...lows), Math.max(...highs)),
+      y: numberAxis(y, low, high),
       used: kept.length,
       dropped,
       hidden,
@@ -1055,13 +1121,15 @@ function buildHeatmap(rows: Row[], settings: Settings): LayoutResult {
 
   const columns: string[] = [];
   const rowNames: string[] = [];
+  const knownColumns = new Set<string>();
+  const knownRows = new Set<string>();
   const buckets = new Map<string, number[]>();
   const totals = new Map<string, number>();
   for (const { row, value } of kept) {
     const column = String(row[x] ?? "");
     const rowName = String(row[group] ?? "");
-    if (!columns.includes(column)) columns.push(column);
-    if (!rowNames.includes(rowName)) rowNames.push(rowName);
+    pushOnce(columns, knownColumns, column);
+    pushOnce(rowNames, knownRows, rowName);
     const key = `${rowName}\u0000${column}`;
     const bucket = buckets.get(key);
     if (bucket) bucket.push(value);
@@ -1159,11 +1227,13 @@ function categoryBuckets(
   const values = new Map<string, number[]>();
   const byGroup = new Map<string, number[]>();
   const groups: string[] = [];
+  const knownCategories = new Set<string>();
+  const knownGroups = new Set<string>();
   for (const { row, value } of kept) {
     const category = String(row[x] ?? "");
     const name = group ? String(row[group] ?? "") : UNGROUPED;
-    if (!order.includes(category)) order.push(category);
-    if (!groups.includes(name)) groups.push(name);
+    pushOnce(order, knownCategories, category);
+    pushOnce(groups, knownGroups, name);
     totals.set(category, (totals.get(category) ?? 0) + value);
     const valueBucket = values.get(category);
     if (valueBucket) valueBucket.push(value);
@@ -1496,8 +1566,9 @@ function density(values: number[]): { x: number; y: number }[] {
     Math.max(1, values.length - 1);
   const sd = Math.sqrt(variance);
   const bandwidth = Math.max(1.06 * sd * values.length ** -0.2, 1e-9);
-  const low = Math.min(...values) - bandwidth * 3;
-  const high = Math.max(...values) + bandwidth * 3;
+  const [observedLow, observedHigh] = extent(values);
+  const low = observedLow - bandwidth * 3;
+  const high = observedHigh + bandwidth * 3;
   const steps = 48;
   const points = Array.from({ length: steps }, (_, index) => {
     const x = low + ((high - low) * index) / (steps - 1);
@@ -1511,7 +1582,7 @@ function density(values: number[]): { x: number; y: number }[] {
       ) / values.length;
     return { x, y };
   });
-  const peak = Math.max(...points.map((point) => point.y), 1e-12);
+  const peak = Math.max(maxOf(points.map((point) => point.y)), 1e-12);
   return points.map((point) => ({ x: point.x, y: point.y / peak }));
 }
 
@@ -1735,7 +1806,7 @@ function buildWaffle(rows: Row[], settings: Settings): LayoutResult {
       used: data.kept,
       dropped: data.dropped,
       hidden: data.hidden,
-      waffle: { squares, maxShare: Math.max(...shares) },
+      waffle: { squares, maxShare: maxOf(shares) },
     },
   };
 }

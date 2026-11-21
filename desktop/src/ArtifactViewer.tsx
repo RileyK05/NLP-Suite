@@ -1,19 +1,16 @@
 import { useEffect, useState } from "react";
 import { FileWarning, LoaderCircle } from "lucide-react";
 import { artifactBlobUrl, artifactFrameUrl, artifactText } from "./api";
+import { viewableArtifact } from "./artifactUtils";
 import { Markdown } from "./Markdown";
+
+export { viewableArtifact };
 
 const IMAGES = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 // Markdown is the one artifact kind the app renders itself: served into an
 // iframe it showed its own asterisks, which is a poor way to present the file
 // whose whole job is to be read.
 const MARKDOWN = new Set([".md"]);
-
-export function viewableArtifact(path: string): boolean {
-  const dot = path.lastIndexOf(".");
-  const suffix = dot >= 0 ? path.slice(dot).toLowerCase() : "";
-  return IMAGES.has(suffix) || /\.(html?|pdf|svg|txt|kml|md)$/.test(suffix);
-}
 
 export function ArtifactViewer({
   path,

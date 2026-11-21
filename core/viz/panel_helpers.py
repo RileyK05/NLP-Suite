@@ -308,13 +308,19 @@ def _group_of_column(row: object, by: str, empty: str | None = None) -> str | No
     """
     if row is None:
         return None
+    is_mapping = isinstance(row, Mapping)
     for column in (by, DETAIL_PREFIX + by):
-        try:
-            if column not in row.index:  # type: ignore[attr-defined]
+        if is_mapping:
+            if column not in row:  # type: ignore[operator]
                 continue
             raw = row[column]  # type: ignore[index]
-        except (AttributeError, KeyError, TypeError):
-            return None
+        else:
+            try:
+                if column not in row.index:  # type: ignore[attr-defined]
+                    continue
+                raw = row[column]  # type: ignore[index]
+            except (AttributeError, KeyError, TypeError):
+                return None
         text = "" if raw is None else str(raw)
         if text and text != "nan":
             return text
@@ -441,6 +447,7 @@ def communities(
     words, share :data:`OTHER_COMMUNITY`.
     """
     order = sorted(nodes, key=lambda node: (-float(mass.get(node, 0.0)), node))
+    rank = {node: position for position, node in enumerate(order)}
     neighbours: dict[str, dict[str, float]] = {node: {} for node in nodes}
     for source, target, weight in edges:
         if source in neighbours and target in neighbours and source != target:
@@ -458,7 +465,9 @@ def communities(
             best = max(pull.values())
             if pull.get(label[node], -1.0) >= best:
                 continue
-            winner = min((candidate for candidate, value in pull.items() if value == best), key=order.index)
+            # Rank by the node order in O(1); ``order.index`` made each label
+            # choice scan every node, so one propagation pass was O(n²).
+            winner = min((candidate for candidate, value in pull.items() if value == best), key=rank.__getitem__)
             label[node] = winner
             changed = True
         if not changed:

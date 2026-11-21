@@ -292,11 +292,11 @@ def relevance_terms(
     with np.errstate(divide="ignore", invalid="ignore"):
         log_ratio = np.log(np.clip(ptw, 1e-12, None) / prevalence[:, None])
     saliency = np.sum(ptw * log_ratio, axis=0)
+    freq = np.array([counts.get(str(word), 0) for word in vocabulary], dtype=float)
+    log_pw_weighted = (1.0 - lam) * np.log(np.clip(freq / total, 1e-12, None))
     for topic_id in range(phi.shape[0]):
         log_phi = np.log(np.clip(phi[topic_id], 1e-12, None))
-        freq = np.array([counts.get(str(word), 0) for word in vocabulary], dtype=float)
-        log_pw = np.log(np.clip(freq / total, 1e-12, None))
-        relevance = lam * log_phi + (1.0 - lam) * log_pw
+        relevance = lam * log_phi + log_pw_weighted
         order = np.argsort(-relevance)[:top_n]
         for index in order:
             rows.append(
@@ -498,6 +498,7 @@ def fit_lda(
     relevance_lambda: float = 0.6,
     segments: SegmentPlan | None = None,
     segment_tokens: Mapping[str, pd.Series] | None = None,
+    views: bool = True,
 ) -> Result[LdaResult]:
     """Fit seeded Gensim LDA over per-document token lists.
 
@@ -585,8 +586,17 @@ def fit_lda(
 
     dominant_rows: list[dict[str, object]] = []
     matrix_rows: list[dict[str, object]] = []
+    doc_topic_mass = np.zeros(n_topics, dtype=float)
+    topic_token_mass = np.zeros(n_topics, dtype=float)
     for doc_id, (name, bow) in enumerate(zip(names, corpus, strict=True), start=1):
-        dist = sorted(model.get_document_topics(bow, minimum_probability=0.0), key=lambda pair: pair[1], reverse=True)
+        raw_dist = model.get_document_topics(bow, minimum_probability=0.0)
+        dist = sorted(raw_dist, key=lambda pair: pair[1], reverse=True)
+        if views:
+            length = float(sum(count for _, count in bow))
+            for topic_id, share in raw_dist:
+                share_f = float(share)
+                doc_topic_mass[int(topic_id)] += share_f
+                topic_token_mass[int(topic_id)] += share_f * length
         best_id, best_share = int(dist[0][0]), round(float(dist[0][1]), 4)
         dominant_rows.append(
             {
@@ -640,29 +650,28 @@ def fit_lda(
     # while it is still in hand: terms at the requested lambda, and the
     # Intertopic Distance Map's placement. Both are data; the drawing is
     # somebody else's job.
-    vocabulary = [dictionary[i] for i in range(len(dictionary))]
-    phi = model.get_topics()
-    doc_topic_mass = np.zeros(n_topics, dtype=float)
-    # Token-weighted too: a topic's expected token count, the N_t pyLDAvis
-    # scales p(word|topic) by. A long address contributes more tokens than a
-    # short one, and the share-weighted mass above does not know that.
-    topic_token_mass = np.zeros(n_topics, dtype=float)
-    for bow in corpus:
-        length = float(sum(count for _, count in bow))
-        for topic_id, share in model.get_document_topics(bow, minimum_probability=0.0):
-            doc_topic_mass[int(topic_id)] += float(share)
-            topic_token_mass[int(topic_id)] += float(share) * length
-    views: tuple[Diagnostic, ...] = tuple(diags)
-    try:
-        by_name = dict(zip(names, texts, strict=True))
-        relevance = relevance_terms(
-            phi, vocabulary, by_name, lam=relevance_lambda, top_n=max(top_n, 10), topic_tokens=topic_token_mass.tolist()
-        )
-        intertopic = intertopic_map(phi, doc_topic_mass.tolist(), seed=seed)
-    except Exception as exc:  # views are a convenience; the fit still counts
-        views = (*tuple(diags), Diagnostic.warning("TOPIC_VIEWS_FAILED", f"topic views could not be computed: {exc}"))
-        relevance = None
-        intertopic = None
+    view_diags: tuple[Diagnostic, ...] = tuple(diags)
+    relevance: pd.DataFrame | None = None
+    intertopic: pd.DataFrame | None = None
+    if views:
+        vocabulary = [dictionary[i] for i in range(len(dictionary))]
+        phi = model.get_topics()
+        try:
+            by_name = dict(zip(names, texts, strict=True))
+            relevance = relevance_terms(
+                phi,
+                vocabulary,
+                by_name,
+                lam=relevance_lambda,
+                top_n=max(top_n, 10),
+                topic_tokens=topic_token_mass.tolist(),
+            )
+            intertopic = intertopic_map(phi, doc_topic_mass.tolist(), seed=seed)
+        except Exception as exc:  # views are a convenience; the fit still counts
+            view_diags = (
+                *tuple(diags),
+                Diagnostic.warning("TOPIC_VIEWS_FAILED", f"topic views could not be computed: {exc}"),
+            )
 
     return Result.success(
         LdaResult(
@@ -677,5 +686,5 @@ def fit_lda(
             intertopic=intertopic,
             flow=flow,
         ),
-        *views,
+        *view_diags,
     )

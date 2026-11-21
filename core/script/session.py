@@ -218,7 +218,10 @@ class Session:
 
     def name_for(self, wanted: str | None, fallback: str) -> str:
         """A file-safe name no other output of this session has taken."""
-        stem = _UNSAFE_NAME.sub("_", (wanted or fallback).strip()).strip("_") or fallback
+        # A script may pass a number or another object as a name; a name is
+        # text, so say what it is rather than failing in ``.strip()``.
+        requested = wanted if isinstance(wanted, str) else ("" if wanted is None else str(wanted))
+        stem = _UNSAFE_NAME.sub("_", (requested or fallback).strip()).strip("_") or fallback
         name, counter = stem, 2
         while name.lower() in self._names:
             name = f"{stem}_{counter}"
@@ -312,7 +315,11 @@ class FolderSource:
         from core.io.reader import Corpus, corpus_fingerprint
 
         by_id = {str(doc.doc_id): doc for doc in self._corpus.docs}
-        chosen = [by_id[i] for i in ids] if ids is not None else list(self._corpus.docs)
+        if ids is not None:
+            missing = [str(item) for item in ids if str(item) not in by_id]
+            if missing:
+                raise SuiteError(f"No document {missing[0]!r} in {self.directory.name or 'this folder'}.")
+        chosen = [by_id[str(i)] for i in ids] if ids is not None else list(self._corpus.docs)
         docs = tuple(
             replace(doc, doc_id=position, source_id=str(doc.doc_id), label=doc.name)
             for position, doc in enumerate(chosen, 1)

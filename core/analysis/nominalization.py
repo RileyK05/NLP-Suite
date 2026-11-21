@@ -218,25 +218,36 @@ def _scan(
     curated: frozenset[str],
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """One pass: nominalization rows + per-sentence rows (sentences with hits only)."""
+    from core.conll.frames import col_str_list, sentence_indices
+
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
+    doc_ids = frame[Col.DOCUMENT_ID.value].tolist()
+    sent_ids = frame[Col.SENTENCE_ID.value].tolist()
+    docs = col_str_list(frame, doc_col) if doc_col is not None else [""] * len(frame)
+    forms = col_str_list(frame, Col.FORM)
+    pos_list = col_str_list(frame, Col.POS)
+    field_vals = col_str_list(frame, field)
+
     nom_rows: list[dict[str, object]] = []
     sent_rows: list[dict[str, object]] = []
     memo: dict[str, str | None] = {}
-    for (doc_id, sent_id), group in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        forms = [str(v) for v in group[Col.FORM.value].tolist()]
-        sentence = " ".join(forms)
-        doc = str(group[doc_col].iloc[0]) if doc_col is not None else ""
+    for sent_idx_list in sentence_indices(frame).values():
+        first_i = sent_idx_list[0]
+        doc_id = doc_ids[first_i]
+        sent_id = sent_ids[first_i]
+        doc = docs[first_i]
+        sentence = " ".join(forms[i] for i in sent_idx_list)
         word_count = 0
         hits: list[tuple[str, str]] = []
-        for _, row in group.iterrows():
-            surface = str(row[Col.FORM.value])
+        for idx in sent_idx_list:
+            surface = forms[idx]
             if not surface or surface in string.punctuation or surface[0] in ('"', "'", "`"):
                 continue
             word_count += 1
-            if not _is_noun(str(row[Col.POS.value])):
+            if not _is_noun(pos_list[idx]):
                 continue
             word = surface.lower()
-            lemma = str(row[field.value]).lower()
+            lemma = field_vals[idx].lower()
             # The legacy workflow uses the suffix list as a prefilter. Apply
             # it before the WordNet lookup so large corpora do not spend time
             # resolving derivations for nouns that cannot qualify. Curated

@@ -90,6 +90,18 @@ class TestChartFallbackIsKnowable:
         assert any(d.code == "CHART_PLOTLY_UNAVAILABLE" for d in result.warnings)
         assert result.warnings[0].context["fix"] == "pip install plotly"
 
+    def test_chart_fallback_widths_are_magnitudes_not_signed_shares(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A negative value is a long bar in the other direction, not a >100% one."""
+        from core.viz.charts import bar_chart_html
+
+        _block_plotly(monkeypatch)
+        frame = pd.DataFrame({"x": ["loss", "gain", "none"], "y": [-2.0, 4.0, 0.0]})
+        result = bar_chart_html(frame, "x", "y")
+        assert result.ok
+        html = result.unwrap()
+        assert "width:50.0%" in html and "width:100.0%" in html and "width:0.0%" in html
+        assert "width:200.0%" not in html and "width:-" not in html
+
     def test_sankey_fallback_emits_warning_without_plotly(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from core.viz.shapes import sankey_html
 

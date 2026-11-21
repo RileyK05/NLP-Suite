@@ -21,8 +21,9 @@ Intentional differences from the legacy (defect-grade, recorded):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -59,44 +60,77 @@ class TrainedW2V:
     sg: int
     seed: int
     epochs: int
+    # Read-only caches, filled on first query. A 20k-word vocabulary used to
+    # rebuild three arrays and scan the word tuple twice per call; a frozen
+    # dataclass can still populate a slot through object.__setattr__.
+    _matrix: np.ndarray | None = field(default=None, init=False, repr=False, compare=False, hash=False)
+    _norms: np.ndarray | None = field(default=None, init=False, repr=False, compare=False, hash=False)
+    _lookup: dict[str, int] | None = field(default=None, init=False, repr=False, compare=False, hash=False)
 
     def _index(self, word: str) -> int:
+        lookup = self._lookup
+        if lookup is None:
+            lookup = {value: position for position, value in enumerate(self.words)}
+            object.__setattr__(self, "_lookup", lookup)
         try:
-            return self.words.index(word)
-        except ValueError:
+            return lookup[word]
+        except KeyError:
             raise KeyError(f"{word!r} not in vocabulary") from None
+
+    def _arrays(self) -> tuple[np.ndarray, np.ndarray]:
+        matrix = self._matrix
+        norms = self._norms
+        if matrix is None or norms is None:
+            matrix = np.asarray(self.vectors, dtype=float)
+            norms = np.linalg.norm(matrix, axis=1)
+            norms[norms == 0] = 1.0
+            object.__setattr__(self, "_matrix", matrix)
+            object.__setattr__(self, "_norms", norms)
+        return matrix, norms
 
     def similarity(self, word_a: str, word_b: str) -> float:
         """Cosine similarity between two in-vocabulary words."""
-        vec_a = np.array(self.vectors[self._index(word_a)], dtype=float)
-        vec_b = np.array(self.vectors[self._index(word_b)], dtype=float)
-        denom = float(np.linalg.norm(vec_a) * np.linalg.norm(vec_b))
+        idx_a = self._index(word_a)
+        idx_b = self._index(word_b)
+        matrix, norms = self._arrays()
+        denom = float(norms[idx_a] * norms[idx_b])
         if denom == 0:
             return 0.0
-        return float(np.dot(vec_a, vec_b) / denom)
+        return float(np.dot(matrix[idx_a], matrix[idx_b]) / denom)
+
+    def neighbors(self, query: str, top_n: int = 5) -> list[tuple[str, float]]:
+        """``(word, cosine)`` pairs nearest to *query*, best first."""
+        key = query.strip().lower()
+        index = self._index(key)
+        matrix, norms = self._arrays()
+        cosines = (matrix @ matrix[index]) / (norms * norms[index])
+        # Stable sort on -cosine keeps the alphabetical order of ties.
+        order = [i for i in np.argsort(-cosines, kind="stable").tolist() if i != index]
+        return [(self.words[i], float(cosines[i])) for i in order[:top_n]]
 
 
 def _sentences_from_frame(frame: pd.DataFrame, field: Col, remove_stopwords: bool) -> list[list[str]]:
     """CoNLL rows -> per-sentence token lists in row order."""
     from core.analysis.lda import STOPWORDS
+    from core.conll.frames import col_str_list
 
+    if frame.empty:
+        return []
+    raw_vals = frame[field.value].tolist()
+    doc_ids = col_str_list(frame, Col.DOCUMENT_ID)
+    sent_ids = col_str_list(frame, Col.SENTENCE_ID)
     sentences: dict[tuple[str, str], list[str]] = {}
-    for _, row in frame.iterrows():
-        raw = row[field.value]
-        if raw is None:
+    for raw, did, sid in zip(raw_vals, doc_ids, sent_ids, strict=True):
+        if raw is None or raw is pd.NA:
             continue
-        try:
-            if bool(pd.isna(raw)):
-                continue
-        except (TypeError, ValueError):
-            pass
+        if isinstance(raw, float) and math.isnan(raw):
+            continue
         text = str(raw).strip().lower()
         if not text or not text.isalpha():
             continue
         if remove_stopwords and text in STOPWORDS:
             continue
-        key = (str(row[Col.DOCUMENT_ID.value]), str(row["Sentence ID"]))
-        sentences.setdefault(key, []).append(text)
+        sentences.setdefault((did, sid), []).append(text)
     return [toks for toks in sentences.values() if toks]
 
 
@@ -257,15 +291,18 @@ def distances(
         return Result.failure(*trained.diagnostics)
     model = trained.unwrap()
     key = query.strip().lower()
-    if key not in model.words:
+    vocab = {word: idx for idx, word in enumerate(model.words)}
+    index = vocab.get(key)
+    if index is None:
         return Result.failure(Diagnostic.error("W2V_UNKNOWN_WORD", f"{query!r} not in vocabulary", query=query))
-    scored = sorted(
-        ((word, model.similarity(key, word)) for word in model.words if word != key),
-        key=lambda pair: pair[1],
-        reverse=True,
-    )
+    matrix = np.asarray(model.vectors, dtype=float)
+    norms = np.linalg.norm(matrix, axis=1)
+    norms[norms == 0] = 1.0
+    denom = norms * norms[index]
+    cosines = np.where(denom == 0, 0.0, (matrix @ matrix[index]) / denom)
+    order = [idx for idx in np.argsort(-cosines, kind="stable").tolist() if idx != index][:top_n]
     out = pd.DataFrame(
-        [{"Word": key, "Neighbor": word, "Cosine": round(score, 4)} for word, score in scored[:top_n]],
+        [{"Word": key, "Neighbor": model.words[idx], "Cosine": round(float(cosines[idx]), 4)} for idx in order],
         columns=["Word", "Neighbor", "Cosine"],
     )
     return Result.success(out)

@@ -15,7 +15,7 @@ from typing import Any
 import streamlit as st
 
 from app.forms import WidgetDescriptor, widgets_for
-from app.session import render_shared_sidebar
+from app.session import get_pipeline_cache, render_shared_sidebar
 from app.state import resolve_corpus
 from core.profiler.batch import BatchRequest, write_batch
 from core.profiler.executor import execute
@@ -127,7 +127,6 @@ if st.button("Run", type="primary"):
     with st.spinner(f"Running {selected} … (synchronous; `nlp-suite jobs submit {selected}` for large corpora)"):
         from core.config import NLPConfig
         from core.io.reader import read_corpus
-        from core.pipelines.cache import PipelineCache
 
         resolved = resolve_corpus(corpus_dir)
         if resolved.value is None:
@@ -152,9 +151,10 @@ if st.button("Run", type="primary"):
             except ValueError as exc:
                 st.error(f"config error: {exc}")
                 st.stop()
-            cache = PipelineCache()
             from core.pipelines.resolve import resolve_pipeline
+            from tools._parse_cache import parse_with_cache
 
+            cache = get_pipeline_cache()
             # Falls back to another installed backend when this one's model
             # is missing or damaged, and says so rather than doing it quietly.
             pipeline_result = resolve_pipeline(cache, config)
@@ -166,7 +166,7 @@ if st.button("Run", type="primary"):
                 # A substituted parser changes the result, so it is shown, not logged.
                 if diag.code == "PARSER_FALLBACK":
                     st.warning(diag.message)
-            table_result = pipeline_result.unwrap().parse(corpus)
+            table_result = parse_with_cache(pipeline_result.unwrap(), corpus)
             if table_result.value is None:
                 for diag in table_result.diagnostics:
                     st.error(str(diag))

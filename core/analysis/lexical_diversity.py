@@ -77,6 +77,9 @@ class LexDivResult:
         return self.frame.copy()
 
 
+_TOKEN_PATTERN = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*['’]?")  # noqa: RUF001 — curly quote is intentional
+
+
 def tokenize(text: str) -> list[str]:
     """Lowercase whitespace split with unicode word filter.
 
@@ -87,8 +90,7 @@ def tokenize(text: str) -> list[str]:
     word characters minus digits/underscore, plus internal apostrophes
     and hyphens. Punctuation-only tokens are still excluded.
     """
-    pattern = r"[^\W\d_]+(?:['’-][^\W\d_]+)*['’]?"  # noqa: RUF001 — curly quote is intentional
-    return re.findall(pattern, text.lower())
+    return _TOKEN_PATTERN.findall(text.lower())
 
 
 def ttr(tokens: list[str]) -> float:
@@ -144,28 +146,33 @@ def expected_ttr(d_candidate: float, sample_size: int) -> float:
     return (d_candidate / sample_size) * (math.sqrt(1 + 2 * sample_size / d_candidate) - 1)
 
 
+_VOCD_D_GRID = np.arange(10.0, 200.0 + 0.25, 0.5)  # C6-8: 200.0 endpoint INCLUDED
+_VOCD_SIZES = np.arange(_VOCD_MIN_SAMPLE, _VOCD_MAX_SAMPLE + 1, dtype=float)
+# Precomputed (381, 16) expected-TTR lookup matrix across all D candidates and sample sizes 35..50.
+_VOCD_EXPECTED_MATRIX = (_VOCD_D_GRID[:, None] / _VOCD_SIZES[None, :]) * (
+    np.sqrt(1.0 + 2.0 * _VOCD_SIZES[None, :] / _VOCD_D_GRID[:, None]) - 1.0
+)
+
+
 def vocd(tokens: list[str], seed: int = LEXDIV_DEFAULT_SEED) -> float:
     """Best-fit D over the 10..200 grid (step 0.5) against sampled mean TTRs."""
-    if len(tokens) < _VOCD_MIN_SAMPLE:
+    n_tokens = len(tokens)
+    if n_tokens < _VOCD_MIN_SAMPLE:
         return 0.0
     rng = random.Random(seed)
-    actual_max = min(_VOCD_MAX_SAMPLE, len(tokens))
-    sample_sizes = list(range(_VOCD_MIN_SAMPLE, actual_max + 1))
-    if not sample_sizes:
+    rng_sample = rng.sample
+    actual_max = min(_VOCD_MAX_SAMPLE, n_tokens)
+    n_sizes = actual_max - _VOCD_MIN_SAMPLE + 1
+    if n_sizes <= 0:
         return 0.0
-    observed: dict[int, float] = {}
-    for size in sample_sizes:
-        draws = [ttr([tokens[i] for i in rng.sample(range(len(tokens)), size)]) for _ in range(_VOCD_TRIALS)]
-        observed[size] = float(np.mean(draws))
-    best_d = 50.0
-    best_err = float("inf")
-    grid = np.arange(10.0, 200.0 + 0.25, 0.5)  # C6-8: 200.0 endpoint INCLUDED
-    for d_candidate in grid:
-        err = sum((observed[size] - expected_ttr(float(d_candidate), size)) ** 2 for size in sample_sizes)
-        if err < best_err:
-            best_err = err
-            best_d = float(d_candidate)
-    return best_d
+    index_pool = range(n_tokens)
+    observed = np.empty(n_sizes, dtype=float)
+    for col_idx, size in enumerate(range(_VOCD_MIN_SAMPLE, actual_max + 1)):
+        draws = [len({tokens[i] for i in rng_sample(index_pool, size)}) / size for _ in range(_VOCD_TRIALS)]
+        observed[col_idx] = float(np.mean(draws))
+    diff = _VOCD_EXPECTED_MATRIX[:, :n_sizes] - observed[None, :]
+    best_idx = int(np.argmin(np.einsum("ij,ij->i", diff, diff)))
+    return float(_VOCD_D_GRID[best_idx])
 
 
 def run(corpus: Corpus, *, seed: int = LEXDIV_DEFAULT_SEED) -> Result[LexDivResult]:
@@ -186,14 +193,16 @@ def run(corpus: Corpus, *, seed: int = LEXDIV_DEFAULT_SEED) -> Result[LexDivResu
     for doc in corpus.docs:
         name = names[doc.doc_id]
         tokens = tokenize(doc.text)
+        total_tokens = len(tokens)
+        unique_types = len(set(tokens)) if total_tokens else 0
         vocd_short = False
         if not doc.text.strip():
             diags.append(Diagnostic.warning("LEXDIV_EMPTY_DOC", f"{name} has no text", doc_id=doc.doc_id, path=name))
             short = True
-        elif len(tokens) < _MTLD_MIN_TOKENS:
+        elif total_tokens < _MTLD_MIN_TOKENS:
             short_docs.append(name)
             short = True
-        elif len(tokens) < _VOCD_MIN_SAMPLE:
+        elif total_tokens < _VOCD_MIN_SAMPLE:
             # 10..34 tokens: MTLD is defined (its floor is 10) but vocd-D is
             # NOT (35-token minimum). Publishing vocd()'s 0.0 would disguise
             # "undefined at this length" as a genuine minimum score — the
@@ -208,13 +217,17 @@ def run(corpus: Corpus, *, seed: int = LEXDIV_DEFAULT_SEED) -> Result[LexDivResu
                 {
                     "Document ID": str(doc.doc_id),
                     "Document": name,
-                    "Total Tokens": len(tokens),
-                    "Unique Types": len(set(tokens)),
+                    "Total Tokens": total_tokens,
+                    "Unique Types": unique_types,
                     # Defined measures continue for short nonempty docs;
                     # empty docs have no tokens so all measures are NA.
-                    "TTR": round(ttr(tokens), 4) if tokens else pd.NA,
-                    "Root TTR (Guiraud)": round(root_ttr(tokens), 4) if tokens else pd.NA,
-                    "Log TTR (Herdan)": round(log_ttr(tokens), 4) if tokens else pd.NA,
+                    "TTR": round(unique_types / total_tokens, 4) if total_tokens else pd.NA,
+                    "Root TTR (Guiraud)": round(unique_types / math.sqrt(total_tokens), 4) if total_tokens else pd.NA,
+                    "Log TTR (Herdan)": (
+                        round(math.log(unique_types) / math.log(total_tokens), 4)
+                        if total_tokens >= 2
+                        else (0.0 if total_tokens else pd.NA)
+                    ),
                     "MTLD": pd.NA,
                     "vocd-D": pd.NA,
                 }
@@ -224,11 +237,11 @@ def run(corpus: Corpus, *, seed: int = LEXDIV_DEFAULT_SEED) -> Result[LexDivResu
             {
                 "Document ID": str(doc.doc_id),
                 "Document": name,
-                "Total Tokens": len(tokens),
-                "Unique Types": len(set(tokens)),
-                "TTR": round(ttr(tokens), 4),
-                "Root TTR (Guiraud)": round(root_ttr(tokens), 4),
-                "Log TTR (Herdan)": round(log_ttr(tokens), 4),
+                "Total Tokens": total_tokens,
+                "Unique Types": unique_types,
+                "TTR": round(unique_types / total_tokens, 4),
+                "Root TTR (Guiraud)": round(unique_types / math.sqrt(total_tokens), 4),
+                "Log TTR (Herdan)": round(math.log(unique_types) / math.log(total_tokens), 4),
                 "MTLD": round(mtld(tokens), 2),
                 "vocd-D": pd.NA if vocd_short else round(vocd(tokens, seed=seed), 2),
             }

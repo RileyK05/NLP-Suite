@@ -32,6 +32,8 @@ the smoothing hid.
 
 from __future__ import annotations
 
+import math
+
 from collections.abc import Mapping, Sequence
 
 import pandas as pd
@@ -75,18 +77,16 @@ def frame_tokens(frame: pd.DataFrame, *, field: Col = Col.FORM) -> dict[str, lis
     tokens: dict[str, list[str]] = {}
     if frame.empty or field.value not in frame.columns or Col.DOCUMENT_ID.value not in frame.columns:
         return tokens
-    for _, row in frame.iterrows():
-        raw = row[field.value]
-        if raw is None:
+    raw_vals = frame[field.value].tolist()
+    doc_ids = frame[Col.DOCUMENT_ID.value].astype(str).tolist()
+    for raw, doc_id in zip(raw_vals, doc_ids, strict=True):
+        if raw is None or raw is pd.NA:
             continue
-        try:
-            if bool(pd.isna(raw)):
-                continue
-        except (TypeError, ValueError):
-            pass
+        if isinstance(raw, float) and math.isnan(raw):
+            continue
         text = str(raw).strip()
         if text:
-            tokens.setdefault(str(row[Col.DOCUMENT_ID.value]), []).append(text)
+            tokens.setdefault(doc_id, []).append(text)
     return tokens
 
 

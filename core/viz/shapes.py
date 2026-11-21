@@ -30,18 +30,24 @@ def story_shape(frame: pd.DataFrame) -> Result[pd.DataFrame]:
             pd.DataFrame(columns=["Document ID", "Sentence ID", "Tokens", "Noun Ratio", "Verb Ratio", "Sentence"])
         )
 
+    from core.conll.frames import col_str_list, sentence_indices
+
+    forms = col_str_list(frame, Col.FORM)
+    pos_list = col_str_list(frame, Col.POS)
+    doc_ids = col_str_list(frame, Col.DOCUMENT_ID)
+    raw_sent_ids = frame[Col.SENTENCE_ID.value].tolist()
+
     rows: list[dict[str, object]] = []
-    for (did, sid), g in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        toks = g[Col.FORM.value].tolist()
-        pos = g[Col.POS.value].astype(str).tolist()
-        n = len(toks)
-        nouns = sum(1 for p in pos if is_noun_tag(p))
-        verbs = sum(1 for p in pos if p.startswith("VB") or p in ("VERB", "AUX"))
-        sent_text = " ".join(str(x) for x in toks)
+    for sent_rows in sentence_indices(frame).values():
+        first_idx = sent_rows[0]
+        n = len(sent_rows)
+        nouns = sum(1 for i in sent_rows if is_noun_tag(pos_list[i]))
+        verbs = sum(1 for i in sent_rows if (p := pos_list[i]).startswith("VB") or p in ("VERB", "AUX"))
+        sent_text = " ".join(forms[i] for i in sent_rows)
         rows.append(
             {
-                "Document ID": str(did),
-                "Sentence ID": sid,
+                "Document ID": doc_ids[first_idx],
+                "Sentence ID": raw_sent_ids[first_idx],
                 "Tokens": n,
                 "Noun Ratio": round(nouns / n, 4) if n else 0.0,
                 "Verb Ratio": round(verbs / n, 4) if n else 0.0,
@@ -103,12 +109,14 @@ def sankey_html(
     # Fallback
     try:
         title_html = f"<h3>{html_lib.escape(title)}</h3>" if title else ""
-        rows_html = ""
-        for _, row in frame.iterrows():
-            s = html_lib.escape(str(row[source]))
-            t = html_lib.escape(str(row[target]))
-            v = html_lib.escape(str(row[value])) if value and value in frame.columns else "1"
-            rows_html += f"<tr><td>{s}</td><td>→</td><td>{t}</td><td>{v}</td></tr>"
+        src_vals = frame[source].astype(str).tolist()
+        tgt_vals = frame[target].astype(str).tolist()
+        val_vals = frame[value].astype(str).tolist() if value and value in frame.columns else ["1"] * len(src_vals)
+        esc = html_lib.escape
+        rows_html = "".join(
+            f"<tr><td>{esc(s)}</td><td>→</td><td>{esc(t)}</td><td>{esc(v)}</td></tr>"
+            for s, t, v in zip(src_vals, tgt_vals, val_vals, strict=True)
+        )
         html_str = (
             f"{title_html}<table border='1' cellpadding='4' style='border-collapse:collapse'>"
             f"<tr><th>{html_lib.escape(source)}</th><th></th><th>{html_lib.escape(target)}</th><th>{html_lib.escape(value) if value else 'Weight'}</th></tr>"

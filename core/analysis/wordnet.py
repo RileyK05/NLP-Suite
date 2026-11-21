@@ -25,6 +25,7 @@ Intentional differences from the legacy (all defect-grade, none silent):
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -255,9 +256,9 @@ def _children(node: SynsetView, which: str) -> list[SynsetView]:
 def _climb_to_top(synset: SynsetView, tops: frozenset[str]) -> tuple[str, list[str]]:
     """BFS hypernym climb to the synset's top supersense (legacy verbatim)."""
     visited: set[str] = set()
-    queue: list[tuple[list[str], SynsetView]] = [([synset.name()], synset)]
+    queue: deque[tuple[list[str], SynsetView]] = deque([([synset.name()], synset)])
     while queue:
-        path, current = queue.pop(0)
+        path, current = queue.popleft()
         if current.name() in visited:
             continue
         visited.add(current.name())
@@ -298,9 +299,9 @@ def _resolve_anchors(anchor_terms: Sequence[str], pos: str, backend: WordNetBack
 def _climb_to_target(synset: SynsetView, targets: set[str], tops: frozenset[str]) -> tuple[str, list[str]]:
     """BFS climb to the nearest anchor synset, else '(other) <supersense>'."""
     visited: set[str] = set()
-    queue: list[tuple[list[str], SynsetView]] = [([synset.name()], synset)]
+    queue: deque[tuple[list[str], SynsetView]] = deque([([synset.name()], synset)])
     while queue:
-        path, current = queue.pop(0)
+        path, current = queue.popleft()
         if current.name() in visited:
             continue
         visited.add(current.name())
@@ -346,6 +347,7 @@ def aggregate_up(
             )
 
     entries: list[tuple[str, str, list[str]]] = []
+    memo: dict[str, tuple[str, list[str]]] = {}
     for raw in words:
         if raw is None:
             continue
@@ -357,15 +359,23 @@ def aggregate_up(
             except (TypeError, ValueError):
                 pass
         cleaned = str(raw).strip().lower()
+        hit = memo.get(cleaned)
+        if hit is not None:
+            entries.append((cleaned, hit[0], hit[1]))
+            continue
         senses = resolved.synsets(cleaned, pos) if cleaned else []
         if not senses:
-            entries.append((cleaned, "Not found", []))
+            result_pair: tuple[str, list[str]] = ("Not found", [])
+            memo[cleaned] = result_pair
+            entries.append((cleaned, result_pair[0], result_pair[1]))
             continue
         first = senses[0]
         if anchor_names:
             category, path = _climb_to_target(first, anchor_names, tops)
         else:
             category, path = _climb_to_top(first, tops)
+        result_pair = (category, path)
+        memo[cleaned] = result_pair
         entries.append((cleaned, category, path))
 
     width = max((len(path) for _, _, path in entries), default=0)
@@ -415,10 +425,10 @@ def expand_down(keyword: str, *, pos: str = "NOUN", backend: WordNetBackend | No
         )
     anchor = senses[0]
     rows: list[dict[str, object]] = []
-    queue: list[SynsetView] = [anchor]
+    queue: deque[SynsetView] = deque([anchor])
     seen: set[str] = set()
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         if current.name() in seen:
             continue
         seen.add(current.name())

@@ -19,8 +19,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from core.conll.schema import Col, canonical_columns
+from core.conll.builder import ConllTableBuilder
+from core.conll.schema import canonical_columns
 from core.deps import OptionalDependencyError, import_optional
+from core.hardware import spacy_pipe_batch_size
 from core.io.reader import Corpus, display_names
 from core.result import Diagnostic, Result
 
@@ -69,89 +71,132 @@ class SpacyPipeline:
         for many times the cost."""
         return tuple(token.text for token in self._nlp.tokenizer(text))  # type: ignore[attr-defined]
 
+    def _append_doc(
+        self,
+        builder: ConllTableBuilder,
+        spacy_doc: object,
+        doc_id: str,
+        doc_name: str,
+    ) -> None:
+        for sent_idx, sent in enumerate(spacy_doc.sents, start=1):  # type: ignore[attr-defined]
+            sent_start = sent.start
+            for token in sent:
+                head_id = 0
+                try:
+                    head = token.head
+                    # spaCy may expose distinct Python wrapper objects for
+                    # the same token; identity comparison mislabels roots
+                    # as self-headed. Compare stable token indices.
+                    if int(head.i) != int(token.i):
+                        head_id = int(head.i - sent_start + 1)
+                except Exception:
+                    head_id = 0
+                pos = ""
+                try:
+                    pos = str(getattr(token, "tag_", "") or getattr(token, "pos_", "") or "")
+                except Exception:
+                    pos = ""
+                lemma = ""
+                try:
+                    lemma = str(getattr(token, "lemma_", "") or token.text)
+                except Exception:
+                    lemma = str(token.text)
+                ner = "O"
+                try:
+                    ent = str(getattr(token, "ent_type_", "") or "")
+                    if ent:
+                        ner = ent
+                except Exception:
+                    ner = "O"
+                dep = ""
+                try:
+                    dep = str(getattr(token, "dep_", "") or "")
+                except Exception:
+                    dep = ""
+                builder.append(
+                    token_id=int(token.i - sent_start + 1),
+                    form=str(token.text),
+                    lemma=lemma,
+                    pos=pos,
+                    ner=ner,
+                    head=head_id,
+                    deprel=dep,
+                    sentence_id=sent_idx,
+                    document_id=doc_id,
+                    document=doc_name,
+                )
+
     def parse(self, corpus: Corpus) -> Result[pd.DataFrame]:
         """Parse *corpus* into a canonical CoNLL table."""
         nlp = self._nlp
-        rows: list[dict[str, object]] = []
+        builder = ConllTableBuilder()
         diagnostics: list[Diagnostic] = []
-        record_id = 1
         names = display_names(corpus.docs)
+
+        non_empty = []
         for doc in corpus.docs:
             if not doc.text.strip():
                 diagnostics.append(
                     Diagnostic.warning("EMPTY_DOC", f"{names[doc.doc_id]} has no content", doc_id=doc.doc_id)
                 )
-                continue
+            else:
+                non_empty.append(doc)
+
+        parsed_docs: dict[int, object] = {}
+        # Use batched nlp.pipe only on genuine spaCy Language objects (not callable test doubles).
+        is_spacy_lang = getattr(type(nlp), "__module__", "").startswith("spacy") and callable(
+            getattr(nlp, "pipe", None)
+        )
+        if is_spacy_lang and len(non_empty) > 1:
+            batch_size = spacy_pipe_batch_size()
+            emitted = 0
             try:
-                spacy_doc = nlp(doc.text)  # type: ignore[operator]
-            except Exception as exc:
-                diagnostics.append(
-                    Diagnostic.error(
-                        "PARSE_FAILED",
-                        f"spaCy failed on {names[doc.doc_id]}: {exc}",
-                        doc_id=doc.doc_id,
-                        path=str(doc.path),
+                for doc, spacy_doc in zip(
+                    non_empty,
+                    nlp.pipe((d.text for d in non_empty), batch_size=batch_size),  # type: ignore[attr-defined]
+                    strict=True,
+                ):
+                    parsed_docs[doc.doc_id] = spacy_doc
+                    emitted += 1
+            except Exception:
+                # Isolate failures to the offending document(s) without losing the batch.
+                for doc in non_empty[emitted:]:
+                    try:
+                        parsed_docs[doc.doc_id] = nlp(doc.text)  # type: ignore[operator]
+                    except Exception as exc:
+                        diagnostics.append(
+                            Diagnostic.error(
+                                "PARSE_FAILED",
+                                f"spaCy failed on {names[doc.doc_id]}: {exc}",
+                                doc_id=doc.doc_id,
+                                path=str(doc.path),
+                            )
+                        )
+        else:
+            for doc in non_empty:
+                try:
+                    parsed_docs[doc.doc_id] = nlp(doc.text)  # type: ignore[operator]
+                except Exception as exc:
+                    diagnostics.append(
+                        Diagnostic.error(
+                            "PARSE_FAILED",
+                            f"spaCy failed on {names[doc.doc_id]}: {exc}",
+                            doc_id=doc.doc_id,
+                            path=str(doc.path),
+                        )
                     )
-                )
+
+        for doc in non_empty:
+            spacy_doc = parsed_docs.get(doc.doc_id)
+            if spacy_doc is None:
                 continue
-            for sent_idx, sent in enumerate(spacy_doc.sents, start=1):
-                for token in sent:
-                    head_id = 0
-                    try:
-                        head = token.head
-                        # spaCy may expose distinct Python wrapper objects for
-                        # the same token; identity comparison mislabels roots
-                        # as self-headed. Compare stable token indices.
-                        if int(head.i) != int(token.i):
-                            head_id = int(head.i - sent.start + 1)
-                    except Exception:
-                        head_id = 0
-                    pos = ""
-                    try:
-                        pos = str(getattr(token, "tag_", "") or getattr(token, "pos_", "") or "")
-                    except Exception:
-                        pos = ""
-                    lemma = ""
-                    try:
-                        lemma = str(getattr(token, "lemma_", "") or token.text)
-                    except Exception:
-                        lemma = str(token.text)
-                    ner = "O"
-                    try:
-                        ent = str(getattr(token, "ent_type_", "") or "")
-                        if ent:
-                            ner = ent
-                    except Exception:
-                        ner = "O"
-                    dep = ""
-                    try:
-                        dep = str(getattr(token, "dep_", "") or "")
-                    except Exception:
-                        dep = ""
-                    rows.append(
-                        {
-                            Col.ID.value: int(token.i - sent.start + 1),
-                            Col.FORM.value: str(token.text),
-                            Col.LEMMA.value: lemma,
-                            Col.POS.value: pos,
-                            Col.NER.value: ner,
-                            Col.HEAD.value: head_id,
-                            Col.DEPREL.value: dep,
-                            Col.DEPS.value: "_",
-                            Col.CLAUSE_TAG.value: "",
-                            Col.RECORD_ID.value: record_id,
-                            Col.SENTENCE_ID.value: sent_idx,
-                            Col.DOCUMENT_ID.value: str(doc.doc_id),
-                            Col.DOCUMENT.value: names[doc.doc_id],
-                        }
-                    )
-                    record_id += 1
-        if not rows:
-            frame = pd.DataFrame(columns=list(_CANONICAL))
+            self._append_doc(builder, spacy_doc, str(doc.doc_id), names[doc.doc_id])
+
+        frame = builder.to_frame()
+        if not len(builder):
             if diagnostics:
                 return Result[pd.DataFrame](frame, tuple(diagnostics))
             return Result.success(frame, *diagnostics)
-        frame = pd.DataFrame(rows, columns=list(_CANONICAL))
         return Result.success(frame, *diagnostics)
 
 
@@ -189,6 +234,10 @@ def build_spacy_pipeline(language: str, tasks: frozenset[str]) -> Result[SpacyPi
     for model_name in model_candidates:
         try:
             nlp = spacy.load(model_name)
+            if tasks and getattr(type(nlp), "__module__", "").startswith("spacy"):
+                requested = {str(t).strip().lower() for t in tasks}
+                if "ner" not in requested and "ner" in getattr(nlp, "pipe_names", ()) and hasattr(nlp, "disable_pipes"):
+                    nlp.disable_pipes("ner")
             return Result.success(SpacyPipeline(_nlp=nlp, language=language, tasks=tasks, model_name=model_name))
         except OSError:
             continue  # not installed under this name; try the next candidate

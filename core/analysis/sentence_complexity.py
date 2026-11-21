@@ -314,31 +314,62 @@ def _dependency_health(heads: list[int]) -> list[Diagnostic]:
     return problems
 
 
-def _dependency_health_with_ids(ids: list[int], heads: dict[int, int]) -> list[Diagnostic]:
-    """Dependency health for sentence-local IDs (which need not be dense)."""
+def _sentence_depth_and_health(ids: list[int], heads: dict[int, int]) -> tuple[list[Diagnostic], int]:
+    """Check root/self-head/cycle health and compute max tree depth in O(n)."""
     problems: list[Diagnostic] = []
     roots = [token_id for token_id in ids if heads.get(token_id, 0) == 0]
     if not roots:
         problems.append(Diagnostic.error("COMPLEXITY_NO_ROOT", "sentence has no root token", n=len(ids)))
     elif len(roots) > 1:
         problems.append(Diagnostic.warning("COMPLEXITY_MULTI_ROOT", f"sentence has {len(roots)} roots", roots=roots))
-    id_set = set(ids)
     for token_id in ids:
-        head = heads.get(token_id, 0)
-        if head == token_id:
+        if heads.get(token_id, 0) == token_id:
             problems.append(
                 Diagnostic.error("COMPLEXITY_SELF_HEAD", f"token {token_id} is its own head", token=token_id)
             )
+    # Each token's depth equals depth_of(heads, token): edges up to the root.
+    # Walk up from each unresolved token until a root or an already-resolved
+    # token; the walked path then gets its depths in one pass. The last token
+    # on the path is a root (depth 0), or sits one below the resolved token it
+    # reached, and each token before it is one deeper again.
+    depths: dict[int, int] = {}
+    cycle_reported = False
     for start in ids:
-        seen: set[int] = set()
+        if start in depths:
+            continue
+        path: list[int] = []
+        on_path: set[int] = set()
         current = start
-        while current in id_set and heads.get(current, 0) > 0:
-            if current in seen:
-                problems.append(Diagnostic.error("COMPLEXITY_CYCLE", "dependency cycle detected", start=start))
-                return problems
-            seen.add(current)
-            current = heads[current]
-    return problems
+        tail: int | None = None
+        while tail is None:
+            if current in depths:
+                tail = depths[current] + 1
+                break
+            if current in on_path:
+                # A malformed parse. depth_of's cycle-guarded count is not
+                # additive along a cycle, so those tokens take it directly.
+                if not cycle_reported:
+                    problems.append(Diagnostic.error("COMPLEXITY_CYCLE", "dependency cycle detected", start=start))
+                    cycle_reported = True
+                for node in path:
+                    depths[node] = depth_of(heads, node)
+                path = []
+                break
+            path.append(current)
+            on_path.add(current)
+            head = heads.get(current, 0)
+            if head <= 0:
+                tail = 0
+            elif head not in heads:
+                tail = 1  # depth_of counts the edge to a head outside the sentence, then stops
+            else:
+                current = head
+        if tail is not None:
+            last = len(path) - 1
+            for position, node in enumerate(path):
+                depths[node] = tail + last - position
+    max_depth = max((depths.get(tid, 0) for tid in ids), default=0)
+    return problems, max_depth
 
 
 def run(frame: pd.DataFrame) -> Result[ComplexityResult]:
@@ -441,9 +472,10 @@ def run(frame: pd.DataFrame) -> Result[ComplexityResult]:
                     )
                 heads = [0 if h > 0 and h not in id_set else h for h in heads]
             head_map = dict(zip(usable_ids, heads, strict=True))
-            diags.extend(_dependency_health_with_ids(usable_ids, head_map)[:2])
+            health, depth = _sentence_depth_and_health(usable_ids, head_map)
+            diags.extend(health[:2])
             distances = [abs(token_id - head) for token_id, head in zip(usable_ids, heads, strict=True) if head > 0]
-            depth = max((depth_of(head_map, token_id) for token_id in usable_ids), default=0)
+            mean_dist = (sum(distances) / len(distances)) if distances else 0.0
             rows.append(
                 {
                     "Sentence ID": sent_id,
@@ -451,7 +483,7 @@ def run(frame: pd.DataFrame) -> Result[ComplexityResult]:
                     "Document": str(group[doc_col].iloc[0]) if doc_col is not None else "",
                     "Sentence": " ".join(str(v) for v in group[Col.FORM.value].tolist()),
                     "Tokens": count,
-                    "Mean Dependency Distance": round(mean_dependency_distance(usable_ids, heads), 2),
+                    "Mean Dependency Distance": round(mean_dist, 2),
                     "Max Dependency Distance": max(distances, default=0),
                     "Depth": depth,
                     "Subordinate Clauses": subordinate_count(deprels),

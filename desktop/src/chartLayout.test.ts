@@ -4,8 +4,11 @@ import {
   buildLayout,
   categoricalColumns,
   distinctCount,
+  extent,
   formatNumber,
   isNumericColumn,
+  maxOf,
+  minOf,
   isConstant,
   looksLikeIdentifier,
   nameSaysIdentifier,
@@ -586,6 +589,35 @@ describe("refusals are sentences, not exceptions", () => {
     const nasty = [{ Word: "", Count: "NaN", Set: "" }];
     for (const kind of LIVE_KINDS) {
       expect(() => buildLayout(nasty, settings({ kind }))).not.toThrow();
+    }
+  });
+});
+
+describe("extents over large tables", () => {
+  it("finds the range in one pass, with no argument-count ceiling", () => {
+    expect(extent([])).toEqual([0, 0]);
+    expect(extent([], [-1, 1])).toEqual([-1, 1]);
+    expect(extent([3, -2, 9, 4])).toEqual([-2, 9]);
+    expect(minOf([])).toBe(0);
+    expect(maxOf([])).toBe(0);
+    expect(minOf([3, -2, 9])).toBe(-2);
+    expect(maxOf([3, -2, 9])).toBe(9);
+    // Math.min(...values) throws RangeError at about 125,000 arguments.
+    const many = Array.from({ length: 150_000 }, (_, index) => index);
+    expect(extent(many)).toEqual([0, 149_999]);
+  });
+
+  it("draws a scatter larger than the spread limit instead of failing", () => {
+    const big = Array.from({ length: 130_000 }, (_, index) => ({
+      x: String(index),
+      y: String(index % 17),
+    }));
+    const result = buildLayout(big, settings({ kind: "scatter", x: "x", y: "y" }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(Number.isFinite(result.layout.x.min)).toBe(true);
+      expect(Number.isFinite(result.layout.x.max)).toBe(true);
+      expect(result.layout.x.max).toBe(129_999);
     }
   });
 });

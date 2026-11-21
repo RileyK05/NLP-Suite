@@ -236,7 +236,15 @@ def run_notebook(workspace: Workspace, job: dict[str, Any], request: dict[str, A
             with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(printed):
                 result = run_cell(cell["source"], namespace, f"<cell {index + 1}>", display_value)
                 if result.ok:
-                    keep_open_figures()
+                    try:
+                        keep_open_figures()
+                    except Exception as exc:
+                        # Keeping a stray figure is a convenience; a broken
+                        # matplotlib backend must not fail the whole run after
+                        # the cell itself succeeded. The kernel reports the
+                        # same failure as a line of text, so the saved run does
+                        # too, and the cells after it still run.
+                        session.emit(NoteOutput(f"A figure could not be kept: {exc}"))
             cell["execution_count"] = count
             cell["outputs"] = _executed_cell_outputs(collected[before:], printed.getvalue())
             if not result.ok:

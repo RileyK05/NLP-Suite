@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from app.insight_panel import render_insight_panel
-from app.session import render_shared_sidebar
+from app.session import get_pipeline_cache, render_shared_sidebar
 from app.state import resolve_corpus
 from core.analysis.keyness import keyness
 from core.conll.schema import Col
@@ -46,7 +46,6 @@ if st.button("Compute keyness", type="primary") and pattern_a.strip():
         st.stop()
     from core.config import NLPConfig
     from core.io.reader import read_corpus
-    from core.pipelines.cache import PipelineCache
 
     corpus_result = read_corpus(resolved.unwrap())
     if corpus_result.value is None:
@@ -61,9 +60,10 @@ if st.button("Compute keyness", type="primary") and pattern_a.strip():
     except ValueError as exc:
         st.error(f"config error: {exc}")
         st.stop()
-    cache = PipelineCache()
     from core.pipelines.resolve import resolve_pipeline
+    from tools._parse_cache import parse_with_cache
 
+    cache = get_pipeline_cache()
     # Falls back to another installed backend when this one's model
     # is missing or damaged, and says so rather than doing it quietly.
     pipeline_result = resolve_pipeline(cache, config)
@@ -76,7 +76,7 @@ if st.button("Compute keyness", type="primary") and pattern_a.strip():
         if diag.code == "PARSER_FALLBACK":
             st.warning(diag.message)
     with st.spinner("Parsing and scoring keyness ..."):
-        table_result = pipeline_result.unwrap().parse(corpus)
+        table_result = parse_with_cache(pipeline_result.unwrap(), corpus)
         if table_result.value is None:
             for diag in table_result.diagnostics:
                 st.error(str(diag))

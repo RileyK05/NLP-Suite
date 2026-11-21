@@ -14,8 +14,10 @@ production use; UNSTAMPED assets never load).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import threading
 
 import pandas as pd
 
@@ -159,6 +161,62 @@ BUILTIN_ASSETS: tuple[AssetSpec, ...] = (
 )
 
 
+_DIGEST_LOCK = threading.Lock()
+_FILE_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
+_TREE_DIGEST_CACHE: dict[tuple[str, tuple[tuple[str, int, int], ...]], str] = {}
+_DIGEST_CACHE_MAX = 512
+# Small synthetic test assets rewritten in-place skip the stat cache so fast same-tick edits are always seen.
+_STAT_CACHE_MIN_BYTES = 4096
+
+
+def _sha256_file_uncached(path: Path) -> str:
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def _cached_file_sha256(path: Path) -> str:
+    st = path.stat()
+    if st.st_size < _STAT_CACHE_MIN_BYTES:
+        return _sha256_file_uncached(path)
+    key = (str(path.resolve()), st.st_size, st.st_mtime_ns)
+    with _DIGEST_LOCK:
+        hit = _FILE_DIGEST_CACHE.get(key)
+        if hit is not None:
+            return hit
+    digest = _sha256_file_uncached(path)
+    with _DIGEST_LOCK:
+        if len(_FILE_DIGEST_CACHE) >= _DIGEST_CACHE_MAX:
+            _FILE_DIGEST_CACHE.clear()
+        _FILE_DIGEST_CACHE[key] = digest
+    return digest
+
+
+def _cached_dir_tree_hash(directory: Path) -> str:
+    members = sorted(p for p in directory.rglob("*") if p.is_file())
+    stats = [(m.relative_to(directory).as_posix(), m.stat().st_size, m.stat().st_mtime_ns, m) for m in members]
+    all_large = all(size >= _STAT_CACHE_MIN_BYTES for _, size, _, _ in stats)
+    sig = tuple((rel, size, mtime) for rel, size, mtime, _ in stats)
+    cache_key = (str(directory.resolve()), sig)
+    if all_large:
+        with _DIGEST_LOCK:
+            hit = _TREE_DIGEST_CACHE.get(cache_key)
+            if hit is not None:
+                return hit
+    digest = hashlib.sha256()
+    for rel, _, _, member in stats:
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_cached_file_sha256(member).encode("ascii"))
+        digest.update(b"\n")
+    tree = "tree:" + digest.hexdigest()
+    if all_large:
+        with _DIGEST_LOCK:
+            if len(_TREE_DIGEST_CACHE) >= _DIGEST_CACHE_MAX:
+                _TREE_DIGEST_CACHE.clear()
+            _TREE_DIGEST_CACHE[cache_key] = tree
+    return tree
+
+
 @dataclass(frozen=True, slots=True)
 class AssetRegistry:
     root: Path
@@ -201,35 +259,50 @@ class AssetRegistry:
                 return spec
         return None
 
-    def status(self, name: str) -> Result[str]:
-        """OK / MISSING / CORRUPT / UNSTAMPED for one asset (reads only hashes)."""
+    def _validated_target(self, name: str) -> tuple[AssetSpec | None, Path | None, Result[str] | None]:
         spec = self._spec(name)
         if spec is None:
-            return Result.failure(Diagnostic.error("ASSET_UNKNOWN", f"no asset named {name!r}", name=name))
+            return None, None, Result.failure(Diagnostic.error("ASSET_UNKNOWN", f"no asset named {name!r}", name=name))
         if not spec.sha256:
-            return Result.success(
-                "UNSTAMPED",
-                Diagnostic.warning(
-                    "ASSET_UNSTAMPED",
-                    f"{name} has no pinned checksum; obtain from {spec.source} and stamp it",
-                    name=name,
-                    source=spec.source,
-                    install=f"place the file at {self.root / spec.path}",
+            return (
+                spec,
+                None,
+                Result.success(
+                    "UNSTAMPED",
+                    Diagnostic.warning(
+                        "ASSET_UNSTAMPED",
+                        f"{name} has no pinned checksum; obtain from {spec.source} and stamp it",
+                        name=name,
+                        source=spec.source,
+                        install=f"place the file at {self.root / spec.path}",
+                    ),
                 ),
             )
         target = self.root / spec.path
         try:
             target.resolve().relative_to(self.root.resolve())
         except ValueError:
-            return Result.success(
-                "CORRUPT",
-                Diagnostic.warning(
-                    "ASSET_PATH_ESCAPE",
-                    f"{name} resolves outside the registry root; refusing to inspect it",
-                    name=name,
-                    path=str(target),
+            return (
+                spec,
+                None,
+                Result.success(
+                    "CORRUPT",
+                    Diagnostic.warning(
+                        "ASSET_PATH_ESCAPE",
+                        f"{name} resolves outside the registry root; refusing to inspect it",
+                        name=name,
+                        path=str(target),
+                    ),
                 ),
             )
+        return spec, target, None
+
+    def status(self, name: str) -> Result[str]:
+        """OK / MISSING / CORRUPT / UNSTAMPED for one asset (reads only hashes)."""
+        spec, target, early = self._validated_target(name)
+        if early is not None or spec is None or target is None:
+            assert early is not None
+            return early
         is_dir_asset = target.is_dir()
         if not target.is_file() and not is_dir_asset:
             return Result.success(
@@ -246,7 +319,7 @@ class AssetRegistry:
                 digest = _tree_hash(target)
                 expected = f"tree:{spec.sha256}" if spec.sha256 and not spec.sha256.startswith("tree:") else spec.sha256
             else:
-                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                digest = _cached_file_sha256(target)
                 expected = spec.sha256
         except OSError as exc:
             return Result.success(
@@ -286,14 +359,56 @@ class AssetRegistry:
         return Result.success(self.root / spec.path)
 
     def load_text(self, name: str) -> Result[str]:
-        """Read one asset as UTF-8 text (lazy, verified)."""
-        target = self.path(name)
-        if target.value is None:
-            return Result.failure(*target.diagnostics)
+        """Read one asset as UTF-8 text (lazy, verified in a single read)."""
+        spec, target, early = self._validated_target(name)
+        if early is not None:
+            if early.value is None:
+                return Result.failure(*early.diagnostics)
+            return Result.failure(
+                Diagnostic.error(
+                    "ASSET_NOT_USABLE",
+                    f"{name} is {early.unwrap()}; refusing to load",
+                    name=name,
+                    status=early.unwrap(),
+                )
+            )
+        if spec is None or target is None or not target.is_file():
+            state = self.status(name)
+            if state.value is None:
+                return Result.failure(*state.diagnostics)
+            return Result.failure(
+                Diagnostic.error(
+                    "ASSET_NOT_USABLE",
+                    f"{name} is {state.unwrap()}; refusing to load",
+                    name=name,
+                    status=state.unwrap(),
+                )
+            )
         try:
-            return Result.success(target.unwrap().read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError) as exc:
+            raw = target.read_bytes()
+        except OSError as exc:
+            return Result.failure(Diagnostic.error("ASSET_NOT_USABLE", f"{name} is CORRUPT; refusing to load ({exc})", name=name, status="CORRUPT"))
+        digest = hashlib.sha256(raw).hexdigest()
+        if len(raw) >= _STAT_CACHE_MIN_BYTES:
+            try:
+                st = target.stat()
+                with _DIGEST_LOCK:
+                    if len(_FILE_DIGEST_CACHE) >= _DIGEST_CACHE_MAX:
+                        _FILE_DIGEST_CACHE.clear()
+                    _FILE_DIGEST_CACHE[(str(target.resolve()), st.st_size, st.st_mtime_ns)] = digest
+            except OSError:
+                pass
+        if digest != spec.sha256:
+            return Result.failure(
+                Diagnostic.error("ASSET_NOT_USABLE", f"{name} is CORRUPT; refusing to load", name=name, status="CORRUPT")
+            )
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
             return Result.failure(Diagnostic.error("ASSET_UNREADABLE", f"{name} unreadable: {exc}", name=name))
+        if "\r" in text:
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+        return Result.success(text)
 
     def status_table(self) -> Result[pd.DataFrame]:
         """Every spec with its status (diagnostics attached as warnings)."""
@@ -318,16 +433,15 @@ class AssetRegistry:
 
 def _tree_hash(directory: Path) -> str:
     """Deterministic manifest hash for a directory asset (name + content)."""
-    digest = hashlib.sha256()
-    for member in sorted(p for p in directory.rglob("*") if p.is_file()):
-        digest.update(member.relative_to(directory).as_posix().encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(member.read_bytes()).hexdigest().encode("ascii"))
-        digest.update(b"\n")
-    return "tree:" + digest.hexdigest()
+    return _cached_dir_tree_hash(directory)
+
+
+@lru_cache(maxsize=32)
+def _cached_default_registry(base: Path) -> AssetRegistry:
+    return AssetRegistry(root=base)
 
 
 def default_registry(root: Path | None = None) -> AssetRegistry:
     """Registry rooted at ``assets/`` (repo root) unless told otherwise."""
     base = Path(root) if root is not None else Path(__file__).resolve().parent.parent.parent / "assets"
-    return AssetRegistry(root=base)
+    return _cached_default_registry(base)

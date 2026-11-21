@@ -28,7 +28,8 @@ lemmas: "was" is found in its sentence and counted towards "be".
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field as dataclass_field
 import math
 
 import numpy as np
@@ -68,29 +69,48 @@ class TrainedBert:
     #: within one period, for words used at least twice there. Empty unless
     #: ``train_bert`` was given the documents' periods.
     by_period: tuple[tuple[str, str, int, tuple[float, ...]], ...] = ()
+    # First-query caches: a 20k-vocabulary neighbour query used to convert the
+    # whole tuple-of-tuples to an array and take every norm each time.
+    _matrix: np.ndarray | None = dataclass_field(default=None, init=False, repr=False, compare=False, hash=False)
+    _norms: np.ndarray | None = dataclass_field(default=None, init=False, repr=False, compare=False, hash=False)
+    _lookup: dict[str, int] | None = dataclass_field(default=None, init=False, repr=False, compare=False, hash=False)
 
     def _index(self, word: str) -> int:
+        lookup = self._lookup
+        if lookup is None:
+            lookup = {value: position for position, value in enumerate(self.words)}
+            object.__setattr__(self, "_lookup", lookup)
         try:
-            return self.words.index(word)
-        except ValueError:
+            return lookup[word]
+        except KeyError:
             raise KeyError(f"{word!r} not in vocabulary") from None
+
+    def _arrays(self) -> tuple[np.ndarray, np.ndarray]:
+        matrix = self._matrix
+        norms = self._norms
+        if matrix is None or norms is None:
+            matrix = np.asarray(self.vectors, dtype=float)
+            norms = np.linalg.norm(matrix, axis=1)
+            norms[norms == 0] = 1.0
+            object.__setattr__(self, "_matrix", matrix)
+            object.__setattr__(self, "_norms", norms)
+        return matrix, norms
 
     def similarity(self, word_a: str, word_b: str) -> float:
         """Cosine similarity between two in-vocabulary words."""
-        vec_a = np.array(self.vectors[self._index(word_a)], dtype=float)
-        vec_b = np.array(self.vectors[self._index(word_b)], dtype=float)
-        denom = float(np.linalg.norm(vec_a) * np.linalg.norm(vec_b))
+        idx_a = self._index(word_a)
+        idx_b = self._index(word_b)
+        matrix, norms = self._arrays()
+        denom = float(norms[idx_a] * norms[idx_b])
         if denom == 0:
             return 0.0
-        return float(np.dot(vec_a, vec_b) / denom)
+        return float(np.dot(matrix[idx_a], matrix[idx_b]) / denom)
 
     def neighbors(self, query: str, top_n: int = 5) -> list[tuple[str, float]]:
         """``(word, cosine)`` pairs nearest to *query*, best first."""
         key = query.strip().lower()
         index = self._index(key)
-        matrix = np.array(self.vectors, dtype=float)
-        norms = np.linalg.norm(matrix, axis=1)
-        norms[norms == 0] = 1.0
+        matrix, norms = self._arrays()
         cosines = (matrix @ matrix[index]) / (norms * norms[index])
         # Stable sort on -cosine keeps the alphabetical order of ties, as before.
         order = [i for i in np.argsort(-cosines, kind="stable").tolist() if i != index]
@@ -104,24 +124,28 @@ def _occurrences(frame: pd.DataFrame, column: str) -> list[tuple[str, str, str, 
     ``word_embeddings._sentences_from_frame``, so the two Word2Vec
     vocabularies are comparable in the HW2 tables.
     """
-    sent_text: dict[tuple[object, object], str] = {}
-    for (doc_id, sent_id), group in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        sent_text[(doc_id, sent_id)] = " ".join(str(form) for form in group[Col.FORM.value].tolist())
+    from core.conll.frames import col_str_list
+
+    doc_col = col_str_list(frame, Col.DOCUMENT_ID)
+    sent_col = col_str_list(frame, Col.SENTENCE_ID)
+    form_col = [v.lower() for v in col_str_list(frame, Col.FORM)]
+    raw_vals = frame[column].tolist()
+
+    sent_forms: dict[tuple[str, str], list[str]] = {}
+    for did, sid, form in zip(doc_col, sent_col, col_str_list(frame, Col.FORM), strict=True):
+        sent_forms.setdefault((did, sid), []).append(form)
+    sent_text: dict[tuple[str, str], str] = {key: " ".join(forms) for key, forms in sent_forms.items()}
+
     pairs: list[tuple[str, str, str, str]] = []
-    for _, row in frame.iterrows():
-        raw = row[column]
-        if raw is None:
+    for raw, did, sid, form_lower in zip(raw_vals, doc_col, sent_col, form_col, strict=True):
+        if raw is None or raw is pd.NA:
             continue
-        try:
-            if bool(pd.isna(raw)):
-                continue
-        except (TypeError, ValueError):
-            pass
+        if isinstance(raw, float) and math.isnan(raw):
+            continue
         text = str(raw).strip().lower()
         if not text or not text.isalpha():
             continue
-        key = (row[Col.DOCUMENT_ID.value], row[Col.SENTENCE_ID.value])
-        pairs.append((text, str(row[Col.FORM.value]).lower(), sent_text.get(key, ""), str(key[0])))
+        pairs.append((text, form_lower, sent_text.get((did, sid), ""), did))
     return pairs
 
 

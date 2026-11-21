@@ -60,7 +60,9 @@ axes — the original tool wants 300+ words, and 50 is this suite's hard floor.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping
+import math
 
 import pandas as pd
 
@@ -332,37 +334,54 @@ def guess_from_counts(counts: Mapping[str, float], words: int, mode: str = "both
     return formal_label, informal_label, _combined(formal_label, informal_label)
 
 
+_PUNCT_STRIP = ".,;:!?\"'()[]{}"
+_WORD_TO_CATEGORIES: dict[str, tuple[str, ...]] = {}
+for _cat_name, _members in CATEGORIES.items():
+    for _word in _members:
+        _prev = _WORD_TO_CATEGORIES.get(_word)
+        _WORD_TO_CATEGORIES[_word] = (*_prev, _cat_name) if _prev is not None else (_cat_name,)
+
+
 def _count_document(forms: Iterable[object]) -> dict[str, float]:
     """Category hits, text marks and length stats for one document's forms."""
     counts: dict[str, float] = {key: 0.0 for key in CATEGORIES}
-    counts["question_marks"] = 0.0
-    counts["exclamation_marks"] = 0.0
-    counts["sentence_count"] = 0.0
+    qmarks = 0
+    emarks = 0
+    sentences = 0
+    numbers = 0
     words = 0
     total_len = 0
+    alpha_counts: Counter[str] = Counter()
     for raw in forms:
-        if raw is None:
+        if raw is None or raw is pd.NA:
             continue
-        try:
-            if bool(pd.isna(raw)):
-                continue
-        except (TypeError, ValueError):
-            pass
+        if isinstance(raw, float) and math.isnan(raw):
+            continue
         text = str(raw)
-        counts["question_marks"] += text.count("?")
-        counts["exclamation_marks"] += text.count("!")
-        if text.strip().endswith((".", "!", "?")):
-            counts["sentence_count"] += 1
-        bare = text.strip().strip(".,;:!?\"'()[]{}").lower()
+        if "?" in text:
+            qmarks += text.count("?")
+        if "!" in text:
+            emarks += text.count("!")
+        stripped = text.strip()
+        if stripped.endswith((".", "!", "?")):
+            sentences += 1
+        bare = stripped.strip(_PUNCT_STRIP).lower()
         if bare.isdigit():
-            counts["numbers"] += 1
+            numbers += 1
         if not bare.isalpha():
             continue
         words += 1
         total_len += len(bare)
-        for key, members in CATEGORIES.items():
-            if bare in members:
-                counts[key] += 1
+        alpha_counts[bare] += 1
+    for bare, freq in alpha_counts.items():
+        cats = _WORD_TO_CATEGORIES.get(bare)
+        if cats is not None:
+            for key in cats:
+                counts[key] += freq
+    counts["question_marks"] = float(qmarks)
+    counts["exclamation_marks"] = float(emarks)
+    counts["sentence_count"] = float(sentences)
+    counts["numbers"] += float(numbers)
     counts["words"] = float(words)
     counts["avg_word_length"] = (total_len / words) if words else _REF_AVG_LEN
     return counts

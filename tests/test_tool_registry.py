@@ -265,7 +265,7 @@ class TestC618Completion:
         cli_names = {
             path.stem
             for path in (Path(__file__).resolve().parent.parent / "tools").glob("*.py")
-            if path.stem not in {"_cli", "__init__"}
+            if not path.stem.startswith("_")
         }
         covered = set(tool_names()) | {name for name, _reason in TOOL_REGISTRY_EXCLUSIONS}
         assert cli_names == covered

@@ -60,6 +60,7 @@ __all__ = [
 
 #: Lowest precedence first.
 SOURCES = ("filename", "split", "csv", "user")
+_SOURCE_RANK = {source: rank for rank, source in enumerate(SOURCES)}
 MAX_FIELDS_PER_PROJECT = 40
 MAX_FIELD_VALUE = 500
 #: The most dated events one project may list; enough for a century of milestones.
@@ -358,7 +359,9 @@ def _writable(workspace: Workspace, project_id: str) -> None:
 # ------------------------------------------------------------------ values --
 
 
-def _detection(workspace: Workspace, project_id: str) -> tuple[Template | None, dict[str, str]]:
+def _detection(
+    workspace: Workspace, project_id: str, active_names: list[str] | None = None
+) -> tuple[Template | None, dict[str, str]]:
     """The detector's template over the active names, and the project's names for its parts.
 
     Parsing always uses the detector's own part names -- a Date renamed "When"
@@ -367,13 +370,16 @@ def _detection(workspace: Workspace, project_id: str) -> tuple[Template | None, 
     chosen = FieldSettings(**settings(workspace, project_id)["settings"])
     if not chosen.filename_detection:
         return None, {}
-    with workspace.connect() as db:
-        names = [
-            row["name"]
-            for row in db.execute(
-                "SELECT name FROM documents WHERE project_id=? AND trashed=0 ORDER BY name", (project_id,)
-            )
-        ]
+    if active_names is None:
+        with workspace.connect() as db:
+            names = [
+                row["name"]
+                for row in db.execute(
+                    "SELECT name FROM documents WHERE project_id=? AND trashed=0 ORDER BY name", (project_id,)
+                )
+            ]
+    else:
+        names = active_names
     return detect_template(names), dict(chosen.part_names)
 
 
@@ -393,13 +399,19 @@ def _detected(template: Template | None, renames: dict[str, str], name: str) -> 
     return {renames.get(part, part): value for part, value in apply_template(name, template).items()}
 
 
-def details(workspace: Workspace, project_id: str, documents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def details(
+    workspace: Workspace,
+    project_id: str,
+    documents: list[dict[str, Any]],
+    *,
+    active_names: list[str] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Each document's details with their sources: ``{doc_id: {name: {value, source, overridden}}}``.
 
     ``overridden`` lists the lower-precedence values a higher one hides, so the
     Corpus page can show "file name says 1953-02-02" under a typed date.
     """
-    template, renames = _detection(workspace, project_id)
+    template, renames = _detection(workspace, project_id, active_names=active_names)
     with workspace.connect() as db:
         stored = db.execute(
             "SELECT document_id, name, key, value, source FROM document_fields WHERE project_id=?", (project_id,)
@@ -414,7 +426,7 @@ def details(workspace: Workspace, project_id: str, documents: list[dict[str, Any
         for name, value in _detected(template, renames, str(doc["name"])).items():
             candidates.setdefault(name.casefold(), []).append((0, name, value, "filename"))
         for key, name, value, source in by_document.get(doc_id, []):
-            candidates.setdefault(key, []).append((SOURCES.index(source), name, value, source))
+            candidates.setdefault(key, []).append((_SOURCE_RANK[source], name, value, source))
         effective: dict[str, Any] = {}
         for options in candidates.values():
             options.sort(reverse=True)
@@ -430,9 +442,15 @@ def details(workspace: Workspace, project_id: str, documents: list[dict[str, Any
     return found
 
 
-def attach_fields(workspace: Workspace, project_id: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def attach_fields(
+    workspace: Workspace,
+    project_id: str,
+    rows: list[dict[str, Any]],
+    *,
+    active_names: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """*rows* (document dicts) each with ``fields`` (``{name: value}``) and ``field_sources`` (``{name: source}``)."""
-    found = details(workspace, project_id, rows)
+    found = details(workspace, project_id, rows, active_names=active_names)
     for row in rows:
         mine = found.get(str(row["id"]), {})
         row["fields"] = {name: item["value"] for name, item in mine.items()}
@@ -443,20 +461,22 @@ def attach_fields(workspace: Workspace, project_id: str, rows: list[dict[str, An
 def field_names(workspace: Workspace, project_id: str) -> list[dict[str, Any]]:
     """Every detail the project's documents have, with counts and sample values, for pickers."""
     documents = workspace.documents(project_id)
-    found = details(workspace, project_id, documents)
     summary: dict[str, dict[str, Any]] = {}
-    for per_document in found.values():
-        for name, item in per_document.items():
+    for doc in documents:
+        fields_map = doc.get("fields") or {}
+        sources_map = doc.get("field_sources") or {}
+        for name, value in fields_map.items():
+            source = str(sources_map.get(name, "filename"))
             entry = summary.setdefault(name.casefold(), {"name": name, "count": 0, "sources": set(), "values": set()})
             entry["count"] += 1
-            entry["sources"].add(item["source"])
-            entry["values"].add(item["value"])
+            entry["sources"].add(source)
+            entry["values"].add(value)
     order = {"date": 0, "order": 1}
     return [
         {
             "name": entry["name"],
             "count": entry["count"],
-            "sources": sorted(entry["sources"], key=SOURCES.index),
+            "sources": sorted(entry["sources"], key=lambda src: _SOURCE_RANK.get(src, 99)),
             "distinct": len(entry["values"]),
             "sample_values": sorted(entry["values"])[:10],
         }
@@ -469,9 +489,9 @@ def set_fields(
 ) -> dict[str, Any]:
     """Set details in one transaction. An empty ``user`` value removes that override."""
     _writable(workspace, project_id)
-    known = {str(doc["id"]) for doc in workspace.documents(project_id, include_trashed=True)}
     existing = {item["name"].casefold() for item in field_names(workspace, project_id)}
     with workspace.connect() as db:
+        known = {str(row["id"]) for row in db.execute("SELECT id FROM documents WHERE project_id=?", (project_id,))}
         current_row = db.execute("SELECT revision FROM project_settings WHERE project_id=?", (project_id,)).fetchone()
         current = int(current_row["revision"]) if current_row else 0
         if expected_revision is not None and expected_revision != current:

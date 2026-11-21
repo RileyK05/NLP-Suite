@@ -48,9 +48,10 @@ def tsne_html(frame: pd.DataFrame, title: str = "") -> Result[str]:
     # Fallback: sortable coordinate table, same data as the chart would show.
     try:
         title_html = f"<h3>{html_lib.escape(title)}</h3>" if title else "<h3>t-SNE word vectors</h3>"
-        rows_html = ""
-        for _, row in frame.iterrows():
-            rows_html += f"<tr><td>{html_lib.escape(str(row['Word']))}</td><td>{row['X']}</td><td>{row['Y']}</td></tr>"
+        rows_html = "".join(
+            f"<tr><td>{html_lib.escape(str(word))}</td><td>{x_val}</td><td>{y_val}</td></tr>"
+            for word, x_val, y_val in zip(frame["Word"].tolist(), frame["X"].tolist(), frame["Y"].tolist(), strict=True)
+        )
         html_out = (
             f"{title_html}"
             "<style>"

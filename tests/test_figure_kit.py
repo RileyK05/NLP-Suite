@@ -9,6 +9,7 @@ pieces over the real trimmed 87-speech fixtures and assert those gates.
 
 from __future__ import annotations
 
+from functools import cache
 import io
 from pathlib import Path
 
@@ -24,12 +25,18 @@ pytest.importorskip("seaborn")
 FIXTURES = Path(__file__).parent / "fixtures" / "figures"
 
 
-def _frames(tool: str) -> dict[str, pd.DataFrame]:
+@cache
+def _cached_frames(tool: str) -> dict[str, pd.DataFrame]:
     """Every fixture table for a tool, keyed by its file name."""
     found: dict[str, pd.DataFrame] = {}
     for path in sorted(FIXTURES.glob(f"{tool}__*.parquet")):
         found[f"{path.stem.split('__', 1)[1]}.csv"] = pd.read_parquet(path)
     return found
+
+
+def _frames(tool: str) -> dict[str, pd.DataFrame]:
+    """Every fixture table for a tool, keyed by its file name."""
+    return {name: frame.copy(deep=False) for name, frame in _cached_frames(tool).items()}
 
 
 def _png(fig) -> bytes:

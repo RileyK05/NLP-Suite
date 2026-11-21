@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
+import math
 
+import numpy as np
 import pandas as pd
 
 from core.result import Diagnostic, Result
@@ -33,15 +34,18 @@ def _numeric_summary(series: pd.Series) -> dict[str, float | int]:
             "Q3": 0.0,
             "Max": 0.0,
         }
+    arr = s.to_numpy(dtype=np.float64)
+    n = int(arr.size)
+    q1, med, q3 = np.quantile(arr, [0.25, 0.5, 0.75])
     return {
-        "Count": int(s.count()),
-        "Mean": float(s.mean()),
-        "Std": float(s.std(ddof=1)) if len(s) > 1 else 0.0,
-        "Min": float(s.min()),
-        "Q1": float(s.quantile(0.25)),
-        "Median": float(s.median()),
-        "Q3": float(s.quantile(0.75)),
-        "Max": float(s.max()),
+        "Count": n,
+        "Mean": float(arr.mean()),
+        "Std": float(arr.std(ddof=1)) if n > 1 else 0.0,
+        "Min": float(arr.min()),
+        "Q1": float(q1),
+        "Median": float(med),
+        "Q3": float(q3),
+        "Max": float(arr.max()),
     }
 
 

@@ -18,6 +18,7 @@ from typing import TypedDict
 import pandas as pd
 
 from core.analysis.polarity_vader import vader_sentences
+from core.conll.frames import col_str_list, sentence_indices
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
@@ -54,25 +55,25 @@ def _check(frame: pd.DataFrame) -> list[Diagnostic]:
 def _spans(frame: pd.DataFrame) -> list[_Span]:
     """One mention span per run of consecutive PERSON tokens (per sentence)."""
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
+    doc_names = col_str_list(frame, doc_col) if doc_col is not None else []
+    ner_upper = [v.upper() for v in col_str_list(frame, Col.NER)]
+    forms = col_str_list(frame, Col.FORM)
+    raw_doc_ids = frame[Col.DOCUMENT_ID.value].tolist()
+    raw_sent_ids = frame[Col.SENTENCE_ID.value].tolist()
     spans: list[_Span] = []
-    open_tokens: list[str] = []
-    open_key: tuple[object, object] | None = None
-    open_doc = ""
-    for (doc_id, sent_id), group in frame.groupby([Col.DOCUMENT_ID.value, Col.SENTENCE_ID.value], sort=False):
-        doc = str(group[doc_col].iloc[0]) if doc_col is not None else ""
-        for _, row in group.iterrows():
-            if str(row[Col.NER.value]).upper() == "PERSON":
-                open_tokens.append(str(row[Col.FORM.value]))
-                open_key = (doc_id, sent_id)
-                open_doc = doc
-            elif open_tokens and open_key is not None:
-                spans.append(_Span(tokens=list(open_tokens), key=open_key, doc=open_doc))
+    for sent_rows in sentence_indices(frame).values():
+        first_idx = sent_rows[0]
+        doc = doc_names[first_idx] if doc_col is not None else ""
+        key = (raw_doc_ids[first_idx], raw_sent_ids[first_idx])
+        open_tokens: list[str] = []
+        for idx in sent_rows:
+            if ner_upper[idx] == "PERSON":
+                open_tokens.append(forms[idx])
+            elif open_tokens:
+                spans.append(_Span(tokens=open_tokens, key=key, doc=doc))
                 open_tokens = []
-                open_key = None
-        if open_tokens and open_key is not None:
-            spans.append(_Span(tokens=list(open_tokens), key=open_key, doc=open_doc))
-            open_tokens = []
-            open_key = None
+        if open_tokens:
+            spans.append(_Span(tokens=open_tokens, key=key, doc=doc))
     return spans
 
 
@@ -124,10 +125,18 @@ def character_arcs(
         return Result.failure(*scored.diagnostics)
     # Join keys normalized to str: groupby yields numpy scalars while the
     # sentence frame may hold Python ints or strings per column dtype.
-    compounds = {
-        (str(row["Document ID"]), str(row["Sentence ID"])): (row["Compound"], row["Sentence"])
-        for _, row in scored.unwrap().iterrows()
-    }
+    scored_df = scored.unwrap()
+    compounds = dict(
+        zip(
+            zip(
+                col_str_list(scored_df, "Document ID"),
+                col_str_list(scored_df, "Sentence ID"),
+                strict=True,
+            ),
+            zip(scored_df["Compound"].tolist(), scored_df["Sentence"].tolist(), strict=True),
+            strict=True,
+        )
+    )
     seen: set[tuple[str, object, object]] = set()
     display: dict[str, str] = {}
     rows: list[dict[str, object]] = []

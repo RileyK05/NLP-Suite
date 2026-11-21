@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import math
 
@@ -103,22 +104,38 @@ def run(
 
     rows: list[dict[str, object]] = []
     for doc_id, g in frame.groupby(Col.DOCUMENT_ID.value, sort=False):
-        tokens = [str(x).lower() for x in g[field.value].tolist() if str(x).strip() and str(x) != "nan"]
-        # Punctuation tokens are not words — exclude one-char punctuation as the legacy did.
-        tokens = [t for t in tokens if t.isalpha()]
+        tokens = [
+            low
+            for x in g[field.value].tolist()
+            if (s := str(x)).strip() and s != "nan" and (low := s.lower()).isalpha()
+        ]
+        n_tokens = len(tokens)
+        counts = Counter(tokens)
+        n_types = len(counts)
+        if n_tokens:
+            ttr_val = n_types / n_tokens
+            root_val = n_types / math.sqrt(n_tokens)
+            log_val = math.log(n_types) / math.log(n_tokens) if n_tokens >= 2 and n_types > 1 else 0.0
+            if n_tokens >= 2:
+                m2 = sum(f * f for f in counts.values())
+                yule_val = 10000.0 * (m2 - n_tokens) / (n_tokens * n_tokens) if m2 > n_tokens else 0.0
+            else:
+                yule_val = 0.0
+        else:
+            ttr_val = root_val = log_val = yule_val = 0.0
 
         doc = str(g[doc_col].iloc[0]) if doc_col is not None else ""
         rows.append(
             {
                 "Document ID": str(doc_id),
                 "Document": doc,
-                "Tokens": len(tokens),
-                "Types": len(set(tokens)),
-                "TTR": round(_ttr(tokens), 4),
-                "Root TTR": round(_root_ttr(tokens), 4),
-                "Log TTR": round(_log_ttr(tokens), 4),
-                "Herdan": round(_herdan(tokens), 4),
-                "Yule K": round(_yule_k(tokens), 2),
+                "Tokens": n_tokens,
+                "Types": n_types,
+                "TTR": round(ttr_val, 4),
+                "Root TTR": round(root_val, 4),
+                "Log TTR": round(log_val, 4),
+                "Herdan": round(log_val, 4),
+                "Yule K": round(yule_val, 2),
             }
         )
 

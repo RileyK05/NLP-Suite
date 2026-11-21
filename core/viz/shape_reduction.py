@@ -11,8 +11,7 @@ and the CSV tables can never disagree.
 from __future__ import annotations
 
 import html as html_lib
-
-import pandas as pd
+from typing import Any
 
 from core.analysis.shape_reduction import HcResult, ReductionResult
 from core.result import Diagnostic, Result
@@ -121,8 +120,9 @@ def components_html(result: ReductionResult, *, title: str = "") -> Result[str]:
     if loadings.empty:
         return Result.success("<p>No components to draw.</p>")
     heading = title or ("SVD shape components" if result.method == "svd" else "NMF shape parts")
-    panels: dict[str, list[tuple[int, pd.Series]]] = {}
-    for _, row in loadings.iterrows():
+    component_cols = [c for c in loadings.columns if c.startswith("Component")]
+    panels: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for row in loadings.to_dict("records"):
         feature = str(row["Feature"])
         metric, _, raw_index = feature.rpartition(" ")
         try:
@@ -149,14 +149,9 @@ def components_html(result: ReductionResult, *, title: str = "") -> Result[str]:
     for metric, raw_entries in panels.items():
         entries = sorted(raw_entries, key=lambda pair: pair[0])
         xs = [float(i) for i, _ in entries]
-        lo = min(
-            (float(row[column]) for _, row in entries for column in loadings.columns if column.startswith("Component")),
-            default=0.0,
-        )
-        hi = max(
-            (float(row[column]) for _, row in entries for column in loadings.columns if column.startswith("Component")),
-            default=1.0,
-        )
+        vals = [float(row[column]) for _, row in entries for column in component_cols]
+        lo = min(vals, default=0.0)
+        hi = max(vals, default=1.0)
         if hi - lo < 1e-9:
             hi = lo + 1.0
         x_pad, y_pad = 36.0, 12.0
@@ -176,7 +171,7 @@ def components_html(result: ReductionResult, *, title: str = "") -> Result[str]:
             f"{html_lib.escape(metric)}</text>"
         )
         curves = []
-        for slot, column in enumerate(c for c in loadings.columns if c.startswith("Component")):
+        for slot, column in enumerate(component_cols):
             points = " ".join(
                 f"{px(x):.1f},{(y_top + py(float(row[column]))):.1f}" for (_, row), x in zip(entries, xs, strict=True)
             )

@@ -189,27 +189,31 @@ def _ner_names(frame: pd.DataFrame) -> list[tuple[str, str, str]]:
     documented reconstruction (the core.narrative.characters rule).
     """
     out: list[tuple[str, str, str]] = []
+    from core.conll.frames import col_str_list
+
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
+    doc_ids = col_str_list(frame, Col.DOCUMENT_ID)
+    docs = col_str_list(frame, doc_col) if doc_col is not None else [""] * len(frame)
+    sents = col_str_list(frame, Col.SENTENCE_ID)
+    forms = [v.strip() for v in col_str_list(frame, Col.FORM)]
+    ners = frame[Col.NER.value].tolist()
+
     open_tokens: list[str] = []
     open_doc_id = ""
     open_doc = ""
-    open_sent: object = None
+    open_sent = ""
 
     def flush() -> None:
         nonlocal open_tokens, open_doc_id, open_doc, open_sent
         if open_tokens:
             out.append((open_doc_id, open_doc, " ".join(open_tokens)))
-        open_tokens, open_doc_id, open_doc, open_sent = [], "", "", None
+        open_tokens, open_doc_id, open_doc, open_sent = [], "", "", ""
 
-    for _, row in frame.iterrows():
-        doc_id = str(row[Col.DOCUMENT_ID.value])
-        doc = str(row[doc_col]) if doc_col is not None else ""
-        sent = row[Col.SENTENCE_ID.value]
-        form = str(row[Col.FORM.value]).strip()
-        if _entity_tag(row[Col.NER.value]) != "PERSON" or not form:
+    for doc_id, doc, sent, form, ner in zip(doc_ids, docs, sents, forms, ners, strict=True):
+        if _entity_tag(ner) != "PERSON" or not form:
             flush()
             continue
-        if open_tokens and (doc_id != open_doc_id or str(sent) != str(open_sent)):
+        if open_tokens and (doc_id != open_doc_id or sent != open_sent):
             flush()
         if not open_tokens:
             open_doc_id, open_doc, open_sent = doc_id, doc, sent
@@ -224,18 +228,18 @@ def _propn_names(frame: pd.DataFrame) -> list[tuple[str, str, str]]:
     Single tokens on purpose: this source exists for single-token given
     names, and joining "New York" into one candidate helps nobody.
     """
-    out: list[tuple[str, str, str]] = []
+    from core.conll.frames import col_str_list
+
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
-    for _, row in frame.iterrows():
-        if str(row[Col.POS.value]).strip().upper() != "PROPN":
-            continue
-        form = str(row[Col.FORM.value]).strip()
-        if not form:
-            continue
-        doc_id = str(row[Col.DOCUMENT_ID.value])
-        doc = str(row[doc_col]) if doc_col is not None else ""
-        out.append((doc_id, doc, form))
-    return out
+    pos_vals = [v.strip().upper() for v in col_str_list(frame, Col.POS)]
+    forms = [v.strip() for v in col_str_list(frame, Col.FORM)]
+    doc_ids = col_str_list(frame, Col.DOCUMENT_ID)
+    docs = col_str_list(frame, doc_col) if doc_col is not None else [""] * len(frame)
+    return [
+        (doc_id, doc, form)
+        for pos, form, doc_id, doc in zip(pos_vals, forms, doc_ids, docs, strict=True)
+        if pos == "PROPN" and form
+    ]
 
 
 def _lookup_keys(name: str) -> tuple[str, ...]:

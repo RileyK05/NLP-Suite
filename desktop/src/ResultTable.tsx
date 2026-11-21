@@ -24,6 +24,8 @@ import { isNumericColumn, numberOf } from "./chartLayout";
 
 export type Sort = { column: string; direction: "asc" | "desc" } | null;
 
+const TEXT_COLLATOR = new Intl.Collator(undefined, { numeric: false });
+
 /**
  * Rows in the requested order. Numbers compare as numbers — "9" sorts before
  * "10" — and anything that is not a number on both sides falls back to a
@@ -50,7 +52,7 @@ export function sortRows(
     const rightNumber = numberOf(right);
     if (leftNumber !== null && rightNumber !== null)
       return (leftNumber - rightNumber) * factor;
-    return left.localeCompare(right) * factor;
+    return TEXT_COLLATOR.compare(left, right) * factor;
   });
 }
 

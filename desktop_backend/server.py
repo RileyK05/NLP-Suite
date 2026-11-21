@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from collections import OrderedDict
 from contextlib import asynccontextmanager, suppress
 import csv
 from dataclasses import asdict
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 from typing import Any, Literal
 import uuid
 import zipfile
@@ -27,6 +30,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from core.file_ops.converter import supported_suffixes
+from core.hardware import held_corpora_limit
 from core.profiler.labels import param_label, tool_label
 from core.result import Diagnostic, Result
 from core.script.session import SuiteError
@@ -54,6 +58,9 @@ from desktop_backend.tables import TABLE_TOOLS
 from desktop_backend.views import ViewBody, ViewSettings, chart_contract, publication_gaps
 
 PREVIEW_ROWS = 500
+_TOOLS_CACHE_TTL_SECONDS = 5.0
+_CSV_PREVIEW_CACHE_ENTRIES = 8
+_CSV_PREVIEW_MAX_BYTES = 16 * 1024 * 1024
 # Artifacts the desktop app can render inline (HTML charts, wordclouds,
 # static exports, raster images). Anything else stays download-only.
 VIEWABLE_ARTIFACTS = {
@@ -322,9 +329,14 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
     from desktop_backend.section_routes import register_section_routes
 
     runner = Runner(workspace)
+    mutation_lock = threading.RLock()
     kernels = KernelManager(workspace)
 
     downloads = ModelDownloads()
+    tools_cache_lock = threading.Lock()
+    tools_cache: dict[str, Any] = {"key": None, "at": 0.0, "payload": None, "static": None}
+    csv_preview_lock = threading.Lock()
+    csv_preview_cache: OrderedDict[tuple[str, int, int], tuple[list[str], list[dict[str, Any]]]] = OrderedDict()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -413,7 +425,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.get("/api/health", dependencies=secured)
     def health() -> dict[str, Any]:
-        return {"ok": True, "version": "0.5.2", "workspace": str(workspace.root)}
+        return {"ok": True, "version": "0.5.3", "workspace": str(workspace.root)}
 
     @app.get("/api/setup", dependencies=secured)
     def setup() -> dict[str, Any]:
@@ -473,17 +485,29 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
     @app.post("/api/models/{model_id}/download", dependencies=secured)
     def model_download(model_id: str) -> dict[str, Any]:
         """Start (or resume) a download; poll GET /api/models for progress."""
+        with tools_cache_lock:
+            tools_cache["key"] = None
         return downloads.start(model_id)
 
     @app.post("/api/models/{model_id}/cancel", dependencies=secured)
     def model_cancel(model_id: str) -> dict[str, Any]:
+        with tools_cache_lock:
+            tools_cache["key"] = None
         return downloads.cancel(model_id)
 
     @app.delete("/api/models/{model_id}", dependencies=secured)
     def model_delete(model_id: str) -> dict[str, Any]:
+        with tools_cache_lock:
+            tools_cache["key"] = None
         return downloads.delete(model_id)
 
-    def choice_labels(param: Any) -> dict[str, Any]:
+    def _model_states() -> dict[str, str]:
+        from core.models.locate import status as model_status
+        from core.models.registry import MODELS
+
+        return {spec.id: model_status(spec) for spec in MODELS}
+
+    def choice_labels(param: Any, model_states: dict[str, str]) -> dict[str, Any]:
         """Model choices by what they are, not their ids ("BERT base (uncased): word vectors").
 
         The ids (``granite-embedding-english-r2``) say nothing about which
@@ -491,59 +515,78 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         """
         if param.name != "model" or not param.choices:
             return {}
-        from core.models.locate import status as model_status
         from core.models.registry import get_model
         from desktop_backend.models import KIND_LABELS
 
         labels: dict[str, str] = {}
         for choice in param.choices:
-            spec = get_model(str(choice))
+            choice_id = str(choice)
+            spec = get_model(choice_id)
             if spec is None:
                 continue
             text = f"{spec.display_name}: {KIND_LABELS[spec.kind].lower()}"
-            if model_status(spec) != "ready":
+            if model_states.get(choice_id) != "ready":
                 text += " (not installed; see Models)"
-            labels[str(choice)] = text
+            labels[choice_id] = text
         return {"choice_labels": labels}
 
     @app.get("/api/tools", dependencies=secured)
     def tools() -> list[dict[str, Any]]:
-        from core.profiler.registry import ToolSpec, get_tool
+        from core.profiler.registry import FAMILY_LABELS, ToolSpec, get_tool
+
+        model_states = _model_states()
+        cache_key = (id(importlib.util.find_spec), tuple(sorted(model_states.items())))
+        now_t = time.monotonic()
+        with tools_cache_lock:
+            cached = tools_cache["payload"]
+            if (
+                cached is not None
+                and tools_cache["key"] == cache_key
+                and (now_t - float(tools_cache["at"])) < _TOOLS_CACHE_TTL_SECONDS
+            ):
+                return cached  # type: ignore[no-any-return]
 
         found = inventory()
+        with tools_cache_lock:
+            static_specs = tools_cache["static"]
+            if static_specs is None:
+                built_specs: list[tuple[str, ToolSpec, dict[str, Any], list[tuple[Any, dict[str, Any]]], str]] = []
+                for name in DESKTOP_TOOLS:
+                    spec = TABLE_TOOLS.get(name) or get_tool(name)
+                    if spec is None:
+                        continue
+                    published = desktop_spec(spec)
+                    fields = {
+                        key: value
+                        for key, value in asdict(published).items()
+                        if key in {"name", "description", "requires_parse", "input_kind", "outputs", "family"}
+                    }
+                    base_fields = {
+                        **fields,
+                        "label": tool_label(name),
+                        "family_label": FAMILY_LABELS.get(published.family, published.family),
+                        "category": "visualization" if name in VISUALIZATION_TOOLS else "analysis",
+                    }
+                    param_entries = [
+                        (param, {**asdict(param), "label": param_label(name, param.name)}) for param in published.params
+                    ]
+                    built_specs.append((name, published, base_fields, param_entries, name))
+                tools_cache["static"] = built_specs
+                static_specs = built_specs
 
-        def payload(name: str, spec: ToolSpec) -> dict[str, Any]:
-            """Ship the words the interface shows, so it never invents them.
-
-            The desktop previously kept its own table of tool names and derived
-            parameter labels from the flag. Both drifted out of step with the
-            registry without anything failing. Labels are resolved here, once.
-            """
-            from core.profiler.registry import FAMILY_LABELS
-
-            published = desktop_spec(spec)
-            fields = {
-                key: value
-                for key, value in asdict(published).items()
-                if key in {"name", "description", "requires_parse", "input_kind", "outputs", "family"}
+        result = [
+            {
+                **base_fields,
+                "params": [{**param_dict, **choice_labels(param, model_states)} for param, param_dict in param_entries],
+                "availability": availability(published, found, models=model_states),
             }
-            return {
-                **fields,
-                "label": tool_label(name),
-                "family_label": FAMILY_LABELS.get(published.family, published.family),
-                "params": [
-                    {**asdict(param), "label": param_label(name, param.name), **choice_labels(param)}
-                    for param in published.params
-                ],
-                "category": "visualization" if name in VISUALIZATION_TOOLS else "analysis",
-                "availability": availability(published, found),
-            }
-
-        return [
-            payload(name, spec)
-            for name in DESKTOP_TOOLS
-            if (spec := TABLE_TOOLS.get(name) or get_tool(name)) is not None
+            for _name, published, base_fields, param_entries, _orig in static_specs
         ]
+        with tools_cache_lock:
+            tools_cache["key"] = cache_key
+            tools_cache["at"] = time.monotonic()
+            tools_cache["payload"] = result
+        return result
 
     @app.post("/api/resources", dependencies=secured)
     async def resource_upload(name: str, request: Request) -> dict[str, str]:
@@ -572,29 +615,29 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.post("/api/projects/{project_id}/rename", dependencies=secured)
     def rename_project(project_id: str, body: ProjectBody) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return workspace.rename(project_id, body.name)
 
     @app.post("/api/projects/{project_id}/archive", dependencies=secured)
     def archive_project(project_id: str, body: ArchiveBody) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return workspace.archive(project_id, body.archived)
 
     @app.post("/api/projects/{project_id}/trash", dependencies=secured)
     def trash_project(project_id: str) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             cool_project(project_id)
             return workspace.trash_project(project_id, True)
 
     @app.post("/api/projects/{project_id}/restore", dependencies=secured)
     def restore_project(project_id: str) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             result = workspace.trash_project(project_id, False)
             return result
 
     @app.post("/api/projects/{project_id}/purge", dependencies=secured)
     def purge_project(project_id: str) -> dict[str, bool]:
-        with runner.lock:
+        with mutation_lock:
             workspace.purge_project(project_id)
             return {"purged": True}
 
@@ -603,14 +646,15 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         return [public_document(document) for document in workspace.documents(project_id, trashed=trashed)]
 
     def cool_project(project_id: str) -> None:
-        held = benches.get(project_id)
+        with bench_lock:
+            held = benches.get(project_id)
         if held is not None:
             held.cool()
 
     @app.post("/api/projects/{project_id}/documents/{document_id}/trash", dependencies=secured)
     def trash_document(project_id: str, document_id: str) -> dict[str, Any]:
-        with runner.lock:
-            if any(job["state"] in ("RUNNING", "QUEUED") for job in workspace.jobs(project_id)):
+        with mutation_lock:
+            if workspace.has_active_jobs(project_id):
                 raise ValueError("Finish or cancel active runs before changing the corpus.")
             doc = workspace.trash_document(project_id, document_id, True)
             cool_project(project_id)
@@ -618,8 +662,8 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.post("/api/projects/{project_id}/documents/{document_id}/restore", dependencies=secured)
     def restore_document(project_id: str, document_id: str) -> dict[str, Any]:
-        with runner.lock:
-            if any(job["state"] in ("RUNNING", "QUEUED") for job in workspace.jobs(project_id)):
+        with mutation_lock:
+            if workspace.has_active_jobs(project_id):
                 raise ValueError("Finish or cancel active runs before changing the corpus.")
             doc = workspace.trash_document(project_id, document_id, False)
             cool_project(project_id)
@@ -627,8 +671,8 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.post("/api/projects/{project_id}/documents/{document_id}/purge", dependencies=secured)
     def purge_document(project_id: str, document_id: str) -> dict[str, bool]:
-        with runner.lock:
-            if any(job["state"] in ("RUNNING", "QUEUED") for job in workspace.jobs(project_id)):
+        with mutation_lock:
+            if workspace.has_active_jobs(project_id):
                 raise ValueError("Finish or cancel active runs before changing the corpus.")
             workspace.purge_document(project_id, document_id)
             cool_project(project_id)
@@ -655,21 +699,21 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             data.extend(chunk)
 
         def commit() -> dict[str, Any]:
-            with runner.lock:
+            with mutation_lock:
                 return public_document(workspace.import_document(project_id, name, bytes(data)))
 
         return await run_in_threadpool(commit)
 
     @app.post("/api/projects/{project_id}/import-paths", dependencies=secured)
     def paths(project_id: str, body: PathsBody) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return import_paths(workspace, project_id, [Path(path) for path in body.paths])
 
     @app.post("/api/projects/{project_id}/import-sample", dependencies=secured)
     def sample(project_id: str) -> dict[str, Any]:
         if not sample_dir().is_dir():
             raise ValueError("The example documents are not included in this installation.")
-        with runner.lock:
+        with mutation_lock:
             return import_paths(workspace, project_id, [sample_dir()])
 
     @app.get("/api/projects/{project_id}/jobs", dependencies=secured)
@@ -682,17 +726,17 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.post("/api/projects/{project_id}/jobs/{job_id}/trash", dependencies=secured)
     def trash_job(project_id: str, job_id: str) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return public_job(workspace.trash_run(project_id, job_id, True))
 
     @app.post("/api/projects/{project_id}/jobs/{job_id}/restore", dependencies=secured)
     def restore_job(project_id: str, job_id: str) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return public_job(workspace.trash_run(project_id, job_id, False))
 
     @app.post("/api/projects/{project_id}/jobs/{job_id}/purge", dependencies=secured)
     def purge_job(project_id: str, job_id: str) -> dict[str, bool]:
-        with runner.lock:
+        with mutation_lock:
             workspace.purge_run(project_id, job_id)
             return {"purged": True}
 
@@ -715,13 +759,25 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     # One warmed corpus per project. Parsing is what costs; everything after
     # it is cheap, so the parse is done once and the answers come from it.
-    benches: dict[str, Session] = {}
+    bench_lock = threading.Lock()
+    benches: OrderedDict[str, Session] = OrderedDict()
 
     def session(project_id: str) -> Session:
         workspace.project(project_id)
-        if project_id not in benches:
-            benches[project_id] = Session(Bench(workspace.root))
-        return benches[project_id]
+        with bench_lock:
+            if project_id in benches:
+                benches.move_to_end(project_id)
+                return benches[project_id]
+            limit = max(1, held_corpora_limit())
+            evict: list[Session] = []
+            while len(benches) >= limit:
+                _old_id, evicted = benches.popitem(last=False)
+                evict.append(evicted)
+            created = Session(Bench(workspace.root))
+            benches[project_id] = created
+        for old_session in evict:
+            old_session.cool()
+        return created
 
     @app.get("/api/projects/{project_id}/live", dependencies=secured)
     def live_state(project_id: str) -> dict[str, Any]:
@@ -742,24 +798,28 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         # should come back as a refusal rather than as a warmed-then-failed
         # session the reader has to interpret.
         as_parser(body.parser)
-        chosen = resolve_selection(
-            [document_metadata(d) for d in workspace.documents(project_id)],
-            body.selection,
-        )
-        # The corpus a published run would read (desktop_backend.project_corpus):
-        # the documents' details (Speaker, an edited Date), and the project's
-        # text cleaning. Built separately here, the preview lost all three
-        # and stopped matching the run it previews.
-        corpus, _diagnostics = load_corpus(workspace, project_id, chosen)
-        docs = corpus.docs
-        summary = {
-            "documents": len(docs),
-            "words": sum(len(d.text.split()) for d in docs),
-            "names": [d.name for d in docs[:12]],
-            "ids": [d.source_id for d in docs],
-        }
         held = session(project_id)
-        return await run_in_threadpool(held.warm, corpus, body.parser, selection=summary)
+
+        def run_warm() -> dict[str, Any]:
+            chosen = resolve_selection(
+                [document_metadata(d) for d in workspace.documents(project_id)],
+                body.selection,
+            )
+            # The corpus a published run would read (desktop_backend.project_corpus):
+            # the documents' details (Speaker, an edited Date), and the project's
+            # text cleaning. Built separately here, the preview lost all three
+            # and stopped matching the run it previews.
+            corpus, _diagnostics = load_corpus(workspace, project_id, chosen)
+            docs = corpus.docs
+            summary = {
+                "documents": len(docs),
+                "words": sum(len(d.text.split()) for d in docs),
+                "names": [d.name for d in docs[:12]],
+                "ids": [d.source_id for d in docs],
+            }
+            return held.warm(corpus, body.parser, selection=summary)
+
+        return await run_in_threadpool(run_warm)
 
     @app.delete("/api/projects/{project_id}/live/analyse/{request_id}", dependencies=secured)
     def cancel_analyse(project_id: str, request_id: str) -> dict[str, Any]:
@@ -972,18 +1032,18 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
     @app.post("/api/projects/{project_id}/questions", dependencies=secured)
     def create_question(project_id: str, body: QuestionBody) -> dict[str, Any]:
         coherent_scope(project_id, body)
-        with runner.lock:
+        with mutation_lock:
             return workspace.save_question(project_id, body)
 
     @app.post("/api/projects/{project_id}/questions/{question_id}", dependencies=secured)
     def save_question(project_id: str, question_id: str, body: QuestionBody) -> dict[str, Any]:
         coherent_scope(project_id, body)
-        with runner.lock:
+        with mutation_lock:
             return workspace.update_question(project_id, question_id, body)
 
     @app.post("/api/projects/{project_id}/questions/{question_id}/duplicate", dependencies=secured)
     def duplicate_question(project_id: str, question_id: str) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return workspace.duplicate_question(project_id, question_id)
 
     @app.post("/api/projects/{project_id}/questions/{question_id}/publish", dependencies=secured)
@@ -1028,7 +1088,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.post("/api/projects/{project_id}/questions/{question_id}/delete", dependencies=secured)
     def delete_question(project_id: str, question_id: str) -> dict[str, bool]:
-        with runner.lock:
+        with mutation_lock:
             workspace.delete_question(project_id, question_id)
         return {"deleted": True}
 
@@ -1114,7 +1174,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.post("/api/projects/{project_id}/views", dependencies=secured)
     def create_view(project_id: str, body: ViewBody) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return public_view(workspace.save_view(project_id, body))
 
     @app.get("/api/projects/{project_id}/views/{view_id}", dependencies=secured)
@@ -1123,19 +1183,19 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
 
     @app.post("/api/projects/{project_id}/views/{view_id}", dependencies=secured)
     def save_view(project_id: str, view_id: str, body: ViewBody) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return public_view(workspace.update_view(project_id, view_id, body))
 
     @app.post("/api/projects/{project_id}/views/{view_id}/duplicate", dependencies=secured)
     def copy_view(project_id: str, view_id: str) -> dict[str, Any]:
-        with runner.lock:
+        with mutation_lock:
             return public_view(workspace.duplicate_view(project_id, view_id))
 
     @app.post("/api/projects/{project_id}/views/{view_id}/delete", dependencies=secured)
     def remove_view(project_id: str, view_id: str) -> dict[str, bool]:
         # A POST, not a DELETE: the CORS policy above allows GET and POST only,
         # and widening it for one route would widen it for every route.
-        with runner.lock:
+        with mutation_lock:
             workspace.delete_view(project_id, view_id)
         return {"ok": True}
 
@@ -1311,7 +1371,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
         temporary = tempfile.TemporaryDirectory(prefix="backup-", dir=workspace.root)
         path = Path(temporary.name) / "project.nlpsuite"
         try:
-            with runner.lock:
+            with mutation_lock:
                 backup(workspace, project_id, path)
             return FileResponse(
                 path,
@@ -1336,7 +1396,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
                     handle.write(chunk)
 
             def commit() -> dict[str, Any]:
-                with runner.lock:
+                with mutation_lock:
                     return restore(workspace, path)
 
             return await run_in_threadpool(commit)
@@ -1373,6 +1433,73 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             },
         )
 
+    def _read_csv_preview(path: Path, q: str, offset: int, limit: int) -> dict[str, Any]:
+        stat = path.stat()
+        needle = q.casefold()
+        if stat.st_size <= _CSV_PREVIEW_MAX_BYTES:
+            csv_key = (str(path), stat.st_mtime_ns, stat.st_size)
+            with csv_preview_lock:
+                cached_csv = csv_preview_cache.get(csv_key)
+                if cached_csv is not None:
+                    csv_preview_cache.move_to_end(csv_key)
+            if cached_csv is None:
+                with path.open(encoding="utf-8-sig", newline="") as handle:
+                    reader = csv.DictReader(handle)
+                    columns = list(reader.fieldnames or [])
+                    all_rows = list(reader)
+                cached_csv = (columns, all_rows)
+                with csv_preview_lock:
+                    if len(csv_preview_cache) >= _CSV_PREVIEW_CACHE_ENTRIES:
+                        csv_preview_cache.popitem(last=False)
+                    csv_preview_cache[csv_key] = cached_csv
+            columns, all_rows = cached_csv
+            total = len(all_rows)
+            if not needle:
+                rows = all_rows[offset : offset + limit]
+                return {
+                    "columns": columns,
+                    "rows": rows,
+                    "total": total,
+                    "filtered_total": total,
+                    "offset": offset,
+                    "truncated": total > offset + len(rows),
+                }
+            rows = []
+            matched = 0
+            for row in all_rows:
+                if any(needle in str(value).casefold() for value in row.values()):
+                    matched += 1
+                    if matched > offset and len(rows) < limit:
+                        rows.append(row)
+            return {
+                "columns": columns,
+                "rows": rows,
+                "total": total,
+                "filtered_total": matched,
+                "offset": offset,
+                "truncated": matched > offset + len(rows),
+            }
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            rows = []
+            total = 0
+            matched = 0
+            for row in reader:
+                total += 1
+                if needle and not any(needle in str(value).casefold() for value in row.values()):
+                    continue
+                matched += 1
+                if matched > offset and len(rows) < limit:
+                    rows.append(row)
+            return {
+                "columns": reader.fieldnames or [],
+                "rows": rows,
+                "total": total,
+                "filtered_total": matched,
+                "offset": offset,
+                "truncated": matched > offset + len(rows),
+            }
+
     @app.get("/api/projects/{project_id}/jobs/{job_id}/artifacts/{index}", dependencies=secured)
     def artifact(  # noqa: PLR0913 -- URL and bounded preview query parameters
         project_id: str,
@@ -1392,27 +1519,7 @@ def create_app(workspace: Workspace, token: str, frontend: Path | None = None) -
             if suffix not in VIEWABLE_ARTIFACTS:
                 raise ValueError("Only CSV tables have an inline preview. Download other artifacts to inspect them.")
             return FileResponse(path, media_type=VIEWABLE_ARTIFACTS[suffix])
-        with path.open(encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
-            rows: list[dict[str | Any, Any]] = []
-            total = 0
-            matched = 0
-            needle = q.casefold()
-            for row in reader:
-                total += 1
-                if needle and not any(needle in str(value).casefold() for value in row.values()):
-                    continue
-                matched += 1
-                if matched > offset and len(rows) < limit:
-                    rows.append(row)
-            return {
-                "columns": reader.fieldnames or [],
-                "rows": rows,
-                "total": total,
-                "filtered_total": matched,
-                "offset": offset,
-                "truncated": matched > offset + len(rows),
-            }
+        return _read_csv_preview(path, q, offset, limit)
 
     @app.get("/api/projects/{project_id}/jobs/{job_id}/export", dependencies=secured)
     def export(project_id: str, job_id: str) -> FileResponse:

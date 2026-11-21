@@ -15,24 +15,17 @@ double from ``conftest``.
 
 from __future__ import annotations
 
-import math
-
+import numpy as np
 import pandas as pd
 
 from core.analysis.contextual import EmbeddingBackend, embed_sentences, text_backend, truncation_note
+from core.conll.frames import col_str_list, sentence_indices
 from core.conll.schema import Col, validate_columns
 from core.result import Diagnostic, Result
 
 __all__ = ["summarize"]
 
 _COLUMNS = ["Document ID", "Document", "Summary", "Summary Sentences", "Sentence IDs"]
-
-
-def _cosine(left: list[float], right: list[float]) -> float:
-    dot = sum(a * b for a, b in zip(left, right, strict=True))
-    left_norm = math.sqrt(sum(a * a for a in left)) or 1.0
-    right_norm = math.sqrt(sum(b * b for b in right)) or 1.0
-    return dot / (left_norm * right_norm)
 
 
 def summarize(
@@ -66,29 +59,60 @@ def summarize(
         diags = list(decided.diagnostics)
 
     doc_col = Col.DOCUMENT.value if Col.DOCUMENT.value in frame.columns else None
-    rows: list[dict[str, object]] = []
-    for doc_id, group in frame.groupby(Col.DOCUMENT_ID.value, sort=False):
-        doc = str(group[doc_col].iloc[0]) if doc_col is not None else ""
-        sent_ids: list[object] = []
-        texts: list[str] = []
-        for sent_id, sent_group in group.groupby(Col.SENTENCE_ID.value, sort=False):
-            text = " ".join(str(v) for v in sent_group[Col.FORM.value].tolist()).strip()
-            if text:
-                sent_ids.append(sent_id)
-                texts.append(text)
-        if not texts:
+    forms = col_str_list(frame, Col.FORM)
+    raw_doc_ids = frame[Col.DOCUMENT_ID.value].tolist()
+    raw_sent_ids = frame[Col.SENTENCE_ID.value].tolist()
+    doc_names = col_str_list(frame, doc_col) if doc_col is not None else [""] * len(frame)
+
+    doc_entries: list[tuple[object, str, list[object], list[str]]] = []
+    by_doc: dict[object, int] = {}
+    all_texts: list[str] = []
+    doc_slices: list[tuple[int, int]] = []
+
+    for sent_rows in sentence_indices(frame).values():
+        first_idx = sent_rows[0]
+        did = raw_doc_ids[first_idx]
+        sid = raw_sent_ids[first_idx]
+        text = " ".join(forms[i] for i in sent_rows).strip()
+        if not text:
             continue
-        try:
-            vectors = embed_sentences(resolved, texts)
-        except (RuntimeError, ValueError) as exc:
-            return Result.failure(Diagnostic.error("BERT_MODEL_MISSING", str(exc)))
-        dim = len(vectors[0])
-        centroid = [sum(vec[i] for vec in vectors) / len(vectors) for i in range(dim)]
-        ranked = sorted(range(len(texts)), key=lambda i: _cosine(vectors[i], centroid), reverse=True)
+        pos = by_doc.get(did)
+        if pos is None:
+            pos = len(doc_entries)
+            by_doc[did] = pos
+            doc_entries.append((did, doc_names[first_idx] if doc_col is not None else "", [], []))
+        doc_entries[pos][2].append(sid)
+        doc_entries[pos][3].append(text)
+
+    if not doc_entries:
+        diags.extend(truncation_note(resolved))
+        return Result.success(pd.DataFrame(columns=_COLUMNS), *diags)
+
+    for _, _, _, texts in doc_entries:
+        start = len(all_texts)
+        all_texts.extend(texts)
+        doc_slices.append((start, len(all_texts)))
+
+    try:
+        all_vectors = np.asarray(embed_sentences(resolved, all_texts), dtype=float)
+    except (RuntimeError, ValueError) as exc:
+        return Result.failure(Diagnostic.error("BERT_MODEL_MISSING", str(exc)))
+
+    norms = np.linalg.norm(all_vectors, axis=1)
+    norms[norms == 0] = 1.0
+
+    rows: list[dict[str, object]] = []
+    for (did, doc, sent_ids, texts), (start, stop) in zip(doc_entries, doc_slices, strict=True):
+        vecs = all_vectors[start:stop]
+        vec_norms = norms[start:stop]
+        centroid = vecs.mean(axis=0)
+        c_norm = float(np.linalg.norm(centroid)) or 1.0
+        scores = (vecs @ centroid) / (vec_norms * c_norm)
+        ranked = np.argsort(-scores, kind="stable").tolist()
         picked = sorted(ranked[:sentences])
         rows.append(
             {
-                "Document ID": doc_id,
+                "Document ID": did,
                 "Document": doc,
                 "Summary": " ".join(texts[i] for i in picked),
                 "Summary Sentences": len(picked),

@@ -1,6 +1,6 @@
 [package]
 name = "nlp-suite-desktop"
-version = "0.5.2"
+version = "0.5.3"
 description = "Local-first NLP research workspace"
 edition = "2021"
 
@@ -21,3 +21,9 @@ tempfile = "3"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

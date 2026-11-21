@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
 
@@ -327,47 +328,57 @@ def log_likelihood(
                 )
             )
 
-    rows: list[dict[str, object]] = []
-    for word, a_raw, b_raw in zip(words, freq_a, freq_b, strict=True):
-        a = float(a_raw)
-        b = float(b_raw)
-        e1 = total_a * (a + b) / (total_a + total_b)
-        e2 = total_b * (a + b) / (total_a + total_b)
-        g2 = 0.0
-        if a > 0 and e1 > 0:
-            g2 += a * math.log(a / e1)
-        if b > 0 and e2 > 0:
-            g2 += b * math.log(b / e2)
-        g2 *= 2
-        if not math.isfinite(g2):
-            return Result.failure(
-                Diagnostic.error("STATS_NUMERIC_FAILURE", f"G2 not finite for word {word!r}", word=word)
-            )
-        p_value = float(scipy_stats.chi2.sf(g2, 1)) if g2 > 0 else 1.0
-        vocab_size = len(words)
-        smoothed_a = (a + smoothing) / (total_a + smoothing * vocab_size)
-        smoothed_b = (b + smoothing) / (total_b + smoothing * vocab_size)
-        log_ratio = math.log2(smoothed_a / smoothed_b)
-        pct_denom = smoothed_b
-        rows.append(
+    vocab_size = len(words)
+    a_arr = np.asarray(freq_a, dtype=np.float64)
+    b_arr = np.asarray(freq_b, dtype=np.float64)
+    total_ab = total_a + total_b
+    e1 = total_a * (a_arr + b_arr) / total_ab
+    e2 = total_b * (a_arr + b_arr) / total_ab
+
+    g2_arr = np.zeros(vocab_size, dtype=np.float64)
+    mask1 = (a_arr > 0.0) & (e1 > 0.0)
+    mask2 = (b_arr > 0.0) & (e2 > 0.0)
+    if np.any(mask1):
+        g2_arr[mask1] += a_arr[mask1] * np.log(a_arr[mask1] / e1[mask1])
+    if np.any(mask2):
+        g2_arr[mask2] += b_arr[mask2] * np.log(b_arr[mask2] / e2[mask2])
+    g2_arr *= 2.0
+
+    bad_indices = np.where(~np.isfinite(g2_arr))[0]
+    if len(bad_indices):
+        bad_word = words[int(bad_indices[0])]
+        return Result.failure(
+            Diagnostic.error("STATS_NUMERIC_FAILURE", f"G2 not finite for word {bad_word!r}", word=bad_word)
+        )
+
+    pos_mask = g2_arr > 0.0
+    p_values = np.ones(vocab_size, dtype=np.float64)
+    if np.any(pos_mask):
+        p_values[pos_mask] = scipy_stats.chi2.sf(g2_arr[pos_mask], 1)
+
+    denom_a = total_a + smoothing * vocab_size
+    denom_b = total_b + smoothing * vocab_size
+    smoothed_a = (a_arr + smoothing) / denom_a
+    smoothed_b = (b_arr + smoothing) / denom_b
+    log_ratios = np.log2(smoothed_a / smoothed_b)
+    pct_diffs = 100.0 * (smoothed_a - smoothed_b) / smoothed_b
+    log_total_ab = math.log(total_ab)
+    bic_arr = np.where(pos_mask, g2_arr - log_total_ab, 0.0)
+
+    out = (
+        pd.DataFrame(
             {
-                "Word": word,
-                f"Freq {label_a}": int(a),
-                f"Freq {label_b}": int(b),
-                "G2 (log-likelihood)": round(g2, 4),
-                "p-value": round(p_value, 6),
-                "Log Ratio": round(log_ratio, 4),
-                "Pct Diff": round(100.0 * (smoothed_a - smoothed_b) / pct_denom, 2),
-                "BIC": round(g2 - math.log(total_a + total_b), 4) if g2 > 0 else 0.0,
-                "Overrepresented in": label_a if log_ratio > 0 else label_b,
+                "Word": words,
+                f"Freq {label_a}": a_arr.astype(int),
+                f"Freq {label_b}": b_arr.astype(int),
+                "G2 (log-likelihood)": np.round(g2_arr, 4),
+                "p-value": np.round(p_values, 6),
+                "Log Ratio": np.round(log_ratios, 4),
+                "Pct Diff": np.round(pct_diffs, 2),
+                "BIC": np.round(bic_arr, 4),
+                "Overrepresented in": [label_a if float(lr) > 0 else label_b for lr in log_ratios],
             }
         )
-    # Ties in G2 are common (every word with the same two counts scores the
-    # same), so the sort must be total, not just correct: an unstable sort on
-    # G2 alone let tied words permute between runs, which changes WHICH rows
-    # a top-N cut keeps. Word is the tie-break, and the sort is stable.
-    out = (
-        pd.DataFrame(rows)
         .sort_values(["G2 (log-likelihood)", "Word"], ascending=[False, True], kind="stable")
         .reset_index(drop=True)
     )

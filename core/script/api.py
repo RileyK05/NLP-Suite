@@ -128,6 +128,11 @@ class Corpus:
                 }
                 row.update(fields.get(doc.source_id, {}))
                 rows.append(row)
+            if not rows:
+                # An empty table still has the documented columns: a script
+                # that prints it should not fail with KeyError("Year").
+                self._documents = pd.DataFrame(columns=["Document ID", "Document", "Date", "Year", "Words"])
+                return self._documents.copy()
             frame = pd.DataFrame(rows)
             if frame["Year"].notna().all():
                 frame["Year"] = frame["Year"].astype(int)
@@ -345,13 +350,20 @@ def run(tool: str, corpus: Corpus, **params: Any) -> RunResult:
         raise SuiteError(f"{tool}: " + "; ".join(messages), planned.diagnostics)
     plan = planned.unwrap()
     parsed = session.parse(corpus.core) if plan.needs_parse else None
-    batch = execute(
-        plan,
-        corpus=corpus.core,
-        table=parsed.table if parsed else None,
-        parse_diagnostics=parsed.diagnostics if parsed else (),
-        tokenizer=parsed.tokenizer if parsed else None,
-    )
+    try:
+        batch = execute(
+            plan,
+            corpus=corpus.core,
+            table=parsed.table if parsed else None,
+            parse_diagnostics=parsed.diagnostics if parsed else (),
+            tokenizer=parsed.tokenizer if parsed else None,
+        )
+    except SuiteError:
+        raise
+    except Exception as exc:
+        # A tool crash is still a library refusal, not a traceback into the
+        # engine: the cell should say which tool failed and why in one line.
+        raise SuiteError(f"{tool} failed unexpectedly: {exc}") from exc
     outcome = batch.outcomes[0]
     frames = {name: frame for name, frame in (outcome.frames or {}).items() if not name.endswith(".html")}
     diagnostics = [{"severity": d.severity.value, "message": d.message} for d in outcome.diagnostics]
@@ -766,9 +778,19 @@ def _preferred_chart(frame: pd.DataFrame, kind: str | None) -> tuple[dict[str, A
     return dict(chart), None
 
 
+def _check_chart_arguments(x: object, y: object, group: object) -> None:
+    """Refuse a non-text axis before it becomes a confusing "no column 3"."""
+    for label, value in (("x", x), ("group", group)):
+        if value is not None and not isinstance(value, str):
+            raise SuiteError(f"{label} must be a column name (text), not {type(value).__name__}.")
+    if y is not None and not isinstance(y, (str, Sequence)):
+        raise SuiteError(f"y must be a column name or a list of them, not {type(y).__name__}.")
+
+
 def _chart_for(
     frame: pd.DataFrame, x: str | None, y: str | Sequence[str] | None, kind: str | None, group: str | None
 ) -> tuple[dict[str, Any] | None, pd.DataFrame | None, str]:
+    _check_chart_arguments(x, y, group)
     if kind is not None and kind not in _DRAWN_KINDS:
         raise SuiteError(
             f"kind must be one of {', '.join(_DRAWN_KINDS)}, not {kind!r}. "
@@ -845,8 +867,9 @@ def show(
     frame = _as_frame(table)
     chart, data, chart_note = _chart_for(frame, x, y, kind, group)
     count = sum(isinstance(o, TableOutput) and not o.saved for o in session.outputs) + 1
+    heading = "" if title is None else str(title)
     session.emit(
-        TableOutput(session.name_for(name or title, f"table_{count}"), frame, title or "", chart, data, chart_note)
+        TableOutput(session.name_for(name or title, f"table_{count}"), frame, heading, chart, data, chart_note)
     )
 
 
@@ -897,7 +920,7 @@ def chart(
             group=group,
             agg=agg,  # type: ignore[arg-type]
             top_n=top_n,
-            title=title or "",
+            title="" if title is None else str(title),
         )
     except ValueError as exc:
         raise SuiteError(str(exc)) from exc
@@ -935,7 +958,14 @@ def figure(fig: Any = None, name: str | None = None) -> None:
     if not hasattr(fig, "savefig"):
         raise SuiteError("figure() takes a matplotlib figure, such as the fig from plt.subplots().")
     png = io.BytesIO()
-    fig.savefig(png, format="png", dpi=200, bbox_inches="tight")
+    try:
+        fig.savefig(png, format="png", dpi=200, bbox_inches="tight")
+    except Exception as exc:
+        # A figure that cannot be written (a full disk, a broken backend) is a
+        # library refusal, not a traceback into matplotlib; close it either
+        # way so a long notebook does not keep a dead figure in memory.
+        plt.close(fig)
+        raise SuiteError(f"The figure could not be saved as a PNG: {exc}") from exc
     svg: bytes | None = None
     svg_error: Exception | None = None
     try:

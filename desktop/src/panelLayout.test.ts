@@ -252,6 +252,12 @@ describe("line_series", () => {
 });
 
 describe("heatmap", () => {
+  it("finds its domain over a list too large to spread as arguments", () => {
+    const values = Array.from({ length: 150_000 }, (_, index) => index % 100);
+    expect(heatDomain(values, "sequential")).toEqual([0, 99]);
+    expect(heatDomain(values, "diverging")).toEqual([-99, 99]);
+  });
+
   const cells = [
     [0, 0, 0.1],
     [1, 0, 0.5],

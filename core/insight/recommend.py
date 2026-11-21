@@ -77,7 +77,13 @@ def _numeric_pair(frame: pd.DataFrame, left: str, right: str) -> tuple[pd.Series
     return a, b
 
 
-def degenerate_reasons(frame: pd.DataFrame, x: str, y: str) -> list[str]:
+def degenerate_reasons(
+    frame: pd.DataFrame,
+    x: str,
+    y: str,
+    *,
+    _profiles: dict[str, ColumnProfile] | None = None,
+) -> list[str]:
     """Why charting *x* against *y* cannot be informative. Empty means fine.
 
     Each reason is written to be read by the person about to draw the chart,
@@ -89,7 +95,7 @@ def degenerate_reasons(frame: pd.DataFrame, x: str, y: str) -> list[str]:
             f"{x!r} is on both axes, so the chart can only be a straight diagonal line. "
             "That line is the definition of the axes, not a result."
         ]
-    profiles = profile_frame(frame)
+    profiles = _profiles if _profiles is not None else profile_frame(frame)
     for axis, name in (("x", x), ("y", y)):
         column = profiles.get(name)
         if column is None:
@@ -492,7 +498,7 @@ def recommend_charts(
                 continue
             out.append(_histogram(x, question, why, rank))
             continue
-        if degenerate_reasons(frame, x, y):
+        if degenerate_reasons(frame, x, y, _profiles=profiles):
             continue
         if kind == "scatter":
             out.append(_scatter(x, y, question, why, rank))
@@ -505,13 +511,14 @@ def recommend_charts(
     return [replace(recommendation, rank=index) for index, recommendation in enumerate(out[:limit])]
 
 
-def _timeline_recommendation(
+def _timeline_recommendation(  # noqa: PLR0913 -- carries precomputed profiles alongside candidate lists
     frame: pd.DataFrame,
     dates: list[ColumnProfile],
     measures: list[ColumnProfile],
     *,
     taken: set[tuple[str, str]],
     out: list[Recommendation],
+    profiles: dict[str, ColumnProfile] | None = None,
 ) -> None:
     """A date column and a measure is a timeline: the one chart that answers
     "when did this happen", which no label-magnitude pair can."""
@@ -525,12 +532,12 @@ def _timeline_recommendation(
         # A table of items per document (word pairs per speech) is not a
         # series. Its mean per date is a number about the table's cut-offs
         # and the speeches' lengths, not about any item in it.
-        if _pooled_items(frame, date_column.name):
+        if _pooled_items(frame, date_column.name, _profiles=profiles):
             return
         for measure in measures[:1]:
             if (date_column.name, measure.name) in taken:
                 continue
-            if degenerate_reasons(frame, date_column.name, measure.name):
+            if degenerate_reasons(frame, date_column.name, measure.name, _profiles=profiles):
                 continue
             out.append(
                 _line(
@@ -553,9 +560,14 @@ _DOCUMENT_COLUMNS = frozenset({"document", "document id", "doc", "file", "filena
 _POOLED = 1.5
 
 
-def _pooled_items(frame: pd.DataFrame, date_column: str) -> str | None:
+def _pooled_items(
+    frame: pd.DataFrame,
+    date_column: str,
+    *,
+    _profiles: dict[str, ColumnProfile] | None = None,
+) -> str | None:
     """The label column whose many values each date mixes together, if any."""
-    profiles = profile_frame(frame)
+    profiles = _profiles if _profiles is not None else profile_frame(frame)
     for name, profile in profiles.items():
         if name == date_column or name.casefold() in _DOCUMENT_COLUMNS:
             continue
@@ -566,20 +578,21 @@ def _pooled_items(frame: pd.DataFrame, date_column: str) -> str | None:
     return None
 
 
-def _label_recommendations(
+def _label_recommendations(  # noqa: PLR0913 -- carries precomputed profiles alongside candidate lists
     frame: pd.DataFrame,
     categoricals: list[ColumnProfile],
     measures: list[ColumnProfile],
     *,
     taken: set[tuple[str, str]],
     out: list[Recommendation],
+    profiles: dict[str, ColumnProfile] | None = None,
 ) -> None:
     """A label and a magnitude is the workhorse chart."""
     for category in categoricals[:1]:
         for measure in measures[:2]:
             if (category.name, measure.name) in taken:
                 continue
-            if degenerate_reasons(frame, category.name, measure.name):
+            if degenerate_reasons(frame, category.name, measure.name, _profiles=profiles):
                 continue
             out.append(
                 _bar(
@@ -610,8 +623,8 @@ def _generic_recommendations(
     # chart of how long speeches got -- whereas a score is a property of the
     # writing itself. Against a label, the reverse: a count is the magnitude
     # a bar chart is for.
-    _timeline_recommendation(frame, dates, scores + counts, taken=taken, out=out)
-    _label_recommendations(frame, categoricals, counts + scores, taken=taken, out=out)
+    _timeline_recommendation(frame, dates, scores + counts, taken=taken, out=out, profiles=profiles)
+    _label_recommendations(frame, categoricals, counts + scores, taken=taken, out=out, profiles=profiles)
 
     # The shape of a measure is worth seeing before comparing it -- unless the
     # tool already asked for that exact histogram, in which case offering it

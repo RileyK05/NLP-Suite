@@ -140,7 +140,12 @@ class KernelManager:
         with contextlib.suppress(OSError, ValueError):
             for line in kernel.process.stdout:
                 with contextlib.suppress(ValueError):
-                    kernel.add(json.loads(line))
+                    event = json.loads(line)
+                    # A non-object line is not a protocol event; ignore it
+                    # rather than letting AttributeError end this reader and
+                    # leave the page waiting on a kernel that is still alive.
+                    if isinstance(event, dict):
+                        kernel.add(event)
         # The pipe closed: the kernel ended, on purpose or not. A cell that was
         # running gets an ending the page can show instead of spinning forever.
         if kernel.busy is not None:
@@ -238,7 +243,12 @@ class KernelManager:
             kernel.process.stdin.write(json.dumps({"op": "exec", "id": exec_id, "cell": cell, "code": code}) + "\n")
             kernel.process.stdin.flush()
         except (OSError, ValueError) as exc:
-            kernel.busy = None
+            # The reader thread owns the same state; clear this exec under the
+            # lock instead of writing it from here, so a concurrent "done"
+            # cannot leave the kernel marked busy forever.
+            with kernel.lock:
+                if kernel.busy == exec_id:
+                    kernel.busy = None
             raise ValueError("The notebook's Python has stopped. Run the cell again to start it.") from exc
         kernel.last_used = time.monotonic()
         return {"exec": exec_id, "after": after}

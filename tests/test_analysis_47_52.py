@@ -7,29 +7,20 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from conftest import has_spacy_model
+from conftest import has_spacy_model, parsed_mini_corpus
 from core.conll.schema import Col
 from core.gis import geocode as geo_mod, mapping as map_mod
 from core.install import check as install_mod
-from core.io.reader import read_corpus
 from core.narrative import arcs as arc_mod
 from core.pcace import analysis as pcace_a_mod, core as pcace_mod
-from core.pipelines.cache import PipelineCache
-from core.pipelines.spacy_backend import build_spacy_pipeline, spacy_model_name
+from core.pipelines.spacy_backend import spacy_model_name
 from core.profiler import profiler as prof_mod
-
-FIXTURE = Path(__file__).parent / "fixtures" / "mini-corpus"
 
 
 def _parsed_frame() -> pd.DataFrame:
     if not has_spacy_model():
         pytest.skip(f"spaCy model not installed — run: python -m spacy download {spacy_model_name('en')}")
-    result = read_corpus(FIXTURE)
-    assert result.ok
-    corpus = result.unwrap()
-    cache = PipelineCache()
-    cache.register("spacy", build_spacy_pipeline)  # type: ignore[arg-type]
-    return cache.get("spacy", "en").unwrap().parse(corpus).unwrap()
+    return parsed_mini_corpus()
 
 
 def test_pcace_analysis(tmp_path: Path) -> None:

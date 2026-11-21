@@ -225,9 +225,19 @@ function TableOutput({
   const [view, setView] = useState<"chart" | "table">(
     output.chart ? "chart" : "table",
   );
-  const settings = output.chart ? shownChartSettings(output.chart) : null;
+  // Rebuilding the layout on every render used to happen when only `view` or
+  // `copied` changed. More than wasted work, the new `layout` object reset
+  // ChartCanvas's zoom and keyboard focus through its `layout` effect, so
+  // toggling Chart/Table threw away the reader's zoom.
+  const settings = useMemo(
+    () => (output.chart ? shownChartSettings(output.chart) : null),
+    [output.chart],
+  );
   const rows = output.chart_rows?.rows ?? output.preview.rows;
-  const layout = settings ? buildLayout(rows, settings) : null;
+  const layout = useMemo(
+    () => (settings ? buildLayout(rows, settings) : null),
+    [rows, settings],
+  );
   const heading = output.title || output.name.replaceAll("_", " ");
   const csv = `${output.name}.csv`;
   const copyCode = async () => {

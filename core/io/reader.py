@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import codecs
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime
 import hashlib
@@ -32,6 +33,7 @@ import os
 from pathlib import Path
 import re
 
+from core.hardware import io_worker_threads
 from core.result import Diagnostic, Result
 
 __all__ = [
@@ -213,6 +215,14 @@ def strip_nul_bytes(text: str) -> tuple[str, bool]:
     return text.replace("\x00", ""), True
 
 
+def _bom_encoding_bytes(head: bytes) -> tuple[str] | None:
+    if head.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return ("utf-32",)
+    if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return ("utf-16",)
+    return None
+
+
 def _bom_encoding(source: Path) -> tuple[str] | None:
     """The UTF-16/32 encoding a byte-order mark announces, if the file starts with one.
 
@@ -226,11 +236,7 @@ def _bom_encoding(source: Path) -> tuple[str] | None:
             head = handle.read(4)
     except OSError:
         return None  # the read below reports it
-    if head.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
-        return ("utf-32",)
-    if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
-        return ("utf-16",)
-    return None
+    return _bom_encoding_bytes(head)
 
 
 def read_text(path: Path, encoding: str | None = None) -> Result[str]:
@@ -245,19 +251,24 @@ def read_text(path: Path, encoding: str | None = None) -> Result[str]:
     if not source.is_file():
         return Result.failure(Diagnostic.error("FILE_NOT_FOUND", f"{source} is not a file", path=str(source)))
 
-    candidates = (encoding,) if encoding else (_bom_encoding(source) or ENCODING_CHAIN)
+    try:
+        raw = source.read_bytes()
+    except OSError as exc:
+        return Result.failure(Diagnostic.error("FILE_UNREADABLE", f"could not read {source}: {exc}", path=str(source)))
+
+    candidates = (encoding,) if encoding else (_bom_encoding_bytes(raw[:4]) or ENCODING_CHAIN)
     attempted: list[str] = []
 
     for index, candidate in enumerate(candidates):
         try:
-            text = source.read_text(encoding=candidate)
+            text = raw.decode(candidate)
         except (UnicodeDecodeError, LookupError):
             attempted.append(candidate)
             continue
-        except OSError as exc:
-            return Result.failure(
-                Diagnostic.error("FILE_UNREADABLE", f"could not read {source}: {exc}", path=str(source))
-            )
+
+        # Match io.TextIOWrapper universal newline translation after reading raw bytes once.
+        if "\r" in text:
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
 
         cleaned, stripped = strip_nul_bytes(text)
         nul_diag = (
@@ -420,17 +431,29 @@ def read_corpus(
         )
 
     diagnostics: list[Diagnostic] = []
-    readings: list[tuple[Path, str]] = []
+    readings: list[tuple[Path, str, str, date | None]] = []
 
-    for path in paths:
+    def _read_and_hash(path: Path) -> tuple[Path, Result[str], str, date | None]:
         result = read_text(path, encoding)
+        if result.value is None:
+            return path, result, "", None
+        return path, result, hash_text(result.value), date_from_filename(path)
+
+    workers = io_worker_threads(len(paths))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            fetched = list(pool.map(_read_and_hash, paths))
+    else:
+        fetched = [_read_and_hash(path) for path in paths]
+
+    for path, result, text_sha, doc_date in fetched:
         diagnostics.extend(result.diagnostics)
         if result.value is None:
             continue
-        readings.append((path, result.value))
+        readings.append((path, result.value, text_sha, doc_date))
 
     docs: list[Document] = []
-    for doc_id, (path, text) in enumerate(readings, start=1):
+    for doc_id, (path, text, text_sha, doc_date) in enumerate(readings, start=1):
         if not text.strip():
             diagnostics.append(
                 Diagnostic.warning(
@@ -445,8 +468,8 @@ def read_corpus(
                 doc_id=doc_id,
                 path=path,
                 text=text,
-                date=date_from_filename(path),
-                sha256=hash_text(text),
+                date=doc_date,
+                sha256=text_sha,
             )
         )
 

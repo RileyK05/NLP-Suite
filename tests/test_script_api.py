@@ -78,7 +78,38 @@ def _raw_rate(text: str) -> tuple[int, int]:
     return sum(words.count(term) for term in LEXICON), len(words)
 
 
+class EmptySource:
+    """A source with no documents, to exercise the empty table's shape."""
+
+    name = "empty"
+
+    def documents(self) -> list[dict[str, object]]:
+        return []
+
+    def corpus(self, ids):  # type: ignore[no-untyped-def]
+        from core.io.reader import Corpus, corpus_fingerprint
+
+        return Corpus((), corpus_fingerprint(()))
+
+    def parse(self, corpus):  # type: ignore[no-untyped-def]
+        raise AssertionError("an empty corpus should never be parsed")
+
+    def tables(self) -> list[dict[str, object]]:
+        return []
+
+    def read_table(self, job, index):  # type: ignore[no-untyped-def]
+        raise AssertionError("an empty source has no tables")
+
+
 class TestCorpus:
+    def test_an_empty_corpus_still_has_the_documented_columns(self) -> None:
+        from core.script.session import Session
+
+        with open_session(Session(EmptySource())):  # type: ignore[arg-type]
+            documents = nlp.corpus().documents
+        assert documents.empty
+        assert list(documents.columns) == ["Document ID", "Document", "Date", "Year", "Words"]
+
     def test_documents_carry_date_and_year(self, session: Session) -> None:
         with open_session(session):
             docs = nlp.corpus().documents
@@ -105,6 +136,12 @@ class TestCorpus:
     def test_no_session_is_a_readable_refusal(self) -> None:
         with pytest.raises(nlp.SuiteError, match="not connected to any documents"):
             nlp.corpus()
+
+    def test_a_folder_refuses_a_document_it_does_not_have(self, tmp_path: Path) -> None:
+        (tmp_path / "1990-01-01_a.txt").write_text("One two three.", encoding="utf-8")
+        source = FolderSource(tmp_path)
+        with pytest.raises(nlp.SuiteError, match="No document 'missing'"):
+            source.corpus(["missing"])
 
 
 class TestTermRates:
@@ -211,6 +248,14 @@ class TestRun:
             result = nlp.run("readability", corpus)
         expected = execute(build_plan(["readability"], {}).unwrap(), corpus=corpus.core).outcomes[0].frames
         assert result.table.equals(expected["readability.csv"])
+
+    def test_an_engine_crash_is_a_library_refusal(self, session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+        def broken(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("the model file vanished")
+
+        monkeypatch.setattr("core.profiler.executor.execute", broken)
+        with open_session(session), pytest.raises(nlp.SuiteError, match="readability failed unexpectedly"):
+            nlp.run("readability", nlp.corpus())
 
     def test_unknown_tool_and_parameter_suggest_the_right_name(self, session: Session) -> None:
         with open_session(session):
@@ -345,6 +390,40 @@ class TestOutputs:
     def test_a_missing_column_is_named(self, session: Session) -> None:
         with open_session(session), pytest.raises(nlp.SuiteError, match="no column 'rate'"):
             nlp.show(pd.DataFrame({"Year": [1]}), x="Year", y="rate")
+
+    def test_a_measure_that_is_not_a_column_name_is_refused(self, session: Session) -> None:
+        frame = pd.DataFrame({"Year": [1], "Rate": [2]})
+        with open_session(session), pytest.raises(nlp.SuiteError, match="y must be a column name"):
+            nlp.show(frame, x="Year", y=3)  # type: ignore[arg-type]
+        with open_session(session), pytest.raises(nlp.SuiteError, match="x must be a column name"):
+            nlp.show(frame, x=3, y="Rate")  # type: ignore[arg-type]
+
+    def test_a_name_that_is_not_text_becomes_text(self, session: Session) -> None:
+        with open_session(session):
+            nlp.save(pd.DataFrame({"x": [1]}), 42)  # type: ignore[arg-type]
+        [output] = session.outputs
+        assert isinstance(output, TableOutput) and output.name == "42"
+
+    def test_a_figure_that_cannot_be_saved_is_closed_and_explained(self, session: Session) -> None:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots()
+        ax.plot([1, 2], [3, 4])
+        real_savefig = fig.savefig
+
+        def refusing(*args: object, **kwargs: object) -> object:
+            if kwargs.get("format") == "png":
+                raise OSError("the disk is full")
+            return real_savefig(*args, **kwargs)
+
+        fig.savefig = refusing  # type: ignore[method-assign]
+        with open_session(session), pytest.raises(nlp.SuiteError, match="disk is full"):
+            nlp.figure(fig)
+        assert not plt.fignum_exists(fig.number)
+        assert session.outputs == []
 
     def test_save_figure_and_note(self, session: Session) -> None:
         import matplotlib

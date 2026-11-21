@@ -210,27 +210,38 @@ def lexicon_series_rate(
         return Result.failure(Diagnostic.error("PANEL_NO_DATA", "no dated facet rows to plot"), *diagnostics)
 
     categories = tuple(sorted(working[CATEGORY].astype(str).unique()))
+    ordered = working.sort_values([CATEGORY, "_year"], kind="stable")
     marks: list[PanelMark] = []
-    for _, row in working.sort_values([CATEGORY, "_year"], kind="stable").iterrows():
-        category = str(row[CATEGORY])
-        at = float(row["_year"])
-        rate = float(row[PER_1000])
-        occurrences = int(row[OCCURRENCES]) if _is_finite(row[OCCURRENCES]) else 0
-        docs = int(row[LEX_DOCUMENTS]) if _is_finite(row[LEX_DOCUMENTS]) else 0
-        tokens = int(row[LEX_TOKENS]) if _is_finite(row[LEX_TOKENS]) else 0
+    for cat_raw, year_raw, per_raw, occ_raw, docs_raw, tok_raw, facet_raw in zip(
+        ordered[CATEGORY].tolist(),
+        ordered["_year"].tolist(),
+        ordered[PER_1000].tolist(),
+        ordered[OCCURRENCES].tolist(),
+        ordered[LEX_DOCUMENTS].tolist(),
+        ordered[LEX_TOKENS].tolist(),
+        ordered[FACET].tolist(),
+        strict=True,
+    ):
+        category = str(cat_raw)
+        at = float(year_raw)
+        rate = float(per_raw)
+        occurrences = int(occ_raw) if _is_finite(occ_raw) else 0
+        docs = int(docs_raw) if _is_finite(docs_raw) else 0
+        tokens = int(tok_raw) if _is_finite(tok_raw) else 0
+        facet_str = str(facet_raw)
         marks.append(
             PanelMark(
-                key=f"{category}␟{row[FACET]}",
+                key=f"{category}␟{facet_raw}",
                 label=category,
                 x=at if by == "order" else float(int(at)),
                 y=rate,
                 group=category,
                 evidence=Evidence(
                     scope="rows",
-                    filters=((FACET, str(row[FACET])), (CATEGORY, category)),
+                    filters=((FACET, facet_str), (CATEGORY, category)),
                     count=occurrences,
                     describe=(
-                        f"{category}, {row[FACET]}: {rate:.3f} per 1,000 tokens ({occurrences} occurrence(s) "
+                        f"{category}, {facet_raw}: {rate:.3f} per 1,000 tokens ({occurrences} occurrence(s) "
                         f"across {docs} document(s), {tokens} tokens counted)"
                     ),
                 ),
@@ -294,10 +305,16 @@ def lexicon_series_heatmap(
     category_index = {c: i for i, c in enumerate(categories)}
 
     marks: list[PanelMark] = []
-    for _, row in working.iterrows():
-        facet, category = str(row[FACET]), str(row[CATEGORY])
-        rate = float(row[PER_1000])
-        occurrences = int(row[OCCURRENCES]) if _is_finite(row[OCCURRENCES]) else 0
+    for facet_raw, cat_raw, rate_raw, occ_raw in zip(
+        working[FACET].tolist(),
+        working[CATEGORY].tolist(),
+        working[PER_1000].tolist(),
+        working[OCCURRENCES].tolist(),
+        strict=True,
+    ):
+        facet, category = str(facet_raw), str(cat_raw)
+        rate = float(rate_raw)
+        occurrences = int(occ_raw) if _is_finite(occ_raw) else 0
         marks.append(
             PanelMark(
                 key=f"{facet}␟{category}",
@@ -447,14 +464,23 @@ def date_annotator_timeline(
         )
 
     marks: list[PanelMark] = []
-    for _, row in working.iterrows():
-        date_id = str(row[DATE_ID])
-        speech_year = float(row["_speech_year"])
-        mentioned_year = float(row["_mentioned_year"])
+    for date_raw, speech_raw, mentioned_raw, surface_raw, doc_raw, place_raw, dtype_raw in zip(
+        working[DATE_ID].tolist(),
+        working["_speech_year"].tolist(),
+        working["_mentioned_year"].tolist(),
+        working[SURFACE].tolist(),
+        working[DOCUMENT].tolist(),
+        working["_place"].tolist(),
+        working[DATE_TYPE].tolist(),
+        strict=True,
+    ):
+        date_id = str(date_raw)
+        speech_year = float(speech_raw)
+        mentioned_year = float(mentioned_raw)
         marks.append(
             PanelMark(
                 key=date_id,
-                label=str(row[SURFACE]),
+                label=str(surface_raw),
                 x=speech_year,
                 y=mentioned_year,
                 labelled=date_id in labelled,
@@ -463,7 +489,7 @@ def date_annotator_timeline(
                     filters=((DATE_ID, date_id),),
                     count=1,
                     describe=(
-                        f"{row[DOCUMENT]} ({row['_place']}) mentions {row[SURFACE]!r} ({row[DATE_TYPE]})"
+                        f"{doc_raw} ({place_raw}) mentions {surface_raw!r} ({dtype_raw})"
                         + (f", {int(mentioned_year) - int(speech_year):+d} years from the speech date" if timed else "")
                     ),
                 ),
@@ -1630,10 +1656,16 @@ def dispersion_frequency_vs_concentration(
     labelled = set(top[TERM].astype(str))
 
     marks: list[PanelMark] = []
-    for _, row in working.iterrows():
-        term = str(row[TERM])
-        frequency = int(row[FREQUENCY])
-        dp = float(row[GRIES_DP])
+    for term_raw, freq_raw, dp_raw, range_raw in zip(
+        working[TERM].tolist(),
+        working[FREQUENCY].tolist(),
+        working[GRIES_DP].tolist(),
+        working[RANGE].tolist(),
+        strict=True,
+    ):
+        term = str(term_raw)
+        frequency = int(freq_raw)
+        dp = float(dp_raw)
         marks.append(
             PanelMark(
                 key=term,
@@ -1648,7 +1680,7 @@ def dispersion_frequency_vs_concentration(
                     count=frequency,
                     phrase=term,
                     lemma=on_lemmas,
-                    describe=f"{term}: {frequency} occurrences in {int(row[RANGE])} document(s) -- Gries DP {dp:.3f}",
+                    describe=f"{term}: {frequency} occurrences in {int(range_raw)} document(s) -- Gries DP {dp:.3f}",
                 ),
             )
         )
@@ -2144,10 +2176,19 @@ def kwic_hit_positions(
     row_index = {doc: i for i, doc in enumerate(ordered_docs)}
 
     marks: list[PanelMark] = []
-    for position, (_, row) in enumerate(working.iterrows()):
-        doc = str(row[DOCUMENT])
-        sent_id = int(row[SENTENCE_ID])
-        hit = str(row[HIT])
+    for position, (doc_raw, sent_raw, hit_raw, left_raw, right_raw) in enumerate(
+        zip(
+            working[DOCUMENT].tolist(),
+            working[SENTENCE_ID].tolist(),
+            working[HIT].tolist(),
+            working[LEFT_CONTEXT].tolist(),
+            working[RIGHT_CONTEXT].tolist(),
+            strict=True,
+        )
+    ):
+        doc = str(doc_raw)
+        sent_id = int(sent_raw)
+        hit = str(hit_raw)
         marks.append(
             PanelMark(
                 key=f"{doc}␟{sent_id}␟{position}",
@@ -2158,7 +2199,7 @@ def kwic_hit_positions(
                     scope="rows",
                     filters=((DOCUMENT, doc), (SENTENCE_ID, str(sent_id)), (HIT, hit)),
                     count=1,
-                    describe=f"{labels[doc]}, sentence {sent_id}: …{row[LEFT_CONTEXT]} [{hit}] {row[RIGHT_CONTEXT]}…",
+                    describe=f"{labels[doc]}, sentence {sent_id}: …{left_raw} [{hit}] {right_raw}…",
                 ),
             )
         )

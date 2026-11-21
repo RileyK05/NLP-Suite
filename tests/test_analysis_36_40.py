@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import pytest
 
-from conftest import HashEmbeddingBackend, has_spacy_model
+from conftest import HashEmbeddingBackend, has_spacy_model, parsed_mini_corpus
 from core.analysis import (
     contextual as ctx_mod,
     html_annotator as html_mod,
@@ -15,23 +13,14 @@ from core.analysis import (
     semantic_classes as sem_mod,
 )
 from core.conll.schema import Col
-from core.io.reader import read_corpus
-from core.pipelines.cache import PipelineCache
-from core.pipelines.spacy_backend import build_spacy_pipeline, spacy_model_name
+from core.pipelines.spacy_backend import spacy_model_name
 from core.viz import charts as chart_mod
-
-FIXTURE = Path(__file__).parent / "fixtures" / "mini-corpus"
 
 
 def _parsed_frame() -> pd.DataFrame:
     if not has_spacy_model():
         pytest.skip(f"spaCy model not installed — run: python -m spacy download {spacy_model_name('en')}")
-    result = read_corpus(FIXTURE)
-    assert result.ok
-    corpus = result.unwrap()
-    cache = PipelineCache()
-    cache.register("spacy", build_spacy_pipeline)  # type: ignore[arg-type]
-    return cache.get("spacy", "en").unwrap().parse(corpus).unwrap()
+    return parsed_mini_corpus()
 
 
 @pytest.mark.model_integration

@@ -370,50 +370,68 @@ def embed_corpus(
         columns=_VECTOR_COLUMNS,
     )
 
-    similarity = matrix @ matrix.T
-    # Relative similarity: the cosine after removing what every document here
-    # shares (the corpus's mean vector). A sentence model reads every speech of
-    # one genre as ~98% alike -- true, and useless for telling them apart.
-    # Centred, 0 is "as alike as a typical pair" and the spread is the finding.
-    relative = _unit(matrix - matrix.mean(axis=0)) if len(matrix) > 2 else matrix
-    related = relative @ relative.T
+    similarity = np.empty((0, 0), dtype=float)
+    related = np.empty((0, 0), dtype=float)
     labels = [f"{document} #{sent_id}" if sent_id is not None else document for _, document, sent_id, _ in rows]
-    pair_rows = []
-    neighbour_rows = []
+    neighbour_rows: list[dict[str, object]] = []
     # Pairs and neighbours are between documents; for sentences they would be
     # millions of rows, so a sentence run keeps its vectors and map only.
     if unit == "document":
-        for i in range(len(rows)):
-            for j in range(i + 1, len(rows)):
-                percent = float(related[i, j]) * 100.0
-                band = band_index(percent) if percent > 0 else None
-                pair_rows.append(
-                    {
-                        "Document ID A": rows[i][0],
-                        "Document A": rows[i][1],
-                        "Document ID B": rows[j][0],
-                        "Document B": rows[j][1],
-                        "Similarity": round(percent, 1),
-                        "Band": CLASS_LABELS[band] if band is not None else "below average",
-                        "Cosine": round(float(similarity[i, j]), 4),
-                    }
-                )
+        similarity = matrix @ matrix.T
+        # Relative similarity: the cosine after removing what every document here
+        # shares (the corpus's mean vector). A sentence model reads every speech of
+        # one genre as ~98% alike -- true, and useless for telling them apart.
+        # Centred, 0 is "as alike as a typical pair" and the spread is the finding.
+        relative = _unit(matrix - matrix.mean(axis=0)) if len(matrix) > 2 else matrix
+        related = relative @ relative.T
+        n_rows = len(rows)
+        iu, ju = np.triu_indices(n_rows, k=1)
+        if len(iu):
+            rel_vals = related[iu, ju] * 100.0
+            cos_vals = similarity[iu, ju]
+            pct_arr = np.asarray([round(float(v), 1) for v in rel_vals], dtype=float)
+            id_a_vals = [rows[int(i)][0] for i in iu]
+            id_b_vals = [rows[int(j)][0] for j in ju]
+            order_pairs = sorted(
+                range(len(iu)),
+                key=lambda k: (-pct_arr[k], id_a_vals[k], id_b_vals[k]),
+            )
+            bands = []
+            for k in order_pairs:
+                pct_raw = float(rel_vals[k])
+                band = band_index(pct_raw) if pct_raw > 0 else None
+                bands.append(CLASS_LABELS[band] if band is not None else "below average")
+            pairs = pd.DataFrame(
+                {
+                    "Document ID A": [id_a_vals[k] for k in order_pairs],
+                    "Document A": [rows[int(iu[k])][1] for k in order_pairs],
+                    "Document ID B": [id_b_vals[k] for k in order_pairs],
+                    "Document B": [rows[int(ju[k])][1] for k in order_pairs],
+                    "Similarity": [float(pct_arr[k]) for k in order_pairs],
+                    "Band": bands,
+                    "Cosine": [round(float(cos_vals[k]), 4) for k in order_pairs],
+                },
+                columns=_PAIR_COLUMNS,
+            )
+        else:
+            pairs = pd.DataFrame(columns=_PAIR_COLUMNS)
+
+        for i in range(n_rows):
             order = [j for j in np.argsort(-related[i], kind="stable").tolist() if j != i][:top_n]
+            doc_id_i, doc_name_i = rows[i][0], rows[i][1]
             for rank, j in enumerate(order, 1):
                 neighbour_rows.append(
                     {
-                        "Document ID": rows[i][0],
-                        "Document": rows[i][1],
+                        "Document ID": doc_id_i,
+                        "Document": doc_name_i,
                         "Rank": rank,
                         "Neighbor": rows[j][1],
                         "Similarity": round(float(related[i, j]) * 100.0, 1),
                         "Cosine": round(float(similarity[i, j]), 4),
                     }
                 )
-    pairs = pd.DataFrame(pair_rows, columns=_PAIR_COLUMNS)
-    if not pairs.empty:
-        pairs = pairs.sort_values(["Similarity", "Document ID A", "Document ID B"], ascending=[False, True, True])
-        pairs = pairs.reset_index(drop=True)
+    else:
+        pairs = pd.DataFrame(columns=_PAIR_COLUMNS)
 
     coords = _project(matrix, seed)
     clusters, cluster_notes = _clusters(matrix, seed)
@@ -450,6 +468,8 @@ def semantic_search(
     model: str = DEFAULT_MODEL,
     top_n: int = 20,
     backend: Any = None,
+    shas: Mapping[str, str] | None = None,
+    cache: VectorCache | None = None,
 ) -> Result[pd.DataFrame]:
     """The sentences closest in meaning to *query*, best first."""
     if not query or not query.strip():
@@ -466,8 +486,20 @@ def semantic_search(
         if opened.value is None:
             return Result.failure(*opened.diagnostics)
         resolved = opened.value
+    name = getattr(resolved, "model_name", model)
     try:
-        documents = _unit(np.asarray(embed_sentences(resolved, [s.text for s in sentences]), dtype=float))
+        documents = _unit(
+            _embedded_items(
+                resolved,
+                [s.text for s in sentences],
+                [s.doc_id for s in sentences],
+                unit="sentence",
+                model_name=name,
+                model_sha=_model_sha(name),
+                shas=shas,
+                cache=cache,
+            )
+        )
         embed_texts = getattr(resolved, "embed_texts", None)
         if callable(embed_texts):
             try:

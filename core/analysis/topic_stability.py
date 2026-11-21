@@ -149,7 +149,9 @@ def topic_stability(
     carried: list[Diagnostic] = []
     fits: dict[int, pd.DataFrame] = {}
     for seed in seed_list:
-        fitted = fit_lda(doc_tokens, n_topics=n_topics, top_n=top_n, seed=seed, passes=passes, coherence=False)
+        fitted = fit_lda(
+            doc_tokens, n_topics=n_topics, top_n=top_n, seed=seed, passes=passes, coherence=False, views=False
+        )
         if not fitted.ok:
             # The fit's own diagnostics say why; carry them through rather
             # than re-wrapping, so the real cause (e.g. TOPIC_BACKEND_MISSING,
