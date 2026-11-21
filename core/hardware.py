@@ -108,30 +108,35 @@ def _positive_int_env(name: str) -> int | None:
 
 
 def _windows_ram_mb() -> tuple[int, int] | None:
-    if sys.platform != "win32":
-        return None
+    # if/else on the platform, not an early return: mypy reads sys.platform
+    # statically and skips the other branch silently, but code after an early
+    # return (or after a branch that always returns) is "unreachable" on one
+    # platform, which warn_unreachable reports. CI type-checks all three.
+    if sys.platform == "win32":
 
-    class _MemoryStatusEx(ctypes.Structure):
-        _fields_ = [
-            ("dwLength", ctypes.c_uint32),
-            ("dwMemoryLoad", ctypes.c_uint32),
-            ("ullTotalPhys", ctypes.c_uint64),
-            ("ullAvailPhys", ctypes.c_uint64),
-            ("ullTotalPageFile", ctypes.c_uint64),
-            ("ullAvailPageFile", ctypes.c_uint64),
-            ("ullTotalVirtual", ctypes.c_uint64),
-            ("ullAvailVirtual", ctypes.c_uint64),
-            ("ullAvailExtendedVirtual", ctypes.c_uint64),
-        ]
+        class _MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_uint32),
+                ("dwMemoryLoad", ctypes.c_uint32),
+                ("ullTotalPhys", ctypes.c_uint64),
+                ("ullAvailPhys", ctypes.c_uint64),
+                ("ullTotalPageFile", ctypes.c_uint64),
+                ("ullAvailPageFile", ctypes.c_uint64),
+                ("ullTotalVirtual", ctypes.c_uint64),
+                ("ullAvailVirtual", ctypes.c_uint64),
+                ("ullAvailExtendedVirtual", ctypes.c_uint64),
+            ]
 
-    try:
-        status = _MemoryStatusEx()
-        status.dwLength = ctypes.sizeof(_MemoryStatusEx)
-        kernel32 = getattr(ctypes, "windll", None)
-        if kernel32 is None or not kernel32.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        try:
+            status = _MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(_MemoryStatusEx)
+            kernel32 = getattr(ctypes, "windll", None)
+            if kernel32 is None or not kernel32.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return None
+            return max(512, int(status.ullTotalPhys // _MIB)), max(128, int(status.ullAvailPhys // _MIB))
+        except OSError:
             return None
-        return max(512, int(status.ullTotalPhys // _MIB)), max(128, int(status.ullAvailPhys // _MIB))
-    except OSError:
+    else:
         return None
 
 
