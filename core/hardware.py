@@ -51,9 +51,13 @@ _MAX_POOL_WORKERS = 8
 
 # Local execution providers that accelerate inference deterministically on device.
 # Cloud/remote providers (e.g. AzureExecutionProvider) are intentionally excluded.
+# CoreML is excluded too: the macOS onnxruntime wheel lists it, the session
+# opens, and then every prediction on the suite's transformer models fails
+# ("Unable to compute the prediction"), past the session-open CPU fallback in
+# core/models/onnx_backend.py. CUDA and ROCm appear only with a GPU build of
+# onnxruntime that a user installs on purpose; the installers never ship one.
 _PREFERRED_LOCAL_EPS: tuple[str, ...] = (
     "CUDAExecutionProvider",
-    "CoreMLExecutionProvider",
     "ROCMExecutionProvider",
 )
 

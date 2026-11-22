@@ -117,7 +117,6 @@ def test_onnx_provider_selection_excludes_cloud_and_prefers_local() -> None:
         "CUDAExecutionProvider",
         "CPUExecutionProvider",
     )
-    assert onnx_execution_providers(["CoreMLExecutionProvider"]) == (
-        "CoreMLExecutionProvider",
-        "CPUExecutionProvider",
-    )
+    # CoreML is listed by the macOS wheel but fails at prediction time on the
+    # suite's models (0.5.3 CI, macos-latest); Macs keep the CPU provider.
+    assert onnx_execution_providers(["CoreMLExecutionProvider", "CPUExecutionProvider"]) == ("CPUExecutionProvider",)
