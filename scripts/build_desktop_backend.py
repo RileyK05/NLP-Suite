@@ -132,9 +132,10 @@ def build_arguments(root: Path, *, with_parser: bool, system: str, python: str, 
         "nltk.test",
         "nltk.app",
         "nltk.twitter",
-        "numpy.testing",
+        # Not numpy.testing or scipy._lib._testutils: scipy imports both at
+        # import time (scipy._lib._array_api, reached via sklearn), and
+        # excluding them killed the frozen engine at start-up (0.5.3 build).
         "pandas.tests",
-        "scipy._lib._testutils",
         "matplotlib.tests",
         "PIL.Tests",
         "pyarrow.tests",
